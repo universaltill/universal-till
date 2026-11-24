@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+// ADR-0214 (ut-docs#6969) named allowance: the till's plugin_settings report
+// is built by internal/pluginsettingsreport (never a secret value) and added
+// to the check-in by internal/pages/cloudsync_wire.go. THIS package still
+// touches no plugin setting, so the check below is unchanged;
+// TestPluginSettingsReportHasOneCaller (this file) pins who may import it.
+//
 // ADR-0082 (ut-docs#1739) no-leak check: till→ut-cloud sync (this package —
 // NOT the LAN primary/replica sync in internal/pages/sync_*.go) must never
 // touch plugin_settings in any form: not the table, not the repository's
@@ -46,5 +52,35 @@ func TestCloudSyncNeverTouchesPluginSettings(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no source files checked — test is looking in the wrong directory")
+	}
+}
+
+// TestPluginSettingsReportHasOneCaller pins the ADR-0214 allowance: the only
+// non-test file that imports the plugin_settings report package is the
+// check-in wiring in internal/pages. A second reader of plugin settings for
+// the cloud needs the ADR first.
+func TestPluginSettingsReportHasOneCaller(t *testing.T) {
+	var importers []string
+	err := filepath.Walk(filepath.Join("..", "..", "internal"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(path), "/pluginsettingsreport/") {
+			return nil
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(src), "internal/pluginsettingsreport\"") {
+			importers = append(importers, filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(importers) != 1 || !strings.HasSuffix(importers[0], "internal/pages/cloudsync_wire.go") {
+		t.Fatalf("plugin_settings report importers = %v, want only internal/pages/cloudsync_wire.go (ADR-0214)", importers)
 	}
 }

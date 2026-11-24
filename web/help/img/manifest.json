@@ -367,7 +367,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "51ad475d82f6a207a8a6e6bf7181cbb4a35cacc6c97430316bb8ed075756ce0d"
+      "sha256": "241aa17d65703cd16109b4ccd376031c807f80881775e7bd5a5f93ab9a96d406"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -427,7 +427,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "2faf562a85586ad4cca9710a4afa461ac1e0b708a962fca85aa62358d464e1f7"
+      "sha256": "b47eff14501c2c3062bba5821ca6128a52e82de6c42293d5349f5e9a718cf02e"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -715,7 +715,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "4ce247c9133f077c51a0318f77b9ab206432ee1a8465e7f805c4b27ec3cac088"
+      "sha256": "23af9b611cf6ceed2f0fa2164e122e81af9229a90649aeecdafd86c5b1169837"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -1468,7 +1468,7 @@
       "sha256": "92a74d1d9a1d51a70698bfb9506d7def4f031c386a29dc3351c8de85fe9d58c3"
     },
     "web/public/osk.js": {
-      "sha256": "019877b569c78f4587c062a67af212b1a50e880748b2364b053f31a76cf7861e"
+      "sha256": "5db33f344f2eb86646a1ac20a8c897366c7d1d372c12e11ab405cfdfa256fe71"
     },
     "web/public/pairing-stream.js": {
       "sha256": "9748e63d4e4ac14bf76e14c6387be0cf87964c0508da82aa52d08cba73308739"
@@ -1756,7 +1756,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "5277b83042d6d8e4d049b537d0e1fa4a2058e151bb08a182a7d8108885c579f9"
+      "sha256": "50c7e99b4834abc2559394a3b7d842258353bc717e939b356d1a54e315b22a2d"
     },
     "web/ui/pages/setup.html": {
       "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"

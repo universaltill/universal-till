@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -22,7 +25,8 @@ type DownloadManager struct {
 	httpClient     *http.Client
 	maxRetries     int
 	retryBackoff   time.Duration
-	downloadBudget int64 // max bytes per download
+	downloadBudget int64        // max bytes per download
+	scratchRetries atomic.Int32 // checksum-mismatch-after-resume restarts (tests assert it)
 }
 
 // DownloadRequest contains all information needed to download a plugin artifact
@@ -83,17 +87,15 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 	}
 	partFile := dm.partFilePath(req.PluginID)
 
-	// Check if partial download exists
-	var resumeFrom int64
-	if fi, err := os.Stat(partFile); err == nil {
-		resumeFrom = fi.Size()
-		log.Infof("[Download] Resuming download for %s from byte %d", req.PluginID, resumeFrom)
-	}
-
-	// Attempt download with retries
+	// Attempt download with retries. The resume offset is re-read from the
+	// .part file on EVERY attempt: a failed attempt may have appended more
+	// bytes, and a stale offset made the next Range request (and the hash
+	// seed) disagree with the file (ut-docs#6975).
 	var lastErr error
+	scratchRetryUsed := false
+	forceScratch := false
 	for attempt := 0; attempt <= dm.maxRetries; attempt++ {
-		if attempt > 0 {
+		if attempt > 0 && !forceScratch {
 			backoff := dm.retryBackoff * time.Duration(attempt)
 			log.Warnf("[Download] Retry %d/%d for %s after %v", attempt, dm.maxRetries, req.PluginID, backoff)
 
@@ -104,7 +106,17 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 			}
 		}
 
-		// Try download
+		var resumeFrom int64
+		if forceScratch {
+			_ = os.Remove(partFile)
+			forceScratch = false
+		} else if fi, err := os.Stat(partFile); err == nil {
+			resumeFrom = fi.Size()
+			if resumeFrom > 0 {
+				log.Infof("[Download] Resuming download for %s from byte %d", req.PluginID, resumeFrom)
+			}
+		}
+
 		result, err := dm.downloadOnce(ctx, req, partFile, resumeFrom, maxSize)
 		if err == nil {
 			return result, nil
@@ -113,7 +125,27 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 		lastErr = err
 		log.Warnf("[Download] Attempt %d failed for %s: %v", attempt+1, req.PluginID, err)
 
-		// Check if we should retry
+		// A server that ignored/garbled Range: the part file is already
+		// removed; start again from byte zero straight away.
+		if errors.Is(err, errRangeRejected) {
+			forceScratch = true
+			continue
+		}
+		// A checksum mismatch after a RESUMED download may just be a bad
+		// splice: drop the partial file and retry once from scratch, no Range.
+		// A mismatch on a from-zero download is permanent.
+		if errors.Is(err, errChecksumMismatch) {
+			_ = os.Remove(partFile)
+			if resumeFrom > 0 && !scratchRetryUsed {
+				scratchRetryUsed = true
+				dm.scratchRetries.Add(1)
+				forceScratch = true
+				log.Warnf("[Download] Checksum mismatch after resume for %s: retrying once from scratch", req.PluginID)
+				continue
+			}
+			break
+		}
+
 		if !dm.isRetryable(err) {
 			break
 		}
@@ -122,75 +154,99 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 	return nil, fmt.Errorf("download failed after %d retries: %w", dm.maxRetries+1, lastErr)
 }
 
+// errRangeRejected: the server answered a Range request with something other
+// than the exact continuation requested (wrong Content-Range, 416). The part
+// file has been deleted; the caller restarts from zero.
+var errRangeRejected = errors.New("server did not honour resume range")
+
+// parseContentRangeStart returns the first byte of a "bytes a-b/c" header.
+func parseContentRangeStart(h string) (int64, bool) {
+	h = strings.TrimSpace(h)
+	if !strings.HasPrefix(h, "bytes ") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(h, "bytes ")
+	dash := strings.IndexByte(rest, '-')
+	if dash <= 0 {
+		return 0, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(rest[:dash]), 10, 64)
+	if err != nil || start < 0 {
+		return 0, false
+	}
+	return start, true
+}
+
 // downloadOnce performs a single download attempt with resume support
 func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadRequest, partFile string, resumeFrom, maxSize int64) (*DownloadResult, error) {
 	log := logging.L()
 
-	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	// Add Range header if resuming
 	if resumeFrom > 0 {
 		httpReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeFrom))
 	}
 
-	// Execute request
 	resp, err := dm.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check status
-	if resumeFrom > 0 && resp.StatusCode != http.StatusPartialContent {
-		// Server doesn't support resume, start over
-		log.Warnf("[Download] Server doesn't support resume for %s, starting from beginning", req.PluginID)
-		resumeFrom = 0
-		os.Remove(partFile) // delete partial file
-
-		// Retry without Range header
-		httpReq.Header.Del("Range")
-		resp.Body.Close()
-
-		resp, err = dm.httpClient.Do(httpReq)
-		if err != nil {
-			return nil, fmt.Errorf("HTTP request failed: %w", err)
+	if resumeFrom > 0 {
+		switch {
+		case resp.StatusCode == http.StatusOK:
+			// Server ignored Range and is sending the whole body: appending
+			// it to the partial file corrupts it. Truncate and use this body
+			// from byte zero.
+			log.Warnf("[Download] Server ignored Range for %s, restarting from beginning", req.PluginID)
+			resumeFrom = 0
+		case resp.StatusCode == http.StatusPartialContent:
+			start, ok := parseContentRangeStart(resp.Header.Get("Content-Range"))
+			if !ok || start != resumeFrom {
+				_ = os.Remove(partFile)
+				return nil, fmt.Errorf("%w: wanted start %d, got Content-Range %q", errRangeRejected, resumeFrom, resp.Header.Get("Content-Range"))
+			}
+		case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable:
+			_ = os.Remove(partFile)
+			return nil, fmt.Errorf("%w: status 416", errRangeRejected)
+		default:
+			return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 		}
-		defer resp.Body.Close()
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
+	if resumeFrom == 0 && resp.StatusCode == http.StatusPartialContent {
+		return nil, fmt.Errorf("unexpected status code: %d without a Range request", resp.StatusCode)
+	}
 
-	// Open/create .part file. O_RDWR, not O_WRONLY: the resume path below
-	// re-reads the existing content to seed the hash, and reading a
-	// write-only descriptor fails with EBADF — which made EVERY resumed
-	// download fail (proven by TestDownloadResumesFromPartFile).
+	// O_RDWR, not O_WRONLY: the resume path re-reads the existing content to
+	// seed the hash (EBADF otherwise; TestDownloadResumesFromPartFile).
 	var f *os.File
 	if resumeFrom > 0 {
 		f, err = os.OpenFile(partFile, os.O_RDWR|os.O_APPEND, 0644)
 	} else {
-		f, err = os.Create(partFile)
+		f, err = os.Create(partFile) // truncates
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open part file: %w", err)
 	}
 	defer f.Close()
 
-	// Download with size limit
 	hasher := sha256.New()
 
-	// If resuming, we need to rehash the existing content
+	// If resuming, rehash the existing content
 	if resumeFrom > 0 {
-		f.Seek(0, io.SeekStart)
-		if _, err := io.Copy(hasher, f); err != nil {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("failed to seek part file: %w", err)
+		}
+		if _, err := io.CopyN(hasher, f, resumeFrom); err != nil {
 			return nil, fmt.Errorf("failed to hash existing content: %w", err)
 		}
-		f.Seek(0, io.SeekEnd)
 	}
 
 	limitedReader := io.LimitReader(resp.Body, maxSize-resumeFrom)
@@ -204,7 +260,6 @@ func (dm *DownloadManager) downloadOnce(ctx context.Context, req *DownloadReques
 	totalBytes := resumeFrom + bytesDownloaded
 	log.Infof("[Download] Downloaded %d bytes for %s (total: %d)", bytesDownloaded, req.PluginID, totalBytes)
 
-	// Verify checksum
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 	if actualChecksum != req.ExpectedChecksum {
 		return nil, fmt.Errorf("%w: expected %s, got %s", errChecksumMismatch, req.ExpectedChecksum, actualChecksum)

@@ -88,6 +88,8 @@
 <span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-select-oob="#settings-privacy" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
+  {{/* ut-docs#6955: who on the network may reach this till (managers only; the fragment 403s otherwise). */}}
+  <div hx-get="/ui/settings/lan-access" hx-trigger="load" hx-swap="innerHTML"></div>
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
        subscription is stale or lapsed — explained in place, nothing hidden.
        A registered till with cloud sync off (ADR-0148) already says so below

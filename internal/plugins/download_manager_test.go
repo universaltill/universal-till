@@ -66,6 +66,7 @@ func TestDownloadResumesFromPartFile(t *testing.T) {
 		sawRange.Store(rng)
 		if strings.HasPrefix(rng, "bytes=") {
 			from, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(rng, "bytes="), "-"))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(content)-1, len(content)))
 			w.WriteHeader(http.StatusPartialContent)
 			_, _ = w.Write(content[from:])
 			return
@@ -277,5 +278,182 @@ func TestDownloadPartFileStaysInTmpDir(t *testing.T) {
 	}
 	if _, err := os.Stat(res.FilePath); !os.IsNotExist(err) {
 		t.Fatal("CleanupPartFile did not remove the sanitized part file")
+	}
+}
+
+// ut-docs#6975: a server that answers a Range request with 206 but a
+// Content-Range that does not start at the requested byte must never have its
+// body appended: the partial is dropped and the file re-fetched from zero.
+func TestDownloadWrongContentRangeRestartsFromZero(t *testing.T) {
+	content := []byte("0123456789abcdefghij")
+	var ranged, plain atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "" {
+			ranged.Add(1)
+			w.Header().Set("Content-Range", "bytes 0-19/20") // wrong start
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(content)
+			return
+		}
+		plain.Add(1)
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "com.test.badrange.part"), content[:8], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := NewDownloadManager(tmp)
+	dm.retryBackoff = time.Millisecond
+	res, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "com.test.badrange", ExpectedChecksum: sha256Hex(content),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if got, _ := os.ReadFile(res.FilePath); string(got) != string(content) {
+		t.Fatalf("content = %q", got)
+	}
+	if ranged.Load() != 1 || plain.Load() != 1 {
+		t.Fatalf("ranged=%d plain=%d, want 1 and 1", ranged.Load(), plain.Load())
+	}
+	// The bad range must be caught by the Content-Range check itself, not
+	// rescued later by the checksum-mismatch scratch retry.
+	if n := dm.scratchRetries.Load(); n != 0 {
+		t.Fatalf("scratch retries = %d, want 0 (range check must reject first)", n)
+	}
+}
+
+// ut-docs#6975 log evidence: a 200 full body to a Range request must not be
+// appended to the partial (1674609 bytes "resumed" from 97066).
+func TestDownloadIgnoredRangeDoesNotAppendFullBody(t *testing.T) {
+	content := []byte(strings.Repeat("plugin-bytes-", 50))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "com.test.full.part"), content[:97%len(content)+30], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := NewDownloadManager(tmp)
+	res, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "com.test.full", ExpectedChecksum: sha256Hex(content),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if n := dm.scratchRetries.Load(); n != 0 {
+		t.Fatalf("scratch retries = %d, want 0 (200 body must be used from zero, not appended)", n)
+	}
+	if res.BytesDownloaded != int64(len(content)) || res.ResumedFrom != 0 {
+		t.Fatalf("result %+v", res)
+	}
+	fi, _ := os.Stat(res.FilePath)
+	if fi.Size() != int64(len(content)) {
+		t.Fatalf("file size %d, want %d", fi.Size(), len(content))
+	}
+}
+
+// A resumed download whose checksum then mismatches (bad splice) is retried
+// ONCE from scratch with no Range header; a from-zero mismatch is permanent.
+func TestDownloadChecksumMismatchAfterResumeRetriesOnceFromScratch(t *testing.T) {
+	content := []byte("0123456789abcdefghij")
+	var rangedReqs, plainReqs atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rng := r.Header.Get("Range"); rng != "" {
+			rangedReqs.Add(1)
+			w.Header().Set("Content-Range", "bytes 8-19/20")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("XXXXXXXXXXXX")) // right range, corrupt bytes
+			return
+		}
+		plainReqs.Add(1)
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "com.test.splice.part"), content[:8], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := NewDownloadManager(tmp)
+	dm.retryBackoff = time.Millisecond
+	res, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "com.test.splice", ExpectedChecksum: sha256Hex(content),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if got, _ := os.ReadFile(res.FilePath); string(got) != string(content) {
+		t.Fatalf("content = %q", got)
+	}
+	if rangedReqs.Load() != 1 || plainReqs.Load() != 1 {
+		t.Fatalf("ranged=%d plain=%d", rangedReqs.Load(), plainReqs.Load())
+	}
+}
+
+func TestDownloadChecksumMismatchFromScratchIsPermanent(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("wrong bytes"))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	dm := NewDownloadManager(tmp)
+	dm.retryBackoff = time.Millisecond
+	_, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "com.test.perm", ExpectedChecksum: strings.Repeat("0", 64),
+	})
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("err = %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, "com.test.perm.part")); !os.IsNotExist(statErr) {
+		t.Fatalf("corrupt part file left behind")
+	}
+}
+
+// The resume offset must be re-read each attempt: attempt 1 appends part of
+// the body then drops; attempt 2 has to continue from the NEW size.
+func TestDownloadRetryResumesFromCurrentPartSize(t *testing.T) {
+	content := []byte(strings.Repeat("0123456789", 20))
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		from := 0
+		if rng := r.Header.Get("Range"); rng != "" {
+			from, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(rng, "bytes="), "-"))
+			w.Header().Set("Content-Range", "bytes "+strconv.Itoa(from)+"-"+strconv.Itoa(len(content)-1)+"/"+strconv.Itoa(len(content)))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		if n == 1 { // announce the full length, send 60 bytes, hang up
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)-from))
+			_, _ = w.Write(content[from : from+60])
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			panic(http.ErrAbortHandler)
+		}
+		_, _ = w.Write(content[from:])
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "com.test.stale.part"), content[:10], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := NewDownloadManager(tmp)
+	dm.retryBackoff = time.Millisecond
+	res, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "com.test.stale", ExpectedChecksum: sha256Hex(content),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if res.ResumedFrom != 70 {
+		t.Fatalf("ResumedFrom = %d, want 70", res.ResumedFrom)
 	}
 }
