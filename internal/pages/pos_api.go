@@ -973,11 +973,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	// No abandonedUnder() / attempt check after the ask, and none may be
 	// added (ut-docs#7019): the commit point is held, so BeginAbandon refuses
-	// and no cashier clear/park/resume can rotate the attempt; a check here
-	// would bring back the signed-but-unrecorded tender this order removes.
-	// Exception: the kiosk landing page's KioskEngine.Reset()
-	// (self_order_page.go) bypasses abandonOp and can still rotate the kiosk
-	// attempt during the ask; the signed sale is still recorded (ut-docs#7022).
+	// and no cashier or kiosk clear/park/resume/landing can rotate the
+	// attempt; a check here would bring back the signed-but-unrecorded tender
+	// this order removes.
 	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
 	if signRes.Asked {
 		recordCtx = detached // a signer may have signed: record it (ADR-0044 D1)

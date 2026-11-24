@@ -151,7 +151,8 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		//  - No ?table= at all (or one that doesn't name a usable table) is
 		//    the bare walk-up/physical-kiosk path, unchanged from ADR-0020:
 		//    landing here always means "start fresh", so the till-global
-		//    KioskEngine is reset — without this an abandoned cart would
+		//    KioskEngine is reset (except while a sale is committing, see
+		//    resetUnlessCommitting below, ut-docs#7022) — without this an abandoned cart would
 		//    silently greet the NEXT customer instead of an empty one, since
 		//    that basket is till-process-level state, not per-visit. Never a
 		//    session, never a cookie.
@@ -188,7 +189,10 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 			if !bound {
-				d.KioskEngine.Reset()
+				// An abandon (ut-docs#6602 escape hatch while a tender
+				// authorizes), skipped once the sale is committing
+				// (ut-docs#7022): the start screen renders either way.
+				resetUnlessCommitting(d.KioskEngine)
 			}
 		}
 		// The walk-up start screen also ends a customer's language pick

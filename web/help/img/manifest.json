@@ -673,7 +673,7 @@
       "sha256": "ab74239dfa7ac36c41b5a146fdca4abc01f1b1e920c5da23ee5fc4d18321e20d"
     },
     "internal/pages/self_order_page.go": {
-      "sha256": "874e44a6724597654ef0ca127790bc361a4916047bf17078368174974314c307"
+      "sha256": "1ce6a6a761eade4e1b592cc2013a468fcb13f5797c9b7e0a95ca3375b7f6dcd7"
     },
     "internal/pages/self_order_session_sweep.go": {
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
@@ -775,7 +775,7 @@
       "sha256": "7552fac501e0f01f865a1576ebeced8ed0549e6461497affc2c3f9bf0e6fc3a3"
     },
     "internal/pages/tender_inflight.go": {
-      "sha256": "697fe6ba94a0d1832d0a021924edf2cd8840accbb08e6b94ded472615a4a1eca"
+      "sha256": "7e4b3e7cd104b89fe0e46334da2f294eb22f6800f10678313f1a4ac6703a492d"
     },
     "internal/pages/till_name.go": {
       "sha256": "293351a4f5f1355c1d91ddc9f8f404e55331e6a08a95578c0616be2127a7fca1"

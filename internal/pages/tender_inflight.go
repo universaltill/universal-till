@@ -6,6 +6,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // writeTenderInFlight refuses a second cashier tender while one still runs on
@@ -56,4 +57,17 @@ func abandonOp(d *common.Deps, h http.HandlerFunc) http.HandlerFunc {
 		defer d.Engine.EndAbandon()
 		h(w, r)
 	}
+}
+
+// resetUnlessCommitting resets eng as one abandon operation (ut-docs#6923,
+// ut-docs#7022): false, and nothing reset, while a tender holds eng's commit
+// point. It takes the engine, never d, so a kiosk route can use it. The
+// admission covers only Reset().
+func resetUnlessCommitting(eng *pos.Service) bool {
+	if !eng.BeginAbandon() {
+		return false
+	}
+	defer eng.EndAbandon()
+	eng.Reset()
+	return true
 }
