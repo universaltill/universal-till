@@ -355,6 +355,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /ui/tills/roster":                 true, // the denied /tills page's polled roster (ADR-0114 §10)
 	"POST /api/enrol/check-plan":           true, // ADR-0148: a demo till never contacts the cloud
 	"POST /api/subscription/check-now":     true, // ut-docs#4285: same — a demo till never contacts the cloud
+	"POST /api/cloud/sync-now":             true, // ut-docs#6977: a demo till never contacts the cloud
 	"POST /api/subscription/panel":         true, // ut-docs#4286: refreshes from the cloud first
 	"POST /api/subscription/panel/handoff": true, // ut-docs#4286: a QR to the real plans page
 	"POST /api/subscription/panel/poll":    true, // ut-docs#4286: an operator check-in
@@ -589,6 +590,7 @@ var demoAllowedRoutes = map[string]bool{
 	// stamp the demo message into the nav).
 	"GET /ui/bugreport-chip":       true,
 	"GET /ui/cloud-auth-chip":      true,
+	"GET /ui/cloud-sync-chip":      true, // ut-docs#6977: local read, empty on a demo till
 	"GET /ui/tax-autoinstall-chip": true, // ADR-0172 §5; local settings read only
 	"GET /ui/move-pending-chip":    true, // ut-docs#5287: read-only chip, empty unless a move waits
 	"GET /ui/disk-space-chip":      true, // ut-docs#3121; local statfs only

@@ -63,6 +63,16 @@ Registering and claiming are free, and so is the plugin store. Keeping the till 
 1. Once the shop is on a paid plan, the till finds out when it is next started on a new day, or sooner when someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
 2. If the plan ends, cloud sync stops after the till's next check-in. Selling never depends on it: every sale works offline either way.
 
+## When did this till last sync? (Sync now)
+
+On a till with cloud sync, the status bar at the bottom of the screen shows when the till last heard from the cloud: "Synced just now", "Synced 5 min ago", "Synced at 14:05", or "Not synced yet". After 10 minutes without an answer it turns amber. Selling carries on either way, and every sale works offline.
+
+1. Changes made on my.universaltill.com reach the till at its next sync. On some plans they arrive within seconds; otherwise within about 2 minutes.
+2. Not willing to wait? A manager or admin presses **Sync now** in the status bar. The till asks the cloud straight away and the time updates within a few seconds. If the till is offline, it says "Still trying — sales keep working offline" and syncs once the connection is back.
+3. On a phone, open ☰: the status row is at the bottom of the menu.
+4. On an iPhone the app syncs only while it is open. Open it to pick up changes.
+5. An additional till does not show this. It gets the shop's changes from the main till (see the main-till light in its status bar).
+
 ## When the cloud stops accepting this till
 
 If the cloud refuses this till's credential three times in a row, or this till's data was restored onto a new device, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of these things:

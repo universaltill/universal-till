@@ -1,0 +1,22 @@
+{{/* ut-docs#6977: when this till last heard from the cloud
+     (registration.last_checkin_at), rendered by GET /ui/cloud-sync-chip
+     (cloud_sync_chip.go) into the status bar's #sb-cloud-sync-mount on every
+     page. Main till with its own credential and a paid plan only; empty
+     beside the refused-credential chip. Words carry the state (never colour
+     alone): fresh, stale (amber, ≥10 min), never. "Sync now" only for a viewer
+     who may open Settings — a cashier sees the time and no button that would
+     403. The press waits up to 8 s; .htmx-request swaps the label to
+     "Syncing…". A status chip, never a modal. */}}
+<span class="sb-item sb-cloud-sync is-{{ .state }}" data-testid="sb-cloud-sync" data-cloud-sync="{{ .state }}" title="{{ .title }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
+  <span class="sb-cloud-sync-text">{{ .text }}</span>
+  {{- with .result }} <span class="sb-cloud-sync-result" role="status" data-testid="sb-cloud-sync-result">{{ . }}</span>{{ end }}
+  {{- if .canSync }}
+  <button type="button" class="sb-cloud-sync-now" data-testid="sb-cloud-sync-now"
+          hx-post="/api/cloud/sync-now" hx-target="#sb-cloud-sync-mount" hx-swap="innerHTML"
+          hx-sync="#sb-cloud-sync-mount:replace" hx-disabled-elt="this">
+    <span class="sb-cloud-sync-now-idle">{{ T "status.cloud_sync.sync_now" }}</span>
+    <span class="sb-cloud-sync-now-busy" aria-hidden="true">{{ T "status.cloud_sync.syncing" }}</span>
+  </button>
+  {{- end }}
+</span>
