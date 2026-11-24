@@ -573,7 +573,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		}
 		// ut-docs#1795: same canonicalization as the cashier tender/refund
 		// paths (pos_api.go, refund_page.go) -- this handler shares the
-		// same completeTender -> blockingPaymentEventWithResponseAndID /
+		// same completeTender -> blockingPaymentEventDispatch /
 		// fiscal.MethodKeyOKC sink. Today the exact-match whitelist check
 		// just below (`m.ID == method`) happens to fail closed on a
 		// differently-cased method rather than routing it anywhere, but

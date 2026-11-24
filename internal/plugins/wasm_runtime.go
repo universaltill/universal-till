@@ -444,7 +444,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		// the module above still counted as loaded, but ended up with ZERO
 		// registered event subscriptions. That reopens the exact fail-open
 		// ut-docs#2278 closed one layer up: a blocking payment gate
-		// (blockingPaymentEventWithResponseAndID) treats "no subscribers"
+		// (blockingPaymentEventDispatch) treats "no subscribers"
 		// as "nothing to check, proceed," so an active payment plugin with
 		// no subscriptions due to a transient DB error let a sale/refund
 		// proceed with no plugin consulted and no error anywhere. Treat

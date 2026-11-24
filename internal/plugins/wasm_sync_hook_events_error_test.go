@@ -17,7 +17,7 @@ import (
 // has no hooks" — the module still counted as loaded, but ended up with
 // ZERO registered event subscriptions. That reopens, through a different
 // door, the exact payment-gate fail-open ut-docs#2278 closed: the blocking
-// payment gate (blockingPaymentEventWithResponseAndID) treats "no
+// payment gate (blockingPaymentEventDispatch) treats "no
 // subscribers" as "nothing to check, proceed," so an active payment plugin
 // left with no subscriptions by a transient DB error let a sale/refund
 // through with no plugin consulted and no error anywhere. Sync must now

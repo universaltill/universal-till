@@ -2960,7 +2960,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
-			// plugin-entry lookup (blockingPaymentEventWithResponseAndID),
+			// plugin-entry lookup (blockingPaymentEventDispatch),
 			// and every fiscal.MethodKeyOKC comparison below then agree on
 			// one form. See refund_page.go's identical fix for why this
 			// canonicalizes the request value rather than making each
