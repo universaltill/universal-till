@@ -101,6 +101,14 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 		req.DeviceArch = runtime.GOOS + "/" + runtime.GOARCH
 	}
 
+	// Same per-listing serialisation as Install (ut-docs#6975): the .part
+	// file is shared with a direct install of this listing.
+	unlock, lerr := lockListing(ctx, i.downloadTmpDir, req.ListingID)
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer unlock()
+
 	// Reclaim space from stale/abandoned stages before doing new network
 	// work (ut-docs#749) — cheap local disk housekeeping, self-healing.
 	i.sweepStoreDownloads()
@@ -187,6 +195,11 @@ func (i *MarketplaceInstaller) InstallFromStore(ctx context.Context, listingID, 
 	if !i.verifier.HasPublicKey() {
 		return nil, fmt.Errorf("marketplace public key not configured")
 	}
+	unlock, lerr := lockListing(ctx, i.downloadTmpDir, listingID)
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer unlock()
 	sd, err := i.GetStoreDownload(listingID)
 	if err != nil {
 		return nil, err
