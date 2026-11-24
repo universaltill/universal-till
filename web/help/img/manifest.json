@@ -751,7 +751,7 @@
       "sha256": "d9503d212b4647918ca738e637b373110de2bb3fb183178102f151b35ce03350"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "2bec518473252aa2c20b0a9d90775ed9a8da8f0534bebebf24bcfb08a3fab713"
+      "sha256": "9106b0c0c7fbb29c530a1711deb70815eaab1440153c1d87fb7df2a1daa9aaed"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "cca7cd0dd303c0a4c4e770c25f571ee6b6aae3e3cf3c85c3649cf872238404dc"
@@ -811,7 +811,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "c37e79d3952ead6681f89ccd5d019715dccaf6c392c23cf1bb8dea1b24b499d0"
+      "sha256": "4e2a19b7c0e8fc5893f0871710f2033cd48b9eca324f1ed4f62fa31106e02c78"
     },
     "web/public/app.js": {
       "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
