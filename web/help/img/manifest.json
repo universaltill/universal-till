@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "d596fa1020e377741834c5aedfaec0a8659a050914de186782747f0d1c4472df",
+      "en": "1656912b66c54cb05dc7abce16f1c9cd185a24fc44797d40112e56a09d72434c",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -433,7 +433,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "aad90d257c64a3a1b826de41af2909c22fd2a44b7785d3979cc78c603709d024"
+      "sha256": "ee71dad62e232cb00c9618a958d3e15fa13fffe97b961ac5b41f1efca08ec228"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -514,7 +514,7 @@
       "sha256": "3bf89b328b8d6b2a4429605b0c59c4718a2ea6bc05e206a7f853ec856780519c"
     },
     "internal/pages/init.go": {
-      "sha256": "7a5f040e28a18b725605ffe5a0c4b5b0d5137e3117de00da678c9dd57f11dda3"
+      "sha256": "6bf1668ebe290037465fd1055676d088de9d39482894ba071b457b57e7b424cb"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -817,7 +817,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "15751569c00c2ab6c942ab936fc85bd7fd1295f1138c572474eb7915eb6eb8c5"
+      "sha256": "cb7400fc6adcb6c16e9b41a6470165156191017cf75c0ca114872c724fde3dad"
     },
     "web/public/app.js": {
       "sha256": "8a75db2798adebf0dac11b07988e8d02b0eaa8bca55c30ac714135c91f8bfb93"
@@ -1576,7 +1576,7 @@
       "sha256": "d285b1538e9b0808756b7c3be69e7b7fc79d11341b330ddbcc7dcf1c57765289"
     },
     "web/ui/layouts/base.html": {
-      "sha256": "910429712e46dee73ff5f7b7e67fecd928050d1134da6ffcfacc6e88850090d2"
+      "sha256": "dc6cef2a30e69f8cfecedc8ff3753a1fcff8e700f580a1d0f682936e05e88bca"
     },
     "web/ui/pages/about.html": {
       "sha256": "445d92b016b4043f1b32eefeca34d9c677b28108662407afc2c90ac3ddac81e2"
@@ -1862,6 +1862,9 @@
     },
     "web/ui/partials/cloud_restore_status.html": {
       "sha256": "51a87a1c5f8291de0b8563adefe4a036430ee9412ba6c692e3ae55a009cf913d"
+    },
+    "web/ui/partials/cloud_sync_chip.html": {
+      "sha256": "a44051cca39c512196e5a8eb501f8985e7d90685ad7613c8e4cf5f9249fb4917"
     },
     "web/ui/partials/confirm_prompt.html": {
       "sha256": "8ffabb82bec1b687fc009a3b36e38298ca62c42f17b242dbc23f9b9b3946d947"
