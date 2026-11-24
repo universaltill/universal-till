@@ -115,6 +115,9 @@ type ProviderCap struct {
 type SetupResult struct {
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
+	// Detail is the native side's raw error code (e.g. "stripe 2900"), kept
+	// only when it is code-shaped; never a message, body or token (#6981).
+	Detail string `json:"detail,omitempty"`
 }
 
 var (
@@ -287,14 +290,53 @@ func setupCall(ctx context.Context, provider string, call func(Bridge) string) S
 	}()
 	select {
 	case raw := <-replies:
-		var r SetupResult
-		if err := strictDecode(raw, &r); err != nil {
-			return SetupResult{Reason: ReasonBadNativeResult}
-		}
-		return r
+		return parseSetupResult(raw)
 	case <-ctx.Done():
 		return SetupResult{Reason: ReasonTimeout}
 	}
+}
+
+// parseSetupResult decodes a native Setup answer strictly. A reason that is
+// not code-shaped makes the whole answer unreadable; a detail that is not
+// code-shaped is dropped (the reason stays).
+func parseSetupResult(raw string) SetupResult {
+	var r SetupResult
+	if err := strictDecode(raw, &r); err != nil || !codeShaped(r.Reason) {
+		return SetupResult{Reason: ReasonBadNativeResult}
+	}
+	if !detailShaped(r.Detail) {
+		r.Detail = ""
+	}
+	return r
+}
+
+// codeShaped: empty, or 1-64 of [a-z0-9_].
+func codeShaped(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// detailShaped: empty, or 1-64 of [A-Za-z0-9_. -] ("stripe 2900",
+// "NSURLErrorDomain -1009").
+func detailShaped(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == ' ' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // Outcomes a manager can give an unresolved payment (ut-docs#6533).
@@ -357,11 +399,7 @@ func Resolve(ctx context.Context, who Actor, provider, idempotencyKey, outcome s
 	}()
 	select {
 	case raw := <-replies:
-		var res SetupResult
-		if err := strictDecode(raw, &res); err != nil {
-			return SetupResult{Reason: ReasonBadNativeResult}
-		}
-		return res
+		return parseSetupResult(raw)
 	case <-ctx.Done():
 		return SetupResult{Reason: ReasonTimeout}
 	}

@@ -41,6 +41,21 @@ final class TapToPayModelsTests: XCTestCase {
         XCTAssertEqual(a, b, "Swift must encode exactly the keys Go accepts")
     }
 
+    /// ut-docs#6981: the Setup answer's optional raw error code.
+    func testGoldenSetupRoundTrip() throws {
+        let data = try golden("setup_golden.json")
+        let decoded = try JSONDecoder().decode(SetupOutcome.self, from: data)
+        XCTAssertEqual(decoded, SetupOutcome(ok: false, reason: "other", detail: "stripe 2900"))
+        let encoded = try JSONEncoder().encode(decoded)
+        let a = try JSONSerialization.jsonObject(with: encoded) as? NSDictionary
+        let b = try JSONSerialization.jsonObject(with: data) as? NSDictionary
+        XCTAssertEqual(a, b, "Swift must encode exactly the keys Go accepts")
+
+        let ok = try JSONEncoder().encode(SetupOutcome(ok: true, reason: nil))
+        let obj = try JSONSerialization.jsonObject(with: ok) as? [String: Any]
+        XCTAssertEqual(Set(obj?.keys.map { $0 } ?? []), ["ok"])
+    }
+
     func testNilFieldsAreOmitted() throws {
         let encoded = try JSONEncoder().encode(CollectResult.pending(TapToPayReason.timeout))
         let obj = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]

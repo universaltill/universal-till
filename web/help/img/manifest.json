@@ -201,10 +201,10 @@
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
     },
     "tap-to-pay": {
-      "en": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
-      "fa": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
-      "ar": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
-      "tr": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6"
+      "en": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
+      "fa": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
+      "ar": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
+      "tr": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0"
     },
     "tax-codes": {
       "en": "a9aea0cf38a7176e7bfc8ce99928988247a9bbe4a02695501d27d73da6c0b321",
@@ -751,7 +751,7 @@
       "sha256": "d9503d212b4647918ca738e637b373110de2bb3fb183178102f151b35ce03350"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "68853ddedc2313659da905caf9f1bd0b9584c8cd98b05b99b23be5e2cb44932e"
+      "sha256": "2bec518473252aa2c20b0a9d90775ed9a8da8f0534bebebf24bcfb08a3fab713"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "cca7cd0dd303c0a4c4e770c25f571ee6b6aae3e3cf3c85c3649cf872238404dc"
@@ -811,7 +811,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "bac05fffbbad519215807a60b828308cb70c5ff470993092d3fac7ba18e58bea"
+      "sha256": "c37e79d3952ead6681f89ccd5d019715dccaf6c392c23cf1bb8dea1b24b499d0"
     },
     "web/public/app.js": {
       "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
@@ -2125,7 +2125,7 @@
       "sha256": "15f8e4325ca8fc7230a5efd125466fd28c8cb6bb88c5773fc4f673c91ac7933b"
     },
     "web/ui/partials/tap_settings_body.html": {
-      "sha256": "1e1c3586ff0f47b9d094ffbf669656568a80fd657e75b2aa5b67cf957e4eb842"
+      "sha256": "b267db37607f77bd76ad46b45bf4187e35ccabde3c19ce9f3868e840d45b0ba1"
     },
     "web/ui/partials/tax_autoinstall_chip.html": {
       "sha256": "b2c2308b503c2ad8f6bd98577f77a3babdc231867507162b99bbea3a30604a2d"

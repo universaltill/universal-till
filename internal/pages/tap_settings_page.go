@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,15 +47,27 @@ type tapCloud struct {
 	Source string // own | connect
 	Live   bool
 	Reason string
+	// ErrCode is the stable code of a failed broker call (Known is false);
+	// shown to support under "Details", never as prose.
+	ErrCode string
 }
 
+// tapStep is one line of the checklist. The slice order is the order a
+// manager does them: device, allow, apple, account (ut-docs#6981).
 type tapStep struct {
-	ID       string // device | apple | stripe | allow
+	ID       string // device | allow | apple | account
 	Done     bool
 	Unknown  bool   // the state could not be read (never "not set up")
 	LineKey  string // i18n key of the one muted line
-	Action   string // "" | setup | grant: only on the first unfinished step
+	Action   string // "" | grant | setup
 	ActionOK bool
+	// HintKey is the i18n key of the visible reason a present Action is
+	// disabled ("" when it is enabled, or when the status block already says
+	// why). Never a silently disabled button (ADR-0198 3.8).
+	HintKey string
+	Busy    bool   // the Setup is running (aria-busy)
+	IsNext  bool   // this step's button is the status block's one button
+	Detail  string // raw code under "Details for support" (account step)
 }
 
 type tapSettingsView struct {
@@ -66,13 +79,16 @@ type tapSettingsView struct {
 	ReasonKey  string
 	Test       bool // the Stripe account answered in test mode
 	Steps      []tapStep
+	Next       *tapStep // the step whose button is shown in the status block
 	Progress   int
 	Running    bool
 	NoticeKey  string // set when the last Setup failed
 	NoticeWhy  string // i18n key of the reason of that failure
-	DoneNotice bool   // the last Setup finished
-	AlreadyMsg bool
-	StoreBuild bool
+	// NoticeDetail is the raw code of that failure for "Details for support".
+	NoticeDetail string
+	DoneNotice   bool // the last Setup finished
+	AlreadyMsg   bool
+	StoreBuild   bool
 }
 
 // tapSetupRun is the one Setup in flight (or the last one that finished).
@@ -95,13 +111,61 @@ type tapSettingsCtl struct {
 // only a till with a native Tap to Pay bridge has anything to prepare.
 func tapSettingsAvailable() bool { return devicepay.RegisteredBridge() != nil }
 
-// tapReasonKey is the i18n key of a capability / setup reason.
-func tapReasonKey(reason string) string {
-	switch reason {
-	case "ipad", "unsupported_device", "ios_too_old", "not_onboarded", "offline", "terms", "location", "not_foreground", "not_main", "timeout":
-		return "tap.settings.reason." + reason
+// tapNativeReason maps the native bridges' reason strings (iOS and Android
+// send terms_not_accepted / location_denied) onto the page's vocabulary; the
+// short forms stay accepted.
+func tapNativeReason(r string) string {
+	switch r {
+	case "terms_not_accepted":
+		return "terms"
+	case "location_denied":
+		return "location"
+	}
+	return r
+}
+
+// tapReasonKey is the i18n key of a setup / capability reason or of a broker
+// error code (ut-docs#6981). code is passed through tapNativeReason by the
+// caller; detail is the native error code of an "other" failure: with one,
+// "other" is Apple's or Stripe's own failure.
+func tapReasonKey(code, detail string) string {
+	switch code {
+	case "ipad", "unsupported_device", "ios_too_old", "not_foreground", "not_main", "timeout", "terms", "location", "not_onboarded", "offline":
+		return "tap.settings.reason." + code
+	case "device_role_forbidden":
+		return "tap.settings.reason.not_main"
+	case "device_role_unrecorded", "device_role_unconfirmed", "unauthorized", "token_retired", "device_credential_required":
+		return "tap.settings.source.setup_again"
+	case "not_enrolled", "insecure_endpoint", "entitlement_missing", "busy":
+		return "tap.settings.reason." + code
+	case "canceled_by_user":
+		return "tap.settings.reason.cancelled"
+	case "other":
+		if detail != "" {
+			return "tap.settings.reason.apple_failed"
+		}
+	case "auth_unavailable", "provider_unavailable", "response_too_large":
+		return "tap.settings.reason.service_unavailable"
+	case "not_enabled", "disabled":
+		return "tap.settings.reason.not_enabled"
+	case "account_not_ready", "profile_incomplete":
+		return "tap.settings.reason.not_onboarded"
+	case "not_connected", "account_disconnected":
+		return "tap.settings.reason.not_connected"
+	}
+	if len(code) == 8 && strings.HasPrefix(code, "http_5") {
+		return "tap.settings.reason.service_unavailable"
 	}
 	return "tap.settings.reason.generic"
+}
+
+// tapDetailText is what a failed Setup shows under "Details for support":
+// the reason, plus the native error code when there is one.
+func tapDetailText(reason, detail string) string {
+	if detail == "" || detail == reason {
+		return reason
+	}
+	return reason + " (" + detail + ")"
 }
 
 // readCloud asks the broker for the Stripe account's state (fresh = skip the
@@ -119,12 +183,16 @@ func (c *tapSettingsCtl) readCloud(ctx context.Context, fresh bool) tapCloud {
 	out, err := paybroker.Call(cctx, paybroker.CallerCore, devicepay.ProviderStripe, "onboarding_status", []byte("{}"))
 	var got tapCloud
 	var he *paybroker.HTTPError
-	if errors.As(err, &he) && (he.Code == paybroker.CodeDeviceRoleUnrecorded || he.Code == paybroker.CodeDeviceRoleUnconfirmed) {
+	switch {
+	case errors.As(err, &he) && (he.Code == paybroker.CodeDeviceRoleUnrecorded || he.Code == paybroker.CodeDeviceRoleUnconfirmed):
 		// The cloud refused this till's credential (set up before roles were
 		// recorded): a known answer, not "unreachable" (UX copy section 4).
 		got = tapCloud{Known: true, Reason: paybroker.CodeDeviceRoleUnrecorded} // unconfirmed reads the same
+	case err != nil:
+		got = tapCloud{ErrCode: paybroker.ErrorCode(err)}
 	}
 	if err == nil {
+		got = tapCloud{ErrCode: "failed"}
 		var a struct {
 			Ready    bool   `json:"ready"`
 			Source   string `json:"source"`
@@ -141,29 +209,41 @@ func (c *tapSettingsCtl) readCloud(ctx context.Context, fresh bool) tapCloud {
 	return got
 }
 
-func tapStripeLine(c tapCloud, storeBuild bool) (key string, done, unknown bool) {
+// tapStripeLine is the account step's line. A failed broker call is named by
+// its code: transient answers (no internet, service down, anything unknown)
+// are Unknown, never "not set up"; definitive refusals are not. detail is the
+// raw code for "Details for support".
+func tapStripeLine(c tapCloud, storeBuild bool) (key string, done, unknown bool, detail string) {
 	switch {
 	case !c.Known:
-		return "tap.settings.source.unreachable", false, true
+		code := tapNativeReason(c.ErrCode)
+		key = tapReasonKey(code, "")
+		switch key {
+		case "tap.settings.reason.offline":
+			return "tap.settings.source.unreachable", false, true, c.ErrCode
+		case "tap.settings.reason.service_unavailable", "tap.settings.reason.generic":
+			return key, false, true, c.ErrCode
+		}
+		return key, false, false, c.ErrCode
 	case c.Ready && c.Source == "own":
-		return "tap.settings.source.own", true, false
+		return "tap.settings.source.own", true, false, ""
 	case c.Ready:
-		return "tap.settings.source.connect", true, false
+		return "tap.settings.source.connect", true, false, ""
 	}
 	switch c.Reason {
 	case paybroker.CodeDeviceRoleUnrecorded:
-		return "tap.settings.source.setup_again", false, false
+		return "tap.settings.source.setup_again", false, false, ""
 	case "needs_attention":
-		return "tap.settings.source.needs_attention", false, false
+		return "tap.settings.source.needs_attention", false, false, ""
 	case "address_incomplete":
-		return "tap.settings.source.address_incomplete", false, false
+		return "tap.settings.source.address_incomplete", false, false, ""
 	case "country_unsupported":
-		return "tap.settings.source.country_unsupported", false, false
+		return "tap.settings.source.country_unsupported", false, false, ""
 	}
 	if storeBuild {
-		return "tap.settings.source.not_configured_store", false, false
+		return "tap.settings.source.not_configured_store", false, false, ""
 	}
-	return "tap.settings.source.not_configured", false, false
+	return "tap.settings.source.not_configured", false, false, ""
 }
 
 // tapPermissionsGranted reports whether every permission of the grant
@@ -208,7 +288,10 @@ func tapProviderPlugin(ctx context.Context, d *common.Deps, provider string) str
 	return ""
 }
 
-func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView {
+// build reads the page's state. canGrant is whether the viewer may allow
+// card taps (plugin_management); the page needs it to say so up front rather
+// than offer a button the POST would refuse.
+func (c *tapSettingsCtl) build(ctx context.Context, fresh, canGrant bool) tapSettingsView {
 	v := tapSettingsView{Available: tapSettingsAvailable()}
 	if !v.Available {
 		return v
@@ -219,6 +302,7 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 	v.NotMain = !tapOfferedOn(source)
 	v.Additional = source == readerSourceAdditional
 	caps := devicepay.Capabilities()[devicepay.ProviderStripe]
+	caps.Reason = tapNativeReason(caps.Reason)
 	c.mu.Lock()
 	run := c.setup
 	c.mu.Unlock()
@@ -227,14 +311,14 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 
 	cloud := c.readCloud(ctx, fresh)
 	v.Test = cloud.Known && cloud.Ready && !cloud.Live
-	stripeKey, stripeDone, stripeUnknown := tapStripeLine(cloud, v.StoreBuild)
+	stripeKey, stripeDone, stripeUnknown, stripeDetail := tapStripeLine(cloud, v.StoreBuild)
 	pluginID := tapProviderPlugin(ctx, d, devicepay.ProviderStripe)
 	allowed := tapPermissionsGranted(ctx, d, pluginID)
 
 	deviceBlocked := caps.Reason == "ipad" || caps.Reason == "unsupported_device" || caps.Reason == "ios_too_old"
 	deviceLine := "tap.settings.step.device_ok"
 	if deviceBlocked {
-		deviceLine = tapReasonKey(caps.Reason)
+		deviceLine = tapReasonKey(caps.Reason, "")
 	}
 	if v.NotMain {
 		deviceLine = "tap.settings.reason.not_main"
@@ -242,42 +326,67 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 	appleDone := caps.Ready || caps.Reason == "not_onboarded"
 	appleLine := "tap.settings.apple_line"
 	if !appleDone && (caps.Reason == "terms" || caps.Reason == "location") {
-		appleLine = tapReasonKey(caps.Reason)
+		appleLine = tapReasonKey(caps.Reason, "")
 	}
 	v.Steps = []tapStep{
 		{ID: "device", Done: !deviceBlocked && !v.NotMain, LineKey: deviceLine},
-		{ID: "apple", Done: appleDone && !deviceBlocked, LineKey: appleLine},
-		{ID: "account", Done: stripeDone, Unknown: stripeUnknown, LineKey: stripeKey},
 		{ID: "allow", Done: allowed, LineKey: "tap.settings.permission_line"},
+		{ID: "apple", Done: appleDone && !deviceBlocked, LineKey: appleLine},
+		{ID: "account", Done: stripeDone, Unknown: stripeUnknown, LineKey: stripeKey, Detail: stripeDetail},
 	}
 
-	// The first unfinished step carries the action; the Set up button only
-	// where pressing it can help.
+	// Allow card taps comes first: it needs no network and no Apple, and Set
+	// up stays visible but disabled, with its reason, until it is done. The
+	// gate is guidance only: the Setup route still works without the grant.
 	canSetup := !v.NotMain && !deviceBlocked && caps.Reason != "offline" && caps.Reason != "not_foreground"
+	blocked := v.NotMain || deviceBlocked
 	for i := range v.Steps {
-		if v.Steps[i].Done {
+		st := &v.Steps[i]
+		if st.Done || blocked {
 			continue
 		}
-		switch v.Steps[i].ID {
-		case "apple":
-			v.Steps[i].Action = "setup"
-			v.Steps[i].ActionOK = canSetup && !v.Running
+		switch st.ID {
 		case "allow":
-			v.Steps[i].Action = "grant"
-			v.Steps[i].ActionOK = !v.NotMain && pluginID != ""
+			st.Action = "grant"
+			switch {
+			case pluginID == "":
+				st.HintKey = "tap.settings.hint.plugin_missing"
+			case !canGrant:
+				st.HintKey = "tap.settings.reason.permission"
+			}
+			st.ActionOK = st.HintKey == ""
+		case "apple":
+			st.Action = "setup"
+			st.Busy = v.Running
+			if !v.Running && !allowed {
+				st.HintKey = "tap.settings.hint.allow_first"
+			}
+			st.ActionOK = !v.Running && allowed && canSetup
 		}
-		break
+	}
+	// The status block carries the one button that can be (or visibly cannot
+	// be) pressed next: Allow while not allowed, else Set up.
+	for i := range v.Steps {
+		st := &v.Steps[i]
+		if !st.Done && st.Action != "" && (st.ActionOK || st.HintKey != "") {
+			v.Next, st.IsNext = st, true
+			break
+		}
 	}
 
+	allDone := true
+	for _, st := range v.Steps {
+		allDone = allDone && st.Done
+	}
 	switch {
 	case v.NotMain:
 		v.State, v.Icon, v.ReasonKey = "unavailable", "ℹ", "tap.settings.reason.not_main"
 	case deviceBlocked, caps.Reason == "offline", caps.Reason == "not_foreground":
-		v.State, v.Icon, v.ReasonKey = "unavailable", "ℹ", tapReasonKey(caps.Reason)
+		v.State, v.Icon, v.ReasonKey = "unavailable", "ℹ", tapReasonKey(caps.Reason, "")
 	case v.Running || caps.State == "preparing":
 		v.State, v.Icon, v.ReasonKey = "preparing", "⌛", "tap.settings.setup_running"
 		v.Running = true
-	case v.Steps[0].Done && v.Steps[1].Done && v.Steps[2].Done && v.Steps[3].Done:
+	case allDone:
 		v.State, v.Icon, v.ReasonKey = "ready", "✓", "tap.settings.lead_ready"
 	default:
 		v.State, v.Icon = "needs_setup", "ℹ"
@@ -287,12 +396,18 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 			}
 			v.ReasonKey = s.LineKey
 			switch {
-			case s.ID == "apple" && s.LineKey == "tap.settings.apple_line":
-				v.ReasonKey = tapReasonKey("terms")
 			case s.ID == "allow":
-				v.ReasonKey = "tap.settings.reason.permission"
+				v.ReasonKey = "tap.settings.lead.allow"
+			case s.ID == "apple" && s.LineKey == "tap.settings.apple_line":
+				v.ReasonKey = "tap.settings.lead.apple"
 			}
 			break
+		}
+	}
+	if v.State == "preparing" || v.State == "unavailable" {
+		// The Set up button stays in the list (disabled) while it runs.
+		if v.Next != nil {
+			v.Next.IsNext, v.Next = false, nil
 		}
 	}
 	if run.done && !run.running {
@@ -300,7 +415,8 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 			v.DoneNotice = true
 		} else {
 			v.NoticeKey = "tap.settings.setup_failed"
-			v.NoticeWhy = tapReasonKey(run.res.Reason)
+			v.NoticeWhy = tapReasonKey(tapNativeReason(run.res.Reason), run.res.Detail)
+			v.NoticeDetail = tapDetailText(run.res.Reason, run.res.Detail)
 		}
 	}
 	return v
@@ -338,7 +454,7 @@ func (c *tapSettingsCtl) startSetup(actor string) bool {
 		c.setup = tapSetupRun{done: true, res: res}
 		c.cloudAt = time.Time{} // re-read the Stripe state after a Setup
 		c.mu.Unlock()
-		c.audit(actor, "tap_to_pay.setup", map[string]any{"ok": res.OK, "reason": res.Reason})
+		c.audit(actor, "tap_to_pay.setup", map[string]any{"ok": res.OK, "reason": res.Reason, "detail": res.Detail})
 	}()
 	return true
 }
@@ -355,7 +471,7 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 			"title":     httpx.T(locale, "page.title.tap_settings"),
 			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
-			"tap":       c.build(r.Context(), true),
+			"tap":       c.build(r.Context(), true, canPerform(d, r, "plugin_management")),
 		})(w, r)
 	})
 
@@ -363,7 +479,7 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 		if readerSettingsDenied(d, w, r) {
 			return
 		}
-		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), false))
+		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), false, canPerform(d, r, "plugin_management")))
 	})
 
 	mux.HandleFunc("POST /settings/tap-to-pay/setup", func(w http.ResponseWriter, r *http.Request) {
@@ -377,11 +493,11 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 		if !tapOfferedOn(effectiveReaderSource(r.Context(), d, readerSourcePOS)) {
 			// Only the main, standalone and additional tills take Tap to Pay
 			// (ADR-0198 2, Amendment 2026-11-23): refused, no native call.
-			c.renderBody(w, r, http.StatusConflict, c.build(r.Context(), false))
+			c.renderBody(w, r, http.StatusConflict, c.build(r.Context(), false, canPerform(d, r, "plugin_management")))
 			return
 		}
 		started := c.startSetup(settingsActorID(r))
-		v := c.build(r.Context(), false)
+		v := c.build(r.Context(), false, canPerform(d, r, "plugin_management"))
 		v.AlreadyMsg = !started
 		c.renderBody(w, r, http.StatusOK, v)
 	})
@@ -409,7 +525,7 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		pluginID := tapProviderPlugin(r.Context(), d, devicepay.ProviderStripe)
 		if pluginID == "" {
-			c.renderBody(w, r, http.StatusConflict, c.build(r.Context(), false))
+			c.renderBody(w, r, http.StatusConflict, c.build(r.Context(), false, canPerform(d, r, "plugin_management")))
 			return
 		}
 		for _, perm := range tapGrantPermissions {
@@ -421,6 +537,6 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		plugins.SharedBus(d.Db).BumpGeneration()
 		c.audit(settingsActorID(r), "tap_to_pay.permissions_granted", map[string]any{"plugin_id": pluginID, "permissions": tapGrantPermissions})
-		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), false))
+		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), false, canPerform(d, r, "plugin_management")))
 	})
 }

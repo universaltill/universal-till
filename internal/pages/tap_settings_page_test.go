@@ -2,9 +2,11 @@ package pages
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
@@ -56,7 +59,8 @@ func (b *fakeTapBridge) ShowEducation(string) string {
 func (b *fakeTapBridge) setCaps(s string) { b.mu.Lock(); b.caps = s; b.mu.Unlock() }
 func (b *fakeTapBridge) calls() int       { b.mu.Lock(); defer b.mu.Unlock(); return b.setupCalls }
 
-const capsNeedsTerms = `{"tap_to_pay":{"stripe":{"ready":false,"state":"needs_setup","reason":"terms","progress":0}}}`
+const capsNeedsTerms = `{"tap_to_pay":{"stripe":{"ready":false,"state":"needs_setup","reason":"terms_not_accepted","progress":0}}}`
+const capsNeedsSetupNoReason = `{"tap_to_pay":{"stripe":{"ready":false,"state":"needs_setup","progress":0}}}`
 const capsReady = `{"tap_to_pay":{"stripe":{"ready":true,"state":"ready","progress":0}}}`
 
 type tapSettingsEnv struct {
@@ -177,15 +181,284 @@ func TestTapSettings_NoBridge(t *testing.T) {
 	}
 }
 
-func TestTapSettings_NeedsSetupShowsOneAction(t *testing.T) {
+// ut-docs#6981: Allow card taps comes first and is the status block's one
+// button; Set up stays visible but disabled, with its reason right after it.
+func TestTapSettings_NeedsSetup_AllowFirst(t *testing.T) {
 	e := tapSettingsRig(t)
 	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
 	want(t, rec, 200, `data-state="needs_setup"`, `data-testid="tap-setup"`, "Using your own Stripe account.", `data-testid="tap-test-mode"`)
-	if strings.Contains(rec.Body.String(), `data-testid="tap-grant"`) {
-		t.Fatal("Allow card taps offered before the first unfinished step (Set up) is done")
+	body := rec.Body.String()
+	grant := strings.Index(body, `data-testid="tap-grant"`)
+	list := strings.Index(body, `<ol class="tap-steps"`)
+	if grant < 0 || list < 0 || grant > list {
+		t.Fatalf("Allow card taps is not the button of the status block (grant=%d list=%d)", grant, list)
 	}
-	if strings.Contains(rec.Body.String(), "device:tap_to_pay") {
+	if tag := openingTag(body, `data-testid="tap-grant"`); isDisabled(tag) {
+		t.Fatalf("Allow card taps is disabled for a manager: %s", tag)
+	}
+	if tag := openingTag(body, `data-testid="tap-setup"`); !isDisabled(tag) || !strings.Contains(tag, `aria-describedby="tap-hint-apple"`) || strings.Contains(tag, "aria-busy") {
+		t.Fatalf("Set up must be disabled, point at its reason and not be busy: %s", tag)
+	}
+	want(t, rec, 200, `data-testid="tap-hint-apple"`, "Allow card taps first.", "Start by allowing card taps on this iPhone.")
+	if strings.Count(body, `<button type="button" id="tap-grant"`) != 1 || strings.Count(body, `<button type="button" id="tap-setup"`) != 1 {
+		t.Fatalf("a button is rendered more than once: grant=%d setup=%d", strings.Count(body, `<button type="button" id="tap-grant"`), strings.Count(body, `<button type="button" id="tap-setup"`))
+	}
+	if strings.Contains(body, "device:tap_to_pay") {
 		t.Fatal("a permission key name is shown")
+	}
+}
+
+// isDisabled reports whether an opening tag carries the disabled attribute
+// (not hx-disabled-elt).
+func isDisabled(tag string) bool {
+	return regexp.MustCompile(`\sdisabled[\s>=]`).MatchString(tag)
+}
+
+// openingTag returns the opening tag (up to its closing '>') that contains marker.
+func openingTag(body, marker string) string {
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(body[:i], "<")
+	end := strings.Index(body[i:], ">")
+	if start < 0 || end < 0 {
+		return ""
+	}
+	return body[start : i+end+1]
+}
+
+// section returns body from marker to the first end after it ("" when absent).
+func section(body, marker, end string) string {
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(body[i:], end)
+	if j < 0 {
+		return body[i:]
+	}
+	return body[i : i+j]
+}
+
+func esc(s string) string { return html.EscapeString(s) }
+
+// waitSetupFailed polls the status route until the failed-Setup notice shows.
+func waitSetupFailed(e *tapSettingsEnv) *httptest.ResponseRecorder {
+	var rec *httptest.ResponseRecorder
+	for i := 0; i < 300; i++ {
+		rec = e.do("manager", "GET", "/settings/tap-to-pay/status", nil)
+		if strings.Contains(rec.Body.String(), "tap-setup-failed") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return rec
+}
+
+func TestTapSettings_StepOrder(t *testing.T) {
+	e := tapSettingsRig(t)
+	body := e.do("manager", "GET", "/settings/tap-to-pay", nil).Body.String()
+	last := -1
+	for _, id := range []string{"device", "allow", "apple", "account"} {
+		i := strings.Index(body, `data-testid="tap-step-`+id+`"`)
+		if i < 0 || i <= last {
+			t.Fatalf("step %s at %d (previous %d): order must be device, allow, apple, account", id, i, last)
+		}
+		last = i
+	}
+	if !strings.Contains(section(body, `data-testid="tap-step-allow"`, "</li>"), "Next step") {
+		t.Fatal("the Allow row does not carry the Next step tag")
+	}
+}
+
+func TestTapSettings_GrantThenSetupEnabled(t *testing.T) {
+	e := tapSettingsRig(t)
+	e.bridge.setCaps(capsNeedsSetupNoReason)
+	rec := e.do("manager", "POST", "/settings/tap-to-pay/grant", url.Values{})
+	want(t, rec, 200, `data-testid="tap-permission-granted"`, "Press Set up and follow Apple&#39;s steps on screen.")
+	body := rec.Body.String()
+	if tag := openingTag(body, `data-testid="tap-setup"`); isDisabled(tag) {
+		t.Fatalf("Set up still disabled after the grant: %s", tag)
+	}
+	if strings.Contains(body, "tap-hint-apple") || strings.Contains(body, `data-testid="tap-grant"`) {
+		t.Fatal("a stale hint or the Allow button remains after the grant")
+	}
+	if i, l := strings.Index(body, `data-testid="tap-setup"`), strings.Index(body, `<ol class="tap-steps"`); i > l {
+		t.Fatal("Set up is not the status block's button once allowed")
+	}
+}
+
+func TestTapSettings_PluginMissingExplainsDisabledAllow(t *testing.T) {
+	e := tapSettingsRig(t)
+	if _, err := e.dp.Db.Exec(`UPDATE plugin_entries SET config_json = '{}' WHERE plugin_id = ?`, e.plugin); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, `data-testid="tap-hint-allow"`, esc(enText(t, "tap.settings.hint.plugin_missing")))
+	if tag := openingTag(rec.Body.String(), `data-testid="tap-grant"`); !isDisabled(tag) || !strings.Contains(tag, `aria-describedby="tap-hint-allow"`) {
+		t.Fatalf("Allow must be disabled and point at its reason: %s", tag)
+	}
+}
+
+func TestTapSettings_NonManagerSeesWhoCanAllow(t *testing.T) {
+	e := tapSettingsRig(t)
+	c := &tapSettingsCtl{d: e.dp}
+	v := c.build(context.Background(), true, false)
+	var allow *tapStep
+	for i := range v.Steps {
+		if v.Steps[i].ID == "allow" {
+			allow = &v.Steps[i]
+		}
+	}
+	if allow == nil || allow.Action != "grant" || allow.ActionOK || allow.HintKey != "tap.settings.reason.permission" {
+		t.Fatalf("allow step for a user who may not grant = %+v", allow)
+	}
+	if v.Next == nil || v.Next.ID != "allow" || v.ReasonKey != "tap.settings.lead.allow" {
+		t.Fatalf("next = %+v lead = %q, want the allow step and its lead", v.Next, v.ReasonKey)
+	}
+	if v2 := c.build(context.Background(), true, true); !v2.Steps[1].ActionOK || v2.Steps[1].HintKey != "" {
+		t.Fatalf("allow step for a manager = %+v", v2.Steps[1])
+	}
+}
+
+func TestTapSettings_SetupReasons(t *testing.T) {
+	cases := []struct{ code, key string }{
+		{"terms_not_accepted", "tap.settings.reason.terms"},
+		{"location_denied", "tap.settings.reason.location"},
+		{"not_enrolled", "tap.settings.reason.not_enrolled"},
+		{"insecure_endpoint", "tap.settings.reason.insecure_endpoint"},
+		{"entitlement_missing", "tap.settings.reason.entitlement_missing"},
+		{"busy", "tap.settings.reason.busy"},
+		{"offline", "tap.settings.reason.offline"},
+		{"timeout", "tap.settings.reason.timeout"},
+		{"canceled_by_user", "tap.settings.reason.cancelled"},
+		{"terms", "tap.settings.reason.terms"}, // the short form stays accepted
+	}
+	generic := esc(enText(t, "tap.settings.reason.generic"))
+	for _, c := range cases {
+		t.Run(c.code, func(t *testing.T) {
+			e := tapSettingsRig(t)
+			e.bridge.setupReply = `{"ok":false,"reason":"` + c.code + `"}`
+			e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{})
+			rec := waitSetupFailed(e)
+			failed := section(rec.Body.String(), `data-testid="tap-setup-failed"`, "</div>")
+			if !strings.Contains(failed, esc(enText(t, c.key))) {
+				t.Fatalf("notice lacks %q: %s", enText(t, c.key), failed)
+			}
+			if strings.Contains(failed, generic) {
+				t.Fatalf("notice fell back to the generic line: %s", failed)
+			}
+			if !strings.Contains(section(rec.Body.String(), `data-testid="tap-setup-detail"`, "</details>"), c.code) {
+				t.Fatalf("raw code %q is not under Details for support: %s", c.code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestTapSettings_SetupDetailShown(t *testing.T) {
+	e := tapSettingsRig(t)
+	e.bridge.setupReply = `{"ok":false,"reason":"other","detail":"stripe 2900"}`
+	e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{})
+	rec := waitSetupFailed(e)
+	want(t, rec, 200, esc(enText(t, "tap.settings.reason.apple_failed")), "Details for support")
+	if d := section(rec.Body.String(), `data-testid="tap-setup-detail"`, "</details>"); !strings.Contains(d, "stripe 2900") {
+		t.Fatalf("detail not shown: %s", d)
+	}
+	if n := countRows(t, e.dp, `SELECT COUNT(*) FROM audit_log WHERE action = 'tap_to_pay.setup' AND data_json LIKE '%stripe 2900%'`); n != 1 {
+		t.Fatalf("audit rows with the detail = %d, want 1", n)
+	}
+
+	e2 := tapSettingsRig(t)
+	e2.bridge.setupReply = `{"ok":false,"reason":"weird_code"}`
+	e2.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{})
+	rec = waitSetupFailed(e2)
+	want(t, rec, 200, esc(enText(t, "tap.settings.reason.generic")))
+	if d := section(rec.Body.String(), `data-testid="tap-setup-detail"`, "</details>"); !strings.Contains(d, "weird_code") {
+		t.Fatalf("unknown code not under Details: %s", d)
+	}
+}
+
+func TestTapSettings_AccountBrokerErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		rig     func(e *tapSettingsEnv)
+		code    string
+		key     string
+		unknown bool
+	}{
+		{"not enrolled", func(*tapSettingsEnv) {
+			paybroker.SetTargetResolver(func(context.Context) (paybroker.Target, bool) { return paybroker.Target{}, false })
+		}, "not_enrolled", "tap.settings.reason.not_enrolled", false},
+		{"insecure", func(*tapSettingsEnv) {
+			paybroker.SetTargetResolver(func(context.Context) (paybroker.Target, bool) {
+				return paybroker.Target{BaseURL: "http://broker.example", Bearer: "cred"}, true
+			})
+		}, "insecure_endpoint", "tap.settings.reason.insecure_endpoint", false},
+		{"offline", func(*tapSettingsEnv) {
+			paybroker.SetTargetResolver(func(context.Context) (paybroker.Target, bool) {
+				return paybroker.Target{BaseURL: "http://127.0.0.1:1", Bearer: "cred"}, true
+			})
+		}, "offline", "tap.settings.source.unreachable", true},
+		{"unauthorized", func(e *tapSettingsEnv) { e.broker.setError(401, "unauthorized") }, "unauthorized", "tap.settings.source.setup_again", false},
+		{"forbidden role", func(e *tapSettingsEnv) { e.broker.setError(403, "device_role_forbidden") }, "device_role_forbidden", "tap.settings.reason.not_main", false},
+		{"not enabled", func(e *tapSettingsEnv) { e.broker.setError(404, "not_enabled") }, "not_enabled", "tap.settings.reason.not_enabled", false},
+		{"auth unavailable", func(e *tapSettingsEnv) { e.broker.setError(503, "auth_unavailable") }, "auth_unavailable", "tap.settings.reason.service_unavailable", true},
+		{"unknown code", func(e *tapSettingsEnv) { e.broker.setError(409, "weird_thing") }, "weird_thing", "tap.settings.reason.generic", true},
+		{"not connected", func(e *tapSettingsEnv) { e.broker.setError(409, "not_connected") }, "not_connected", "tap.settings.reason.not_connected", false},
+		{"account not ready 409", func(e *tapSettingsEnv) { e.broker.setError(409, "account_not_ready") }, "account_not_ready", "tap.settings.reason.not_onboarded", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := tapSettingsRig(t)
+			c.rig(e)
+			rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+			want(t, rec, 200)
+			acct := section(rec.Body.String(), `data-testid="tap-step-account"`, "</li>")
+			if !strings.Contains(acct, esc(enText(t, c.key))) {
+				t.Fatalf("account row lacks %q: %s", enText(t, c.key), acct)
+			}
+			if d := section(acct, `data-testid="tap-account-detail"`, "</details>"); !strings.Contains(d, c.code) {
+				t.Fatalf("code %q not under Details: %s", c.code, acct)
+			}
+			if got := strings.Contains(acct, ">"+enText(t, "tap.settings.step.unknown")+"<"); got != c.unknown {
+				t.Fatalf("Unknown tag = %v, want %v: %s", got, c.unknown, acct)
+			}
+			if strings.Contains(acct, "isn&#39;t set up") {
+				t.Fatal("an error was worded as not set up")
+			}
+		})
+	}
+}
+
+func TestTapReasonKey(t *testing.T) {
+	cases := []struct{ code, detail, want string }{
+		{"terms_not_accepted", "", "tap.settings.reason.terms"},
+		{"location_denied", "", "tap.settings.reason.location"},
+		{"terms", "", "tap.settings.reason.terms"},
+		{"ipad", "", "tap.settings.reason.ipad"},
+		{"not_enrolled", "", "tap.settings.reason.not_enrolled"},
+		{"device_role_forbidden", "", "tap.settings.reason.not_main"},
+		{"device_role_unrecorded", "", "tap.settings.source.setup_again"},
+		{"token_retired", "", "tap.settings.source.setup_again"},
+		{"entitlement_missing", "", "tap.settings.reason.entitlement_missing"},
+		{"busy", "", "tap.settings.reason.busy"},
+		{"canceled_by_user", "", "tap.settings.reason.cancelled"},
+		{"other", "stripe 2900", "tap.settings.reason.apple_failed"},
+		{"other", "", "tap.settings.reason.generic"},
+		{"provider_unavailable", "", "tap.settings.reason.service_unavailable"},
+		{"http_502", "", "tap.settings.reason.service_unavailable"},
+		{"http_418", "", "tap.settings.reason.generic"},
+		{"disabled", "", "tap.settings.reason.not_enabled"},
+		{"profile_incomplete", "", "tap.settings.reason.not_onboarded"},
+		{"account_disconnected", "", "tap.settings.reason.not_connected"},
+		{"bad_native_result", "", "tap.settings.reason.generic"},
+		{"", "", "tap.settings.reason.generic"},
+	}
+	for _, c := range cases {
+		if got := tapReasonKey(tapNativeReason(c.code), c.detail); got != c.want {
+			t.Errorf("tapReasonKey(%q, %q) = %q, want %q", c.code, c.detail, got, c.want)
+		}
 	}
 }
 
@@ -220,16 +493,10 @@ func TestTapSettings_Setup_SuccessAndDoubleClick(t *testing.T) {
 
 func TestTapSettings_Setup_TermsNotAccepted(t *testing.T) {
 	e := tapSettingsRig(t)
-	e.bridge.setupReply = `{"ok":false,"reason":"terms"}`
+	// What the iOS bridge really sends (TapToPayReason.termsNotAccepted).
+	e.bridge.setupReply = `{"ok":false,"reason":"terms_not_accepted"}`
 	e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{})
-	var rec *httptest.ResponseRecorder
-	for i := 0; i < 300; i++ {
-		rec = e.do("manager", "GET", "/settings/tap-to-pay/status", nil)
-		if strings.Contains(rec.Body.String(), "tap-setup-failed") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	rec := waitSetupFailed(e)
 	want(t, rec, 200, "Set up didn&#39;t finish. Nothing was charged.", "Apple&#39;s terms haven&#39;t been accepted yet.")
 	if !strings.Contains(rec.Body.String(), `data-testid="tap-setup"`) {
 		t.Fatal("no Try again (Set up) button after a failed Setup: dead end")
@@ -244,14 +511,7 @@ func TestTapSettings_Setup_Timeout(t *testing.T) {
 	e.bridge.gate = make(chan struct{})
 	t.Cleanup(func() { close(e.bridge.gate) }) // lets the native goroutine end
 	e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{})
-	var rec *httptest.ResponseRecorder
-	for i := 0; i < 300; i++ {
-		rec = e.do("manager", "GET", "/settings/tap-to-pay/status", nil)
-		if strings.Contains(rec.Body.String(), "tap-setup-failed") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	rec := waitSetupFailed(e)
 	want(t, rec, 200, "Apple didn&#39;t answer in time. Try again.")
 }
 
@@ -307,7 +567,7 @@ func TestTapSettings_CloudState(t *testing.T) {
 		{"not configured", `{"ready":false,"source":"own","reason":"not_configured"}`, "Add your Stripe key in the shop&#39;s online account (my.universaltill.com)"},
 		{"needs attention", `{"ready":false,"source":"own","reason":"needs_attention"}`, "Your Stripe key needs attention."},
 		{"address", `{"ready":false,"source":"own","reason":"address_incomplete"}`, "Add the shop&#39;s full address"},
-		{"cloud down", ``, "Can&#39;t reach the payment service right now."},
+		{"cloud down", ``, "The payment service isn&#39;t answering right now."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -315,8 +575,13 @@ func TestTapSettings_CloudState(t *testing.T) {
 			e.broker.setStatus(c.answer)
 			rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
 			want(t, rec, 200, c.wantText)
-			if c.name == "cloud down" && strings.Contains(rec.Body.String(), "isn&#39;t set up") {
-				t.Fatal("an unreachable cloud was worded as not set up")
+			if c.name == "cloud down" {
+				if strings.Contains(rec.Body.String(), "isn&#39;t set up") {
+					t.Fatal("an unreachable cloud was worded as not set up")
+				}
+				if d := section(rec.Body.String(), `data-testid="tap-account-detail"`, "</details>"); !strings.Contains(d, "provider_unavailable") {
+					t.Fatalf("cloud code not under Details: %s", d)
+				}
 			}
 			if c.name == "connect ready" && strings.Contains(rec.Body.String(), `data-testid="tap-test-mode"`) {
 				t.Fatal("test-mode tag shown for a live answer")
@@ -346,7 +611,7 @@ func TestTapSettings_SatelliteTillUnavailable(t *testing.T) {
 		e.joinAs(t, role)
 		rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
 		want(t, rec, 200, "This till can&#39;t take Tap to Pay. Only the main till and additional tills can.")
-		if strings.Contains(rec.Body.String(), `data-testid="tap-setup"`) || strings.Contains(rec.Body.String(), `data-testid="tap-additional-note"`) {
+		if strings.Contains(rec.Body.String(), `data-testid="tap-setup"`) || strings.Contains(rec.Body.String(), `data-testid="tap-grant"`) || strings.Contains(rec.Body.String(), `data-testid="tap-additional-note"`) {
 			t.Fatalf("role %q: Set up button or additional note on a till that cannot take tap", role)
 		}
 		if rec := e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{}); rec.Code != http.StatusConflict {

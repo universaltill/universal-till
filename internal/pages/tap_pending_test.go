@@ -69,6 +69,16 @@ type fakeBroker struct {
 	roleRefused bool
 	// roleCode overrides the refusal code (default device_role_unrecorded).
 	roleCode string
+	// errStatus/errCode, when set, answer every call with that HTTP status and
+	// error code (checked before roleRefused; ut-docs#6981).
+	errStatus int
+	errCode   string
+}
+
+func (b *fakeBroker) setError(status int, code string) {
+	b.mu.Lock()
+	b.errStatus, b.errCode = status, code
+	b.mu.Unlock()
 }
 
 func (b *fakeBroker) setRoleCode(c string) { b.mu.Lock(); b.roleCode = c; b.mu.Unlock() }
@@ -117,7 +127,13 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 		cc, cb := b.cancelCode, b.cancelBody
 		hook := b.onCall
 		refused, rcode := b.roleRefused, b.roleCode
+		es, ec := b.errStatus, b.errCode
 		b.mu.Unlock()
+		if es != 0 {
+			w.WriteHeader(es)
+			_, _ = io.WriteString(w, `{"error":{"code":"`+ec+`"}}`)
+			return
+		}
 		if refused {
 			if rcode == "" {
 				rcode = "device_role_unrecorded"
