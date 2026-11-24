@@ -71,7 +71,7 @@ func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRe
 // bridge (no build reports sdk transports yet, §3); external rows have no
 // card-tender path yet (#6755); a tap_to_pay row needs a registered device
 // bridge and is offered on the main/standalone cashier till only (never the
-// kiosk, a satellite or an additional till).
+// kiosk or a satellite).
 func readerEligible(c data.CardReader, source string) bool {
 	if !data.ValidCardReaderPair(c.Kind, c.Transport) {
 		return false

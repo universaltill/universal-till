@@ -69,6 +69,31 @@ func ownTillRole(ctx context.Context, d *common.Deps) string {
 	return data.TillRoleAdditional
 }
 
+// tapJoinedRole is this joined till's role ONLY when it is explicitly recorded
+// (setting sync.till_role, else this till's row in the synced roster). Unlike
+// ownTillRole there is no fallback to additional: it gates money (Tap to Pay),
+// so an unreadable role answers explicit=false and the caller refuses.
+func tapJoinedRole(ctx context.Context, d *common.Deps) (role string, explicit bool) {
+	if d.Settings == nil || d.SyncPrimaryURL(ctx) == "" {
+		return "", false
+	}
+	// A self-order display is a kiosk whatever the roster says: it is what the
+	// till reports to the cloud (cloudsync.joinedTillRole), which narrows the
+	// credential, so the till must not offer a tap the cloud will refuse.
+	if dm, _, _ := d.Settings.Get(ctx, "display.mode"); strings.TrimSpace(dm) == "self_order" {
+		return "kiosk", true
+	}
+	if v, _, _ := d.Settings.Get(ctx, tillRoleSettingsKey); data.ValidTillRole(strings.TrimSpace(v)) {
+		return strings.TrimSpace(v), true
+	}
+	if id, _, _ := d.Settings.Get(ctx, "sync.till_id"); strings.TrimSpace(id) != "" {
+		if role, ok, err := data.NewTillsRepo(d.Db).RoleByID(ctx, strings.TrimSpace(id)); err == nil && ok && data.ValidTillRole(role) {
+			return role, true
+		}
+	}
+	return "", false
+}
+
 // mainTillHostPort is the host[:port] of the main till's URL, scheme and
 // path stripped, for display ("192.168.1.10:8080"). An unparseable value is
 // returned trimmed rather than hidden.

@@ -86,7 +86,12 @@ const (
 )
 
 // AbandonResult is what the handler did; kept as a one-shot notice for the UI.
-type AbandonResult struct{ Reversed, Failed, Unknown int }
+type AbandonResult struct {
+	Reversed, Failed, Unknown int
+	// MainOnly counts the failed legs that an additional till could not
+	// return because a card tap is refunded on the main till (a subset of Failed).
+	MainOnly int
+}
 
 // AbandonedTenderHandler is called (never under s.mu) with the stash a reset
 // dropped. pages registers it; pos never calls plugins itself.

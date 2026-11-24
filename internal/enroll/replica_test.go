@@ -440,6 +440,32 @@ func mainTillCfg(endpoint string) *config.Config {
 	}}
 }
 
+// ADR-0198 Amendment 2026-11-23 go-live precondition: the vouch carries the
+// replica's TRUE role (from the main till's roster) as "role"; an empty or
+// unknown role is omitted, never guessed.
+func TestVouchForReplicaSendsTheReplicasTrueRole(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"additional", "additional"}, {"satellite", "satellite"}, {"kiosk", "kiosk"}, {"", ""}, {"admin", ""},
+	} {
+		resetState()
+		cloud := newFakeCloud(t)
+		cfg := mainTillCfg(cloud.srv.URL)
+		kv := newFakeKV()
+		_ = kv.Set(context.Background(), keyDeviceRegistered, mainDeviceID)
+		initForTest(t, cfg, kv)
+		if _, err := VouchForReplica(context.Background(), cfg, newFakeKV(), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", Role: tc.in}); err != nil {
+			t.Fatalf("vouch %q: %v", tc.in, err)
+		}
+		got, has := cloud.lastReq()["role"]
+		if tc.want == "" && has {
+			t.Fatalf("role %q: sent role %v, want none", tc.in, got)
+		}
+		if tc.want != "" && got != tc.want {
+			t.Fatalf("role %q: sent %v, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // The main till registers the replica's own device id (with the replica's
 // name from the main till's records, its version and its sync till id)
 // under the store with the store token it alone holds. What it returns has

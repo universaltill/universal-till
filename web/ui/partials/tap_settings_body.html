@@ -18,6 +18,7 @@
       {{ if .Test }}<span class="tag warn" data-testid="tap-test-mode">{{ T "tap.settings.mode.test" }}</span>{{ end }}
     </h2>
     <p data-testid="tap-reason">{{ T .ReasonKey }}</p>
+    {{ if and .Additional (ne .State "unavailable") }}<p class="muted" data-testid="tap-additional-note">{{ T "tap.settings.note.additional" }}</p>{{ end }}
     {{ if eq .State "preparing" }}{{ if gt .Progress 0 }}<progress max="100" value="{{ .Progress }}"></progress>{{ else }}<progress></progress>{{ end }}{{ end }}
     {{ if .AlreadyMsg }}<p data-testid="tap-already">{{ T "tap.settings.setup_already" }}</p>{{ end }}
     {{ if .DoneNotice }}<p data-testid="tap-setup-done">{{ T "tap.settings.setup_done" }}</p>{{ end }}

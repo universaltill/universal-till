@@ -3239,6 +3239,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				if tapStart.NotReady {
 					reason = "not_ready"
 				}
+				if tapStart.SetupAgain {
+					reason = "setup_again"
+				}
 				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return
 			}
@@ -4303,7 +4306,24 @@ func reversalRequestID(authReqID string) string {
 // the Problems ring (masked ref) and counted in the return value; it never
 // changes the caller's outcome.
 func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.CapturedLeg, what string) (failed int) {
+	failed, _ = reversePaymentLegsDetail(ctx, d, legs, what)
+	return failed
+}
+
+// reversePaymentLegsDetail is reversePaymentLegs that also counts the failed
+// legs refused because this till cannot refund a card tap (mainOnly, a subset
+// of failed): an additional till never sends a tap refund; the main till does
+// it (ADR-0198 Amendment 2026-11-23). The refused leg takes the ordinary
+// failed-reversal path (journal row, Problems log) with nothing sent.
+func reversePaymentLegsDetail(ctx context.Context, d *common.Deps, legs []pos.CapturedLeg, what string) (failed, mainOnly int) {
 	for _, leg := range legs {
+		if tapRefundMainOnly(ctx, d, leg.MethodID) {
+			failed++
+			mainOnly++
+			journalReversal(ctx, d, leg, data.LegReverseFailed)
+			logging.L().Warnf("%s, but this additional till cannot return a card tap — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: refund it on the main till (ADR-0198 Amendment 2026-11-23)", what, leg.MethodID, leg.Amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef))
+			continue
+		}
 		// ut-docs#6653: reversing is journaled before the send, the outcome
 		// after it. Best effort: the live in-memory reversal always goes ahead.
 		journalReversal(ctx, d, leg, data.LegReversing)
@@ -4342,7 +4362,7 @@ func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.Captured
 		}
 		journalReversal(ctx, d, leg, data.LegReversed)
 	}
-	return failed
+	return failed, mainOnly
 }
 
 // isISO4217Code reports whether c is three uppercase ASCII letters.
