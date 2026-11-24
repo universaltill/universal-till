@@ -9,7 +9,7 @@
       "tr": "84ba161fd78f2f76e5dc2d84923db70c17d7807d4c935fac91ff9ca88b6f2b46"
     },
     "alerts": {
-      "en": "c686e66d465371634f87d359df27900c4c34af0e298eac57ac208a631aee1c6d",
+      "en": "8c92ae68ad9fd18ce6be2f427a4c51da5fc4106bf7a4dd2fc03a6b06c00b7102",
       "fa": "454a36f2194b2f6def50d908e799b0ea6ba91b2231c1a92bf5e05ab820d92118",
       "ar": "cec0d659d35e017b456c82544ad63528edfd715c12b9ce8dab5de5409bcfcf6c",
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
@@ -286,7 +286,10 @@
       "sha256": "3e28a49d1ddafb25f75b81222c636d21e771d53a0633ba33bb39222d38a09136"
     },
     "internal/pages/backoffice_page.go": {
-      "sha256": "0c1eea8fbf8dcdf31b835b57f71d4879c6a707dcb9b56f797519e2c04fdd688c"
+      "sha256": "a0d4912a87744dac916531b0ad509176fa8f07380ee8ccba51d574fbd95eb4ff"
+    },
+    "internal/pages/backoffice_problems.go": {
+      "sha256": "3c739c2da177088a84fe45108d0e825c8a467c38b5016edba9b5a375d2ba80cf"
     },
     "internal/pages/bearer_failures.go": {
       "sha256": "761cf705a2f1ef7fb6971a8d20f83b14cb77d174407cb91a4b68a3a49fb1ebee"
@@ -814,7 +817,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "bac05fffbbad519215807a60b828308cb70c5ff470993092d3fac7ba18e58bea"
+      "sha256": "f33e1df9a6f418883f859fa85f9988804a8fd3e363dea7f8c14f4aab46ece682"
     },
     "web/public/app.js": {
       "sha256": "8a75db2798adebf0dac11b07988e8d02b0eaa8bca55c30ac714135c91f8bfb93"
@@ -1588,7 +1591,7 @@
       "sha256": "f52d9d9309c3683bbd42aa2dd4f3b16615177b89537a3263d2628b148aa47501"
     },
     "web/ui/pages/backoffice.html": {
-      "sha256": "02717b23d76747dcc15e99b587914e25f408489b5146bae6711174b840d4575e"
+      "sha256": "88c61486644107a48637be9dd758bece0cb8fc5926d863644b4c1b8b20381a16"
     },
     "web/ui/pages/bluetooth_devices.html": {
       "sha256": "0be3c1c8921f2471797e8b069dba7eb3845a6cdbaeaf9a9f4e37b0818ecd9bd9"

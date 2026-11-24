@@ -100,7 +100,6 @@ backoffice.go_deeper
 backoffice.inventory
 backoffice.item
 backoffice.low_stock
-backoffice.no_problems
 backoffice.on_hand
 backoffice.problems
 backoffice.reorder_at
