@@ -824,7 +824,7 @@ func TestSyncJoin_PrimaryUnreachable(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Cannot reach the main till") {
+	if !strings.Contains(rec.Body.String(), "reach the main till") {
 		t.Fatalf("expected a 'cannot reach the primary' message, got %q", rec.Body.String())
 	}
 	if appdb.PendingRestore(replicaPath) {

@@ -327,6 +327,13 @@ type ManifestSetting struct {
 	GuideURL    string                   `json:"guide_url,omitempty"`
 	Paste       bool                     `json:"paste,omitempty"`
 	Notice      string                   `json:"notice,omitempty"`
+	// ADR-0214 (ut-docs#6969): how the setting is reported to my. SecretLast4
+	// lets a `type: "secret"` setting's value of 16+ characters report its
+	// last four; Report=false withholds a non-secret value from the report
+	// (nil = true). Both additive and omitempty; ut-cloud's CanonicalSetting
+	// mirrors them. The report never carries a secret value.
+	SecretLast4 bool  `json:"secret_last4,omitempty"`
+	Report      *bool `json:"report,omitempty"`
 }
 
 // ManifestSettingOption is one allowed value of a `type: "choice"` setting:
@@ -1360,6 +1367,22 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return err
 	}
 
+	// 0-a. Replica plugin sync only (ut-docs#6928, ADR-0031 amendment): claim
+	// the ownerless tender rows the main till says this plugin owns, so the
+	// checks below take the self-match path. Same tx: a later refusal rolls
+	// the claim back; a DB error fails closed.
+	if len(opts.AdoptPaymentKeys) > 0 {
+		if keys := adoptablePaymentKeys(m.Entries, opts.AdoptPaymentKeys); len(keys) > 0 {
+			adopted, err := repo.AdoptOwnerlessPaymentMethods(ctx, tx, m.ID, keys)
+			if err != nil {
+				return fmt.Errorf("adopt synced payment methods: %w", err)
+			}
+			if len(adopted) > 0 {
+				logging.L().Infof("plugin %s: adopting tender rows %v its main till reports it owns (ADR-0031, ut-docs#6928)", m.ID, adopted)
+			}
+		}
+	}
+
 	// 0. Payment-entry keys become payment_methods ids verbatim — a key
 	// colliding with a built-in tender or another plugin's method must be
 	// rejected here, loudly, instead of silently never materializing
@@ -1679,6 +1702,13 @@ type InstallOptions struct {
 	// (ADR-0011 amendment, ut-docs#6930). The bundled installer must not set
 	// it: its later enables are not gated by pluginEnableRefusal.
 	SkipActiveOwnerChecks bool
+	// AdoptPaymentKeys: payment_methods ids the replica's main till reports as
+	// owned by THIS plugin (PluginSyncRow.OwnedPaymentMethodIDs). Before the
+	// payment-key check, PersistManifest claims those that are also payment
+	// entries of this manifest, exist locally with no owner and are not
+	// built-ins (ADR-0031 amendment, ut-docs#6928). Set only by the replica
+	// plugin sync; every other installer leaves it nil.
+	AdoptPaymentKeys []string
 }
 
 // The sales-channel manifest block (ADR-0169, ut-docs#4759; validation in
@@ -1733,4 +1763,26 @@ type ManifestChannelWebhookVerify struct {
 	Header   string `json:"header"`
 	Alg      string `json:"alg"`
 	Encoding string `json:"encoding"`
+}
+
+// adoptablePaymentKeys returns the hint keys that equal a payment entry key of
+// this manifest, deduped, in manifest order. A hint key the manifest does not
+// declare is ignored (ut-docs#6928).
+func adoptablePaymentKeys(entries []ManifestEntry, hint []string) []string {
+	if len(hint) == 0 {
+		return nil
+	}
+	in := make(map[string]bool, len(hint))
+	for _, k := range hint {
+		in[k] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Type == "payment" && in[e.Key] && !seen[e.Key] {
+			seen[e.Key] = true
+			out = append(out, e.Key)
+		}
+	}
+	return out
 }

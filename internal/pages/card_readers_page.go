@@ -221,6 +221,7 @@ func registerCardReaders(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	registerCardReaderSettings(mux, d)
+	registerTapSettings(mux, d) // ut-docs#6458: Settings > Payments > Tap to Pay
 }
 
 // ---- manager page ----

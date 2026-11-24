@@ -66,8 +66,18 @@
       <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#10003;</span> {{ T "tap.paid_already" }}</h3>
       <p class="tap-amount">{{ money $p.Amount }}</p>
       {{ if and $p.Brand $p.Last4 }}<p>{{ printf (T "tap.result.card") $p.Brand $p.Last4 }}</p>{{ end }}
+      {{ else if eq $p.State "declined" }}
+      {{/* ut-docs#6458 (ux 2.1): the card/issuer refused. Never the bank's code. */}}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#10007;</span> {{ T "tap.result.declined" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      <p>{{ T "tap.result.declined_hint" }}</p>
+      {{ else if eq $p.State "pin_fallback" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#8505;</span> {{ T "tap.result.pin_fallback" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      <p>{{ T "tap.result.pin_fallback_hint" }}</p>
       {{ else if eq $p.State "start_failed" }}
-      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ if eq $p.Reason "reader_busy" }}{{ T "tap.reader.busy_result" }}{{ else if eq $p.Reason "needs_attention" }}{{ T "tap.attention.start_refused" }}{{ else }}{{ T "tap.start_failed" }}{{ end }}</h3>
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ if eq $p.Reason "reader_busy" }}{{ T "tap.reader.busy_result" }}{{ else if eq $p.Reason "needs_attention" }}{{ T "tap.attention.start_refused" }}{{ else if eq $p.Reason "not_ready" }}{{ T "tap.start_failed.not_ready" }}{{ else }}{{ T "tap.start_failed" }}{{ end }}</h3>
+      {{ if eq $p.Reason "not_ready" }}<p>{{ T "tap.start_failed.not_ready_hint" }}</p>{{ end }}
       {{ end }}
     </div>
     <div class="tap-actions">
@@ -84,6 +94,15 @@
       <button type="button" class="btn primary tap-btn" data-testid="tap-continue"
               hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               hx-disabled-elt="this">{{ T "tap.continue" }}</button>
+      {{ else if or (eq $p.State "pin_fallback") (and (eq $p.State "start_failed") (eq $p.Reason "not_ready")) }}
+      {{/* Retrying the same card (or a till nobody here can set up) would loop: "Use another method" leads. */}}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-other-method"
+              hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tap.result.other_method" }}</button>
+      {{ if eq $p.State "pin_fallback" }}
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-try-again"
+              hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.result.try_again" }}</button>
+      {{ end }}
       {{ else }}
       <button type="button" class="btn primary tap-btn" data-testid="tap-try-again"
               hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"

@@ -39,6 +39,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/pluginsettingsreport"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -1573,6 +1574,14 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				"self_order":   inSelfOrderMode(ctx, d),
 				"kiosk_pinned": kiosk.KioskPinned(),
 			}
+			// ADR-0214 (ut-docs#6969): the manifest-declared global plugin
+			// settings, never a secret value. Omitted on an error (the cloud
+			// keeps its last report). See pluginsettingsreport.
+			if rep, err := pluginsettingsreport.Collect(ctx, d.Db); err != nil {
+				logging.L().Warnf("cloudsync: plugin_settings report: %v", err)
+			} else {
+				extra["plugin_settings"] = rep
+			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and
 			// kitchen-station links, every modifier group with options and
@@ -1669,15 +1678,17 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 // (a primary pinned behind latest would otherwise silently fork its
 // replicas). version=="" keeps the unpinned latest-release behavior.
 func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
-	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, false)
+	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, false, nil)
 }
 
 // cloudSyncInstallPluginVersion is the replica plugin sync's install
 // (convergePluginSet): cloudInstallPluginVersion, landing the plugin switched
 // off when the main till has it off (ut-docs#6930) — never active, not even
-// for one reload, before the enabled-state follow.
-func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string, inactive bool) (string, error) {
-	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, inactive)
+// for one reload, before the enabled-state follow. adoptPaymentKeys is the
+// main's list of tender ids it has owned by this plugin
+// (PluginSyncRow.OwnedPaymentMethodIDs, ut-docs#6928).
+func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string, inactive bool, adoptPaymentKeys []string) (string, error) {
+	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, inactive, adoptPaymentKeys)
 }
 
 // cloudInstallPluginVersionChecked is cloudInstallPluginVersion with an
@@ -1686,7 +1697,7 @@ func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingI
 // Ed25519 verification, same persist; the gate only adds a refusal before
 // anything is persisted. inactive lands the plugin switched off in the persist
 // transaction (ut-docs#6930).
-func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck, inactive bool) (string, error) {
+func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck, inactive bool, adoptPaymentKeys []string) (string, error) {
 	// ADR-0194 (Apple 2.5.2): a cloud directive, a replica convergence or an
 	// auto-install never fetches a code plugin on the App Store build. Before
 	// any status write or network use; the bundled set is the only code there.
@@ -1805,6 +1816,7 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 		// Replica plugin sync mirrors the main till's state; the active-owner
 		// checks run at enable time instead (ADR-0011 amendment, #6930).
 		SkipActiveOwnerChecks: inactive,
+		AdoptPaymentKeys:      adoptPaymentKeys,
 		OnStateChange: func(state plugins.InstallLifecycleState) {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{ListingID: listingID, State: state})
 		},

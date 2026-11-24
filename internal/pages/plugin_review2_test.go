@@ -91,7 +91,7 @@ func TestConvergePluginSet_PruneNeverUninstallsBundledPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	orig := pluginSyncInstall
-	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool) (string, error) { return "", nil }
+	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool, []string) (string, error) { return "", nil }
 	t.Cleanup(func() { pluginSyncInstall = orig })
 
 	// The main till no longer has the plugin: absent from its set.

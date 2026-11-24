@@ -59,6 +59,10 @@ type Advertiser struct {
 	// newServer constructs the mDNS server for a zone. A seam so tests can
 	// substitute a fake; production wires mdns.NewServer.
 	newServer func(zone mdns.Zone) (mdnsServer, error)
+
+	// startSystem publishes through the OS responder where one is preferred
+	// (macOS, ut-docs#6957); nil elsewhere. A failure falls back to newServer.
+	startSystem systemStarter
 }
 
 // NewAdvertiser builds an Advertiser. port is recorded in the advertised
@@ -66,9 +70,10 @@ type Advertiser struct {
 // consumes it yet (selecting a discovered primary is #185's job).
 func NewAdvertiser(settings *data.SettingsRepo, isPrimary RoleCheck, port int) *Advertiser {
 	return &Advertiser{
-		settings:  settings,
-		isPrimary: isPrimary,
-		port:      port,
+		settings:    settings,
+		isPrimary:   isPrimary,
+		port:        port,
+		startSystem: defaultSystemResponder(),
 		newServer: func(zone mdns.Zone) (mdnsServer, error) {
 			return mdns.NewServer(&mdns.Config{Zone: zone})
 		},
@@ -113,6 +118,12 @@ func (a *Advertiser) tick(ctx context.Context) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// The OS publisher died (ut-docs#6957): drop it so the case below starts a new one.
+	if er, ok := a.server.(exitReporter); ok && er.Exited() {
+		logging.L().Warnf("lan discovery: the system mDNS publisher exited (will restart)")
+		a.server = nil
+	}
 
 	switch {
 	case primary && a.server == nil:
@@ -169,6 +180,13 @@ func (a *Advertiser) startLocked(ctx context.Context) (mdnsServer, error) {
 	// and TXT are handed over.
 	if b := currentNativeBridge(); b != nil {
 		return startNative(b, id, port, txtRecord(name, id))
+	}
+	if a.startSystem != nil {
+		srv, err := a.startSystem(id, port, txtRecord(name, id))
+		if err == nil {
+			return srv, nil
+		}
+		logging.L().Warnf("lan discovery: system responder failed, using the built-in one: %v", err)
 	}
 	zone, err := mdns.NewMDNSService(id, ServiceName, "", mdnsHostName(id), port, ips, txtRecord(name, id))
 	if err != nil {

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -39,6 +40,14 @@ import (
 // can map it to its own HTTP status instead of a generic 400.
 type paymentDeclinedError struct {
 	Method string
+	// Tap: a tap payment the plugin itself declined (ut-docs#6458, ux 2.1).
+	// PinRequired: the card needs a PIN this phone cannot take
+	// (offline_pin_required). The decline code itself is never shown to the
+	// cashier, so it is not kept.
+	Tap, PinRequired bool
+	// MessageKey is the en.json key of the specific message a reader-setup
+	// decline code maps to (ut-docs#6962); empty means the generic decline.
+	MessageKey string
 }
 
 func (e *paymentDeclinedError) Error() string {
@@ -60,6 +69,34 @@ func (e *paymentOutcomeUnknownError) Error() string {
 // declineCodeOutcomeUnknown is the decline_code a card plugin prints (exit 2)
 // when it cannot tell whether the customer was charged.
 const declineCodeOutcomeUnknown = "outcome_unknown"
+
+// Provider-neutral decline_code values a card plugin may print (exit 2) so the
+// cashier sees a specific message (ut-docs#6962; docs/plugin_guidelines.md).
+const (
+	declineCodeNoReader      = "no_reader"
+	declineCodeReaderOffline = "reader_offline"
+	declineCodeReaderBusy    = "reader_busy"
+	declineCodeAuthFailed    = "auth_failed"
+)
+
+// tenderDeclineKey maps a plugin decline to the message key shown to the
+// cashier. The code is compared, never shown; unknown or absent codes (and a
+// nil error) give the generic decline.
+func tenderDeclineKey(exitErr *plugins.HandlerExitError) string {
+	if exitErr != nil {
+		switch exitErr.DeclineCode() {
+		case declineCodeNoReader:
+			return "pos.toast.payment_declined_no_reader"
+		case declineCodeReaderOffline:
+			return "pos.toast.payment_declined_reader_offline"
+		case declineCodeReaderBusy:
+			return "pos.toast.payment_declined_reader_busy"
+		case declineCodeAuthFailed:
+			return "pos.toast.payment_declined_auth_failed"
+		}
+	}
+	return "pos.toast.payment_declined"
+}
 
 // tenderSignature identifies a tender by method and amount per leg.
 func tenderSignature(payments []pos.PaymentInput) string {
@@ -653,7 +690,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
 			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tender declined")
 			why = "tender refused (a later leg was declined)"
-			return "", &paymentDeclinedError{Method: p.MethodID}
+			return "", &paymentDeclinedError{
+				Method: p.MethodID, Tap: isTapLeg && exitErr != nil,
+				PinRequired: isTapLeg && exitErr != nil && exitErr.DeclineCode() == declineCodeTapPinRequired,
+				MessageKey:  tenderDeclineKey(exitErr),
+			}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
 		// doc comment claims "fail-closed by construction, no override
@@ -3195,6 +3236,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				if tapStart.NeedsAttention {
 					reason = "needs_attention"
 				}
+				if tapStart.NotReady {
+					reason = "not_ready"
+				}
 				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return
 			}
@@ -3224,7 +3268,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// localized, method-agnostic message, mirroring the
 				// self-order kiosk's own "selforder.checkout.declined" copy.
 				log.Printf("tender rejected: %v", err)
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
+				if declined.Tap {
+					// ut-docs#6458 (ux 2.1): a tap the card/issuer refused has its
+					// own screen; the bank's code never reaches the cashier.
+					state := "declined"
+					if declined.PinRequired {
+						state = "pin_fallback"
+					}
+					renderTapBasket(w, r, d, &pos.TapPanel{State: state, Method: declined.Method, Amount: d.Engine.Basket().Total}, http.StatusOK)
+					return
+				}
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), cmp.Or(declined.MessageKey, "pos.toast.payment_declined")), http.StatusPaymentRequired)
 				return
 			}
 			// ut-docs#1779: distinct from a plain decline above — the device

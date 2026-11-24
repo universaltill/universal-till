@@ -112,6 +112,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		prefMethod, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
 		if effectiveReaderSource(r.Context(), d, readerSourcePOS) != readerSourcePOS {
 			gridMethods = withoutTapEntries(r.Context(), d, gridMethods) // ut-docs#6455 G-6
+		} else {
+			gridMethods = withoutUnreadyTapEntries(r.Context(), d, gridMethods) // ut-docs#6458: ADR-0198 2 capability
 		}
 		gridMethods, cardReaders := cardReaderGrid(r.Context(), d, gridMethods, prefMethod)
 		// Per-provider fee rules (B4 cost-rules): manager-entered percent

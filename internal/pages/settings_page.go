@@ -981,6 +981,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,
 			"payFees":               feeRows,
+			"tapSettingsAvailable":  tapSettingsAvailable(), // ut-docs#6458: link only with a native bridge
 			"exportEntries":         exportEntries,
 			"autoUpdateFollowsMain": autoUpdateFollowsMain,
 			"autoUpdateFollowLine":  autoUpdateFollowLine,
@@ -1067,6 +1068,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"registerBlocked": registerBlockedView(r, d, locale),
 			"registerFacts":   registerFactsView(r, d, locale),
 			"reconnectPanel":  reconnectPanelView(r, d),
+			// ut-docs#6959: unknown counts as unclaimed (Claim button stays).
+			"storeClaimed": storeHasOwner(r.Context(), d.Settings),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

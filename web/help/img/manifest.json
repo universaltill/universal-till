@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "629fd02e5f3b26be0cc91b64a8c531249c374b2b74ed266f9819ac32680508ca",
+      "en": "d596fa1020e377741834c5aedfaec0a8659a050914de186782747f0d1c4472df",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -200,6 +200,12 @@
       "ar": "dca318b7244ce7c53503dc3c048a0b002068950107ca1ce5663ff64f0b4c4906",
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
     },
+    "tap-to-pay": {
+      "en": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
+      "fa": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
+      "ar": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
+      "tr": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677"
+    },
     "tax-codes": {
       "en": "a9aea0cf38a7176e7bfc8ce99928988247a9bbe4a02695501d27d73da6c0b321",
       "fa": "4f6452542da52e2812fb48147dc0f2c7b6377e56a6036d9ec4310404cff571b4",
@@ -298,7 +304,7 @@
       "sha256": "54c4b62dbaa2eb984922e58e04a682565591eaae1142012bbf3276099e805add"
     },
     "internal/pages/card_readers_page.go": {
-      "sha256": "1a8ebc18a4baaef69e6bc03be92e50d9f697c10397dfd285d490f5e8882e9173"
+      "sha256": "5def973af69fad9589808fe15192dd6a6aedca39d522555f0bcf9d85af8e4099"
     },
     "internal/pages/catalog/handlers.go": {
       "sha256": "716b360b442a5577c5514eb39aff310954f1157e9ed60e99053097dc4f3334a5"
@@ -358,7 +364,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "fb98eb7943f729030fb867e8a0d5912da9396acaecd275adc192227d5b5fef39"
+      "sha256": "d624d7113bdf83fc5b8fdcc55306ef61470210f87512c2ce9d186c1b2ab58347"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -418,7 +424,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "36b04459c52deabed9f094e3241b5983a1918d9c5a4a5cb509524dcc136f753e"
+      "sha256": "b47eff14501c2c3062bba5821ca6128a52e82de6c42293d5349f5e9a718cf02e"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -496,7 +502,7 @@
       "sha256": "d13c44afd30f7548130f13c603e58e9de35a6d17e992226cfa5a801694597092"
     },
     "internal/pages/index_page.go": {
-      "sha256": "07982075014c62777125b11e220d77cebb2a33d82378ba5dc39b58124371171a"
+      "sha256": "6245f59a1381369dbc4cc36683be3ce946ae64fc5c6a5aea1c242d2bc0d05b70"
     },
     "internal/pages/init.go": {
       "sha256": "7a5f040e28a18b725605ffe5a0c4b5b0d5137e3117de00da678c9dd57f11dda3"
@@ -664,7 +670,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "1469be45c2e47eed60ba263969f84a7de673620cff36e3f869175cd720c0f512"
+      "sha256": "b8f8a61ef6115781078ac966aa1d9c9ee241783868c4ba09d41d75e55bf395eb"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -706,7 +712,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "4ce247c9133f077c51a0318f77b9ab206432ee1a8465e7f805c4b27ec3cac088"
+      "sha256": "879bb826556702200f9b4f77699296a5998eb699d683e98d9e383c7d37785f68"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -736,13 +742,16 @@
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
     },
     "internal/pages/tap_gate.go": {
-      "sha256": "80b0be3e198364213f7fd4c4269da5bb42be015559ea213edba39f7fba6f03ea"
+      "sha256": "faab6a8392a00393e38ab274a4e85aef623428218233ae92c2d807430c92d19e"
     },
     "internal/pages/tap_offering.go": {
-      "sha256": "234511337811e9d10876db927659905fca7e0ae7ed3c83708a809233ffdef738"
+      "sha256": "2725ff94c7849d932db80656abbb502a5a56d8e6484c6bfedd7617e271d05c14"
+    },
+    "internal/pages/tap_settings_page.go": {
+      "sha256": "b014eba2a95b55005ac43f0c86637ef08148e677fb015472b4b96d88773eccc9"
     },
     "internal/pages/tax_autoinstall.go": {
-      "sha256": "7e7899a0e9f51d941878d020dbd8b555db24f7ef7bef34af2a9a37520bdd048d"
+      "sha256": "cca7cd0dd303c0a4c4e770c25f571ee6b6aae3e3cf3c85c3649cf872238404dc"
     },
     "internal/pages/tax_codes_page.go": {
       "sha256": "5d8db3b030a2ffed5493ecc4d078de437aaeb8236cb09e91f4c621a05b87178f"
@@ -799,10 +808,10 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "5bf62598df02164d43a01b40673f7914d191c15419a2959cb6d4c2f21f873d7d"
+      "sha256": "bac05fffbbad519215807a60b828308cb70c5ff470993092d3fac7ba18e58bea"
     },
     "web/public/app.js": {
-      "sha256": "f51885df7cec771737c1c93b5a0b55f9af184364e5b5cfe563de97fc7bc14ea8"
+      "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1456,7 +1465,7 @@
       "sha256": "92a74d1d9a1d51a70698bfb9506d7def4f031c386a29dc3351c8de85fe9d58c3"
     },
     "web/public/osk.js": {
-      "sha256": "019877b569c78f4587c062a67af212b1a50e880748b2364b053f31a76cf7861e"
+      "sha256": "5db33f344f2eb86646a1ac20a8c897366c7d1d372c12e11ab405cfdfa256fe71"
     },
     "web/public/pairing-stream.js": {
       "sha256": "9748e63d4e4ac14bf76e14c6387be0cf87964c0508da82aa52d08cba73308739"
@@ -1621,7 +1630,7 @@
       "sha256": "ad9c10f72169207128265e55cd24904251319e134f50480aac64661b3ae88a0a"
     },
     "web/ui/pages/index.html": {
-      "sha256": "4f35f009f0bcfa37d3e0b1b45ed3133df49dcffe3f8dd79bada758f365b6825c"
+      "sha256": "dca76a77f3bb4e699b3f691edbe7e3efe5e11dbaceb9b3fb78faae165d73eac9"
     },
     "web/ui/pages/inventory.html": {
       "sha256": "4b7c2442334e0198a66bc6179992a366f78c4da535bc50661571592245284b50"
@@ -1744,7 +1753,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "2997636a7bb64e55d9d6d3fcc8cec70216cf9f4fa8274cb71396e5b7b7e15598"
+      "sha256": "50c7e99b4834abc2559394a3b7d842258353bc717e939b356d1a54e315b22a2d"
     },
     "web/ui/pages/setup.html": {
       "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
@@ -1757,6 +1766,9 @@
     },
     "web/ui/pages/tables.html": {
       "sha256": "2d5e5ce20cf01d8272af05195d1c9009059da489248b47b64bab0f14443523e1"
+    },
+    "web/ui/pages/tap_settings.html": {
+      "sha256": "cd9590cd237c6a8e8c8e28f13fd447183da45d0f314e7e713871c1f3e4802c56"
     },
     "web/ui/pages/tax_codes.html": {
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
@@ -1792,7 +1804,7 @@
       "sha256": "767e08cd2aa7ad7d29da115da7dde0b9723344e68a54b0a5c9e78ab9eedd1443"
     },
     "web/ui/partials/basket.html": {
-      "sha256": "651a4f4fe40d1d25432ea9555f5a8b33e29a797e09bf2cdfcaae221946b31bd5"
+      "sha256": "c5774775ae38286f8e31f94900536a048596a9db60870cc6a075f55227fcf62c"
     },
     "web/ui/partials/bugreport_chip.html": {
       "sha256": "94f0b8986f6afb094cb3547ef3781c1bc5e80b7aaeb89e3f242b993ea1fd4314"
@@ -2108,6 +2120,9 @@
     },
     "web/ui/partials/tap_resolve.html": {
       "sha256": "15f8e4325ca8fc7230a5efd125466fd28c8cb6bb88c5773fc4f673c91ac7933b"
+    },
+    "web/ui/partials/tap_settings_body.html": {
+      "sha256": "8b9e2ee11ecbc3e8b1cfc23d06144d97cbdbb276218f528f5d03fcd750ff0cc4"
     },
     "web/ui/partials/tax_autoinstall_chip.html": {
       "sha256": "b2c2308b503c2ad8f6bd98577f77a3babdc231867507162b99bbea3a30604a2d"
