@@ -388,6 +388,10 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 		if !updates.Newer(version, buildinfo.Version) {
 			return fmt.Errorf("v%s is not newer than this build (v%s)", version, buildinfo.Version)
 		}
+		// ut-docs#6958: before applyMu and any download.
+		if !updates.SchemaSafe(version, buildinfo.Version) {
+			return fmt.Errorf("v%s: %w (running build v%s is a pre-release)", version, updates.ErrNewerData, buildinfo.Version)
+		}
 	}
 	// windowsHandover: a Windows update already handed to the installer
 	// helper outlives applyMu (wininstaller.go).
@@ -606,6 +610,9 @@ func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
 		}
 		if !updates.Newer(tag, buildinfo.Version) {
 			return nil, fmt.Errorf("v%s is not newer than this build (v%s)", tag, buildinfo.Version)
+		}
+		if !updates.SchemaSafe(tag, buildinfo.Version) {
+			return nil, fmt.Errorf("v%s: %w (running build v%s is a pre-release)", tag, updates.ErrNewerData, buildinfo.Version)
 		}
 	} else {
 		// The asset names and checksum lines are all derived from the

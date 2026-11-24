@@ -29,17 +29,43 @@
   {{ else }}<p class="muted">{{ T "backoffice.stock_ok" }}</p>{{ end }}
 </div>
 
-<div class="card" style="margin-top:1rem">
-  <h2>{{ T "backoffice.problems" }}</h2>
-  {{ if .Problems }}
-  <table class="table">
-    <tbody>
-      {{ range .Problems }}
-      <tr><td class="muted" style="white-space:nowrap">{{ .At.Format "15:04" }}</td><td>{{ .Level }}</td><td class="backoffice-problem-msg">{{ .Msg }}</td></tr>
+<div class="card" style="margin-top:1rem" data-testid="backoffice-problems">
+  {{ with .ProblemsView }}
+  <h2 class="backoffice-problems-head">{{ T "backoffice.problems" }}
+    <span class="tag {{ .TagClass }}" data-testid="problems-status">{{ T .WorstKey }}</span></h2>
+  {{ if .Groups }}
+  <p class="muted">{{ T "backoffice.problems_intro" }}</p>
+  {{ range .Groups }}
+  <section data-testid="problem-group-{{ .Area }}">
+    <h3>{{ T .TitleKey }}</h3>
+    <ul class="backoffice-problems" role="list">
+      {{ range .Lines }}
+      <li class="backoffice-problem" data-testid="problem-line">
+        <div><span class="tag {{ .TagClass }}">{{ T .SevKey }}</span> <strong>{{ T .ReasonKey }}</strong></div>
+        <div>{{ T "backoffice.problems.next_label" }} {{ T .NextKey }}</div>
+        <div class="muted backoffice-problem-meta">{{ .LastSeen }}{{ if gt .Count 1 }} · {{ .CountLabel }}{{ end }}</div>
+        <details>
+          <summary>{{ T "backoffice.problems.details" }}{{ if .Snippet }}: <span class="backoffice-problem-snippet" dir="auto">{{ .Snippet }}</span>{{ end }}</summary>
+          <pre class="backoffice-problem-raw" dir="auto">{{ range .Raw }}{{ . }}
+{{ end }}</pre>
+        </details>
+      </li>
       {{ end }}
-    </tbody>
-  </table>
-  {{ else }}<p class="muted">{{ T "backoffice.no_problems" }}</p>{{ end }}
+    </ul>
+  </section>
+  {{ end }}
+  {{ else }}
+  <p data-testid="problems-ok">{{ T "backoffice.problems_ok" }}</p>
+  {{ end }}
+  <div class="set-row">
+    <button class="btn secondary" type="button" data-copy-target="#backoffice-support-text"
+            data-copied-label="{{ T "backoffice.problems.copied" }}" data-testid="problems-copy">{{ T "backoffice.problems.copy" }}</button>
+  </div>
+  <details class="backoffice-support">
+    <summary>{{ T "backoffice.problems.copy_show" }}</summary>
+    <pre id="backoffice-support-text" class="backoffice-problem-raw" dir="auto">{{ .SupportText }}</pre>
+  </details>
+  {{ end }}
 </div>
 
 <div class="card" style="margin-top:1rem">

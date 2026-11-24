@@ -115,6 +115,19 @@ A tax plugin that supports takeaway rate overrides shows a dedicated editor on i
 - Only the models birefnet-general-lite and u2netp are allowed. Any other model shows a hint above the field, and the till keeps using its built-in background removal.
 - An image_endpoint that isn't a web address starting with http:// or https:// (for example `192.168.1.20:7000`, typed without http://) also shows a hint above the field, and the till keeps using its built-in background removal until you correct it.
 
+### Get a key from my. with a code
+
+The SumUp plugin's settings page has a **Get the key from my.** row, so you do not have to type the long key on the till. On my.universaltill.com, enter your SumUp key and choose to send it to your till with a code. my. shows a QR code and a 26-character code that works once for 10 minutes. It contains no key.
+
+1. On the main till, open **Plugins**, then the SumUp plugin's settings.
+2. Tap **Scan code** and point the camera at the code on my., or tap **Type code** and type it. Capitals, small letters, spaces and hyphens all work. The camera never starts by itself and nothing it sees is saved.
+3. The page says **Waiting for the key**, then **Saved from my.**, and the key field shows **Key set**. The key itself is never shown.
+
+- Only the main till takes the code. On an additional till the row says to set it on the main till.
+- If a code does not work (wrong, expired, already used), the till says so in one message and does not say why: make a new code on my.
+- With no internet the till says it is offline. The code is not kept on the till; make a new one if the 10 minutes pass. Selling is never held up.
+- You can still type or paste the key into the field by hand.
+
 ## Built-in card payments on the iPhone and iPad app
 
 On the iPhone and iPad app, plugins that run code can't be downloaded or imported: the store and **Import from file** refuse them. The Stripe and SumUp card payment plugins and the UK VAT plugin are built into the app instead, so you don't install them. Their permissions (for example, reaching Stripe or SumUp to take a payment) are already granted; there is nothing to approve.

@@ -193,6 +193,18 @@ func (s *Store) Report() map[string]string {
 	}
 }
 
+// CurrentKID is the kid of the key on disk without creating one: ok is
+// false when there is no usable key (never reads the private bytes out).
+func (s *Store) CurrentKID() (string, bool) {
+	s.mu.Lock()
+	k, found, err := s.load()
+	s.mu.Unlock()
+	if err != nil || !found {
+		return "", false
+	}
+	return KID(k.PublicKey().Bytes()), true
+}
+
 // OpenPIN opens a pin_sealed value (v1.<kid>.<b64url enc>.<b64url ct>) for
 // the given AAD and returns the PIN's plaintext. It never creates a key:
 // no key, an unusable key file, another kid or a ciphertext that does not

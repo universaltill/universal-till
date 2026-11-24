@@ -9,7 +9,7 @@
       "tr": "84ba161fd78f2f76e5dc2d84923db70c17d7807d4c935fac91ff9ca88b6f2b46"
     },
     "alerts": {
-      "en": "c686e66d465371634f87d359df27900c4c34af0e298eac57ac208a631aee1c6d",
+      "en": "8c92ae68ad9fd18ce6be2f427a4c51da5fc4106bf7a4dd2fc03a6b06c00b7102",
       "fa": "454a36f2194b2f6def50d908e799b0ea6ba91b2231c1a92bf5e05ab820d92118",
       "ar": "cec0d659d35e017b456c82544ad63528edfd715c12b9ce8dab5de5409bcfcf6c",
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
@@ -165,7 +165,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "c4a513a7ee7ec75bcd91a995d2969735943c8041698207bc45dab5c9800a3e9a",
+      "en": "3b087968489dae64bb741da92ebd37a3fe255866a94befe69bca79b451b88c28",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -286,7 +286,10 @@
       "sha256": "3e28a49d1ddafb25f75b81222c636d21e771d53a0633ba33bb39222d38a09136"
     },
     "internal/pages/backoffice_page.go": {
-      "sha256": "0c1eea8fbf8dcdf31b835b57f71d4879c6a707dcb9b56f797519e2c04fdd688c"
+      "sha256": "a0d4912a87744dac916531b0ad509176fa8f07380ee8ccba51d574fbd95eb4ff"
+    },
+    "internal/pages/backoffice_problems.go": {
+      "sha256": "3c739c2da177088a84fe45108d0e825c8a467c38b5016edba9b5a375d2ba80cf"
     },
     "internal/pages/bearer_failures.go": {
       "sha256": "761cf705a2f1ef7fb6971a8d20f83b14cb77d174407cb91a4b68a3a49fb1ebee"
@@ -348,6 +351,9 @@
     "internal/pages/cloud_peripherals_report.go": {
       "sha256": "6680340ead268d7bc31c583c45287bb8d0c1c4b49548fe0c858580454e888c0c"
     },
+    "internal/pages/cloud_plugin_secret.go": {
+      "sha256": "caf0b1a122d2feee75eb0da9f0f4952ed8efe910a15594abd205ef2d5745494d"
+    },
     "internal/pages/cloud_role_directives.go": {
       "sha256": "239cf96fb67119066c953786436660e2beb1ee25672aa615f364f61d838df06d"
     },
@@ -367,7 +373,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "859ae5c3b95fed2883533cd679875f2c61ae3e0644b3ceae8384354249325c56"
+      "sha256": "df9579ce9f7cb29b2705c11dfb7495275ecec72a033936f5d7e63f60bd084247"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -427,7 +433,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "b47eff14501c2c3062bba5821ca6128a52e82de6c42293d5349f5e9a718cf02e"
+      "sha256": "aad90d257c64a3a1b826de41af2909c22fd2a44b7785d3979cc78c603709d024"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -700,7 +706,7 @@
       "sha256": "c939a2cb9b204d4757067336341c16956cfb7a6c6033518b2cb5666c9a94ce3e"
     },
     "internal/pages/setup_update_check.go": {
-      "sha256": "2f105ed4c46a489cc5cb9445cd135061f34b65c0d7f5320e0672c69c06694647"
+      "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"
     },
     "internal/pages/shift_events.go": {
       "sha256": "434c8787e600cae444d20d50185de7b8e8f46752c43ba40f2664205e42afdf68"
@@ -781,7 +787,7 @@
       "sha256": "f8ff7b166a7f64be4d0bc12a117ba180b79a8072b6240d53a9aedda582e4668c"
     },
     "internal/pages/update_follow.go": {
-      "sha256": "86479dd2761104096aca38794478f013b59d52ba253eb6e050293b5cf0b473bf"
+      "sha256": "b8b6c17d9f66fe05cbfa92512c616ae00be5779900a8d4df9d8f25a85b832540"
     },
     "internal/pages/user_rules.go": {
       "sha256": "826509ca4f1711c9939b270dd649843a24faf18d661ceef15c3c9b585d096224"
@@ -811,10 +817,10 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "4e2a19b7c0e8fc5893f0871710f2033cd48b9eca324f1ed4f62fa31106e02c78"
+      "sha256": "15751569c00c2ab6c942ab936fc85bd7fd1295f1138c572474eb7915eb6eb8c5"
     },
     "web/public/app.js": {
-      "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
+      "sha256": "8a75db2798adebf0dac11b07988e8d02b0eaa8bca55c30ac714135c91f8bfb93"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1585,7 +1591,7 @@
       "sha256": "f52d9d9309c3683bbd42aa2dd4f3b16615177b89537a3263d2628b148aa47501"
     },
     "web/ui/pages/backoffice.html": {
-      "sha256": "02717b23d76747dcc15e99b587914e25f408489b5146bae6711174b840d4575e"
+      "sha256": "88c61486644107a48637be9dd758bece0cb8fc5926d863644b4c1b8b20381a16"
     },
     "web/ui/pages/bluetooth_devices.html": {
       "sha256": "0be3c1c8921f2471797e8b069dba7eb3845a6cdbaeaf9a9f4e37b0818ecd9bd9"
@@ -1717,7 +1723,7 @@
       "sha256": "0491e927e59b5ece7c8cf55c7ee5609f757bb307cf6eed7a82291c0de5b9c06f"
     },
     "web/ui/pages/plugin_settings.html": {
-      "sha256": "6b4881757ea3985f49aca39a96a38845c8d94ede2972abc022b604d22d83f0ed"
+      "sha256": "221e7d1aa2119e9cd3b12b4a1ad7b47d16b786d98219aaecda94178a9f60fd62"
     },
     "web/ui/pages/plugin_view.html": {
       "sha256": "71460754b126e8347ceb9a2ff1542cc9a69da4065d72b54c39994fa6b8ad9b67"

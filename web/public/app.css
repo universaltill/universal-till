@@ -226,6 +226,10 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
 /* A tag for a healthy live state (the Tills roster's "Linked", ut-docs#2742)
    — the success tint; the word itself carries the meaning. */
 .tag.ok { background: var(--success-tint); color: var(--success); border-color: var(--success); }
+/* A failed state (back-office problems card, ut-docs#6978). Text stays
+   --text: small red text on the tint is borderline for 4.5:1; the border and
+   the word carry the meaning. */
+.tag.danger { background: var(--danger-tint); color: var(--text); border-color: var(--danger); }
 
 /* ---------- Navigation: left icon rail (>480px), top bar (<=480px) ----------
    2026-08-30 (ut-docs#1332): converted from an always-horizontal top bar,
@@ -887,11 +891,21 @@ body.sale-screen .session-admin-link { display: none; }
 .kpi { text-align: center; padding: 1rem; }
 .kpi-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .kpi-value { font-size: 1.6rem; font-weight: 700; color: var(--brand); margin-top: .15rem; }
-/* ut-docs#4226: a /backoffice Problems line is a raw log message — a failed
-   fetch logs its whole URL, one unbreakable word that pushed the page
-   past a phone's viewport (558px wide). Break it anywhere; the time cell
-   stays nowrap. */
-.backoffice-problem-msg { overflow-wrap: anywhere; }
+/* Back-office problems card (ut-docs#6978). Logical properties only (RTL). */
+.backoffice-problems-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.backoffice-problems { list-style: none; padding-inline-start: 0; margin-block: .25rem .75rem; }
+.backoffice-problem { padding-block: .6rem; border-block-end: 1px solid var(--border); }
+.backoffice-problem-meta { font-size: .85rem; }
+.backoffice-problem-raw { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 16rem;
+  overflow-y: auto; font-size: .8rem; text-align: start; unicode-bidi: plaintext; }
+.backoffice-problem > details > summary, .backoffice-support > summary { min-block-size: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; cursor: pointer; }
+.backoffice-problem > details > summary::before, .backoffice-support > summary::before { content: "\25B8"; }
+.backoffice-problem > details[open] > summary::before, .backoffice-support[open] > summary::before { content: "\25BE"; }
+/* RTL: the closed chevron points toward the text (inline-start), so it flips. */
+html[dir="rtl"] .backoffice-problem > details:not([open]) > summary::before, html[dir="rtl"] .backoffice-support:not([open]) > summary::before { content: "\25C2"; }
+.backoffice-problem > details > summary::-webkit-details-marker, .backoffice-support > summary::-webkit-details-marker { display: none; }
+.backoffice-problem-snippet { overflow-wrap: anywhere; color: var(--muted, inherit); }
+.backoffice-problem > details > summary:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 /* ut-docs#421: which report tab is open had no visual cue at all. Repeats
    the :hover pairing (not just .active alone) because .btn.secondary:hover
    below shares this rule's specificity and comes later in the cascade —

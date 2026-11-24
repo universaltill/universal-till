@@ -58,7 +58,7 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 
 	var safeModeDB *db.DB
 	safeModeUsable := false
-	if failure.Kind == KindMigration {
+	if failure.Kind == KindMigration || failure.Kind == KindAppOlderThanData {
 		if ro, roErr := db.OpenReadOnly(cfg.DBPath); roErr == nil {
 			safeModeDB = ro
 			defer safeModeDB.Close()

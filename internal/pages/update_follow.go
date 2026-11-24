@@ -486,6 +486,9 @@ func followErrorCode(err error) string {
 	if errors.Is(err, selfupdate.ErrUnsupported) {
 		return "unsupported"
 	}
+	if errors.Is(err, updates.ErrNewerData) { // ut-docs#6958
+		return "newer_data"
+	}
 	// Before the substring cases: the text names checksums.txt (ADR-0178).
 	if errors.Is(err, selfupdate.ErrSignature) {
 		return "signature"

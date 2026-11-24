@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 // These tests mutate package-level seams (osExecutable, reexecFn, releaseSource,
@@ -948,6 +949,47 @@ func TestFetchReleaseTagMismatch(t *testing.T) {
 			}
 			if err != nil && !strings.HasPrefix(err.Error(), "releases API") {
 				t.Errorf("err = %q, want a 'releases API' prefix (followErrorCode: release)", err)
+			}
+		})
+	}
+}
+
+// ut-docs#6958: a pre-release/test build (hand-built "0.0.0-6955", a nightly)
+// may already hold migrations newer than any stable release, so installing
+// one in-app could leave the till unable to open its data. Every install
+// path refuses before any network call, download or swap.
+func TestApplyRefusesStableOverPreReleaseBuild(t *testing.T) {
+	for _, running := range []string{"0.0.0-6955", "0.36.3-nightly.20261120.abc1234", "0.36.3-rc1"} {
+		t.Run(running, func(t *testing.T) {
+			fix := newInstallFixture(t)
+			buildinfo.Version = running
+			rs := newReleaseServer(t, "v0.36.4", map[string][]byte{})
+
+			err := ApplyVersion(context.Background(), "0.36.4")
+			if !errors.Is(err, updates.ErrNewerData) {
+				t.Fatalf("ApplyVersion err = %v, want updates.ErrNewerData", err)
+			}
+			err = ApplyVersionWhenIdle(context.Background(), "0.36.4", func() bool { return true })
+			if !errors.Is(err, updates.ErrNewerData) {
+				t.Fatalf("ApplyVersionWhenIdle err = %v, want updates.ErrNewerData", err)
+			}
+			if got := rs.requested(); len(got) != 0 {
+				t.Fatalf("explicit version reached the releases API: %v", got)
+			}
+
+			// The "latest" path: metadata is fetched, but no asset download
+			// and no swap.
+			err = Apply(context.Background())
+			if !errors.Is(err, updates.ErrNewerData) {
+				t.Fatalf("Apply err = %v, want updates.ErrNewerData", err)
+			}
+			for _, p := range rs.requested() {
+				if p != "/latest" {
+					t.Errorf("unexpected request %q after a refused latest", p)
+				}
+			}
+			if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
+				t.Errorf("binary touched: %q", got)
 			}
 		})
 	}
