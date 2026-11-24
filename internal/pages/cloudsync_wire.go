@@ -1303,7 +1303,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			return cloudGuestOrder(ctx, d, o)
 		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
-			return cloudInstallPlugin(ctx, d, listingID)
+			return cloudInstallPluginDirective(ctx, d, listingID)
 		},
 		RemovePlugin: func(ctx context.Context, pluginID string) (string, error) {
 			return cloudRemovePlugin(ctx, d, pluginID)

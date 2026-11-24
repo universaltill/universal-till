@@ -360,6 +360,9 @@
     "internal/pages/cloudsync_catalog_wire.go": {
       "sha256": "6b3754267e15e8ebb0f9e5ef0eba68342db6f5aef22774125b268604b0734d94"
     },
+    "internal/pages/cloudsync_install_reason_6975.go": {
+      "sha256": "25cdf5817ecec73564f0d93910e2f39c27a8db05e0262f45633f433bd45b3b96"
+    },
     "internal/pages/cloudsync_kiosk_unlock.go": {
       "sha256": "e0fccc2cb6fdeacbcf86b803b3e550e757e651370ccaf8fc325dd2d9d3797954"
     },
@@ -367,7 +370,11 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
+<<<<<<< HEAD
       "sha256": "379d4452032f14efa0b11d919b1d972f4f60846381bc2f4fdea4db8584abe6f1"
+=======
+      "sha256": "241aa17d65703cd16109b4ccd376031c807f80881775e7bd5a5f93ab9a96d406"
+>>>>>>> origin/main
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
