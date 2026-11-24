@@ -370,11 +370,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-<<<<<<< HEAD
-      "sha256": "379d4452032f14efa0b11d919b1d972f4f60846381bc2f4fdea4db8584abe6f1"
-=======
-      "sha256": "241aa17d65703cd16109b4ccd376031c807f80881775e7bd5a5f93ab9a96d406"
->>>>>>> origin/main
+      "sha256": "56244e299c4514c7fc50c6bfed60e94f42ee5e8c1afc77d6e178d64458c735aa"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
