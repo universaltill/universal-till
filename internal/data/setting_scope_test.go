@@ -84,6 +84,7 @@ var notSettingsKeyConsts = map[string]string{
 	"cloudsync.LANAddressKey":        "a cloud device-report field, not a setting (ut-docs#2774)",
 	"cloudsync.GuestTablesKey":       "a cloud device-report field, not a setting (ut-docs#4337)",
 	"catimport.headLastKey":          "an i18n language-setting key (ADR-0160 §12, ut-docs#6043)",
+	"problemclass.keyPrefix":         "an i18n message key prefix of the back-office problems card (ut-docs#6978)",
 }
 
 // settingsKeyShape is what a settings key (or a key-family prefix built by

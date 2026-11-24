@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -54,26 +55,28 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 			low = low[:8]
 		}
 
-		// Open problems only: one whose condition recovered (e.g. the main
-		// till answering again) is history, not a problem (ut-docs#2798).
-		// No age cut here — this panel is the till's own recent log digest.
-		problems := logging.OpenProblems(time.Now().UTC(), 0)
-		if len(problems) > 5 {
-			problems = problems[:5]
+		// Open problems, grouped and explained by buildProblemsView
+		// (ut-docs#6978); unkeyed lines age out like the heartbeat's.
+		problems := pageProblems(clock.Now().UTC())
+		// The startup line carries data_dir and the log path: managers only,
+		// never on the public demo (same gate as Settings -> Diagnostics).
+		startup := ""
+		if d.Cfg != nil && d.Settings != nil && !d.Cfg.Demo && canPerform(d, r, "settings") {
+			startup = TillStartupInfo(r.Context(), d.Cfg, d.Settings, logging.RememberedStartup().EnvFile).Line()
 		}
 
 		httpx.Render("ui/pages/backoffice.html", map[string]any{
-			"title":      httpx.T(httpx.RequestLocale(r), "page.title.back_office"),
-			"theme":      d.ResolvedTheme(r),
-			"menuItems":  d.MenuSnapshot(),
-			"TodayTotal": todayTotal,
-			"TodayCount": todayCount,
-			"YdayTotal":  ydayTotal,
-			"YdayCount":  ydayCount,
-			"WeekTotal":  weekTotal,
-			"WeekCount":  weekCount,
-			"LowStock":   low,
-			"Problems":   problems,
+			"title":        httpx.T(httpx.RequestLocale(r), "page.title.back_office"),
+			"theme":        d.ResolvedTheme(r),
+			"menuItems":    d.MenuSnapshot(),
+			"TodayTotal":   todayTotal,
+			"TodayCount":   todayCount,
+			"YdayTotal":    ydayTotal,
+			"YdayCount":    ydayCount,
+			"WeekTotal":    weekTotal,
+			"WeekCount":    weekCount,
+			"LowStock":     low,
+			"ProblemsView": buildProblemsView(httpx.RequestLocale(r), problems, startup),
 		})(w, r)
 	})
 }
