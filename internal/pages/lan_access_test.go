@@ -83,6 +83,15 @@ func TestLANAccessSettingEndpoints(t *testing.T) {
 	if lanMode(t.Context(), d) != lanModeOn {
 		t.Fatal("mode not stored")
 	}
+	// "Never" ends a pairing window that is open right now.
+	t.Cleanup(lanaccess.CloseWindow)
+	lanaccess.OpenWindow(time.Minute)
+	if c := post("off"); c != 200 {
+		t.Fatalf("save off: %d", c)
+	}
+	if lanaccess.WindowOpen() {
+		t.Fatal("choosing never must close the open pairing window")
+	}
 }
 
 // A cashier is sale-only: the network-access control is manager territory.

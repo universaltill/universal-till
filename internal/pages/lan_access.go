@@ -109,6 +109,10 @@ func registerLANAccess(mux *http.ServeMux, d *common.Deps, repo *data.TillsRepo)
 			http.Error(w, "save failed", http.StatusInternalServerError)
 			return
 		}
+		if mode == lanModeOff {
+			// "never" also ends a pairing window opened a moment ago.
+			lanaccess.CloseWindow()
+		}
 		logging.L().Infof("settings: other tills on this network = %s", mode)
 		writeLANAccessFragment(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "settings.lan.saved"))
 	})
