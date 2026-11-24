@@ -839,6 +839,115 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Make it explicit instead.
 	saleInput.Payments = payments
 
+	// ut-docs#7019: from here to CompleteSale the order is: mint the sale id,
+	// abandon check, cross-till voucher reservations, the tender commit point,
+	// and only THEN fiscal.sign.ask. Every refusal that can end a tender
+	// without a sale row (abandon, a definitive voucher refusal, a commit
+	// refusal) is decided before a signer may have signed, so after a
+	// dispatched ask the tender has two outcomes: recorded, or refused on
+	// cannot-sign (ADR-0136). A failing CompleteSale is the one known gap
+	// (tracked on ut-docs#7021).
+	//
+	// The sale id must exist BEFORE the first voucher reservation (it is the
+	// idempotency key, see below) and pos.CompleteSale honours a pre-set id.
+	if saleInput.SaleID == "" {
+		saleInput.SaleID = uuid.NewString()
+	}
+	if abandonedUnder() {
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
+	}
+
+	// Cross-till voucher redemption (ut-docs#1668, made atomic by ADR-0084 /
+	// ut-docs#1716): for every tracked voucher payment, RESERVE the
+	// redemption on the PRIMARY before this till's own local
+	// DebitVoucherForRedemption ever runs (inside pos.CompleteSale below) —
+	// a voucher issued at another till has no local vouchers row here at
+	// all, so without this the local debit would fail closed with
+	// ErrVoucherNotFound even though the voucher is perfectly good
+	// shop-wide. On a replica with a reachable primary, the primary's
+	// answer is authoritative AND serializing: /redeem runs the guarded
+	// debit on the primary's database, so two tills racing for one balance
+	// commit one after the other and the second is refused cleanly. A
+	// definitive refusal (void / insufficient balance) aborts the tender
+	// right here, with NO sale row ever attempted and (ut-docs#7019) before
+	// any fiscal signer is asked.
+	//
+	// The reservation IS a debit on the primary (this is what #1668's
+	// read-only design deliberately avoided, and what ADR-0084 makes safe):
+	//   - It is keyed on saleInput.SaleID, the SAME id this sale is
+	//     persisted under and journals up with, so the primary's eventual
+	//     journal replay (pos.CompleteSale, VoucherRedemptionRecorded)
+	//     recognizes the debit it already holds and does not apply it
+	//     again. The id is minted above, before the first reservation.
+	//   - Every reservation made in THIS attempt is tracked, and released
+	//     on the primary (releaseReservedVouchers → POST .../release) by the
+	//     defer below on every exit that does not persist the sale: a later
+	//     payment refused, a client gone or an abandon before the ask, a
+	//     fiscal cannot-sign answer (ut-docs#7019), or pos.CompleteSale
+	//     failing — synchronously, in this request, before any local sale
+	//     row exists, so no journal entry can ever be produced for a
+	//     released attempt. (A crash in the window between a successful
+	//     reservation and the local commit is the accepted residual risk,
+	//     ADR-0084 Decision 4.) "Reservation made" includes a MERELY
+	//     POSSIBLE one — voucherRedeemWriteThrough's maybeReserved, a
+	//     transport failure after the request went out, or a 200 whose body
+	//     was lost — tracked exactly like a confirmed one, since release is
+	//     a safe no-op on a voucher that was never actually reserved.
+	//   - Two legs against the SAME voucher in one sale are refused up
+	//     front (pos.DuplicateVoucherPaymentError, checked before any authorize
+	//     so no money is taken — the idempotency key is
+	//     one redemption per voucher per sale), BEFORE anything is
+	//     reserved, so an invalid sale never round-trips to the primary.
+	// Not a replica, or the primary unreachable / 404: this payment is left
+	// exactly as it always was, going through the normal local validation
+	// next (offline-first, unchanged).
+	var reservedVoucherIDs []string
+	vouchersOwned := true
+	defer func() {
+		if vouchersOwned && len(reservedVoucherIDs) > 0 {
+			releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
+		}
+	}()
+	for i := range saleInput.Payments {
+		if saleInput.Payments[i].VoucherID == "" {
+			continue
+		}
+		preauth, maybeReserved, err := voucherRedeemWriteThrough(recordCtx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
+		if err != nil {
+			why = "tender refused (a voucher could not be reserved)"
+			return "", err
+		}
+		saleInput.Payments[i].VoucherPreauthorized = preauth
+		// A confirmed reservation (preauth) and a merely POSSIBLE one
+		// (maybeReserved — the primary may have committed before its
+		// response was lost, reserveVoucherOnPrimary's own doc comment)
+		// are tracked the same way here: release is idempotent-safe on a
+		// voucher that was never actually reserved, so over-releasing on a
+		// later failure costs nothing, while skipping a possible
+		// reservation would leave exactly the orphaned-debit-with-no-sale
+		// class ADR-0084 exists to close.
+		if preauth || maybeReserved {
+			reservedVoucherIDs = append(reservedVoucherIDs, saleInput.Payments[i].VoucherID)
+		}
+	}
+
+	if !engine.BeginTenderCommit(attemptID) {
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
+	}
+	// ut-docs#6923: the commit span runs from here to the basket reset below;
+	// no clear/park/open is admitted inside it (ut-docs#7019: that now
+	// includes the fiscal ask). Released on every exit path.
+	commitHeld := true
+	endCommit := func() {
+		if commitHeld {
+			commitHeld = false
+			engine.EndTenderCommit()
+		}
+	}
+	defer endCommit()
+
 	// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#675): the tender-phase
 	// fiscal signing point fires HERE — after payment.<key>.authorize has
 	// resolved (the payable total, including any reader-reported tip above,
@@ -862,6 +971,13 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		why = "tender refused (the client disconnected before fiscal signing)"
 		return "", fmt.Errorf("tender refused: client disconnected before fiscal signing: %w", err)
 	}
+	// No abandonedUnder() / attempt check after the ask, and none may be
+	// added (ut-docs#7019): the commit point is held, so BeginAbandon refuses
+	// and no cashier clear/park/resume can rotate the attempt; a check here
+	// would bring back the signed-but-unrecorded tender this order removes.
+	// Exception: the kiosk landing page's KioskEngine.Reset()
+	// (self_order_page.go) bypasses abandonOp and can still rotate the kiosk
+	// attempt during the ask; the signed sale is still recorded (ut-docs#7022).
 	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
 	if signRes.Asked {
 		recordCtx = detached // a signer may have signed: record it (ADR-0044 D1)
@@ -869,13 +985,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
 	// admits no correct Beleg — not an outage — so it is refused right here,
-	// before any voucher is reserved and before CompleteSale: no sale row, no
-	// audit marker, the basket kept for the cashier to fix or void. The
-	// authorize loop above has already run (ADR-0044 Decision 1's ordering:
-	// a reader's tip is only final on its authorize answer), so every leg it
-	// captured is reversed first. A reversal that fails does not change the
-	// outcome — signing never happened, so nothing may be journaled as a
-	// sale — it becomes a named Problems-ring item for a human instead.
+	// before CompleteSale: no sale row, no audit marker, the basket kept for
+	// the cashier to fix or void. (ut-docs#7019: the voucher reservations
+	// and the commit point were taken before the ask, so the defers above
+	// release them.) The authorize loop above has already run (ADR-0044
+	// Decision 1's ordering: a reader's tip is only final on its authorize
+	// answer), so every leg it captured is reversed first. A reversal that
+	// fails does not change the outcome — signing never happened, so nothing
+	// may be journaled as a sale — it becomes a named Problems-ring item for
+	// a human instead.
 	if signRes.Outcome == fiscalSignCannotSign {
 		why = "tender refused (fiscal signer answered cannot-sign)"
 		// The reversed authorizes are spent: the kept basket's next tender
@@ -886,99 +1004,6 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", &fiscalCannotSignError{}
 	}
 
-	// Cross-till voucher redemption (ut-docs#1668, made atomic by ADR-0084 /
-	// ut-docs#1716): for every tracked voucher payment, RESERVE the
-	// redemption on the PRIMARY before this till's own local
-	// DebitVoucherForRedemption ever runs (inside pos.CompleteSale below) —
-	// a voucher issued at another till has no local vouchers row here at
-	// all, so without this the local debit would fail closed with
-	// ErrVoucherNotFound even though the voucher is perfectly good
-	// shop-wide. On a replica with a reachable primary, the primary's
-	// answer is authoritative AND serializing: /redeem runs the guarded
-	// debit on the primary's database, so two tills racing for one balance
-	// commit one after the other and the second is refused cleanly. A
-	// definitive refusal (void / insufficient balance) aborts the tender
-	// right here, with NO sale row ever attempted.
-	//
-	// The reservation IS a debit on the primary (this is what #1668's
-	// read-only design deliberately avoided, and what ADR-0084 makes safe):
-	//   - It is keyed on saleInput.SaleID, the SAME id this sale is
-	//     persisted under and journals up with, so the primary's eventual
-	//     journal replay (pos.CompleteSale, VoucherRedemptionRecorded)
-	//     recognizes the debit it already holds and does not apply it
-	//     again. That id must therefore exist BEFORE the first reservation:
-	//     dispatchFiscalSignStart above only mints it when a plugin
-	//     subscribes to fiscal.sign.start — on most tills nothing does —
-	//     so it is minted here if still empty (pos.CompleteSale honours a
-	//     pre-set SaleID rather than generating its own).
-	//   - Every reservation made in THIS attempt is tracked, and released
-	//     on the primary (releaseReservedVouchers → POST .../release) if a
-	//     later payment is refused or pos.CompleteSale itself fails for any
-	//     reason — synchronously, before returning, and before any local
-	//     sale row exists, so no journal entry can ever be produced for a
-	//     released attempt. This closes the orphaned-debit bug the first
-	//     draft had. (A crash in the window between a successful
-	//     reservation and the local commit is the accepted residual risk,
-	//     ADR-0084 Decision 4.) "Reservation made" includes a MERELY
-	//     POSSIBLE one — voucherRedeemWriteThrough's maybeReserved, a
-	//     transport failure after the request went out, or a 200 whose body
-	//     was lost — tracked exactly like a confirmed one, since release is
-	//     a safe no-op on a voucher that was never actually reserved.
-	//   - Two legs against the SAME voucher in one sale are refused up
-	//     front (pos.DuplicateVoucherPaymentError, checked before any authorize
-	//     so no money is taken — the idempotency key is
-	//     one redemption per voucher per sale), BEFORE anything is
-	//     reserved, so an invalid sale never round-trips to the primary.
-	// Not a replica, or the primary unreachable / 404: this payment is left
-	// exactly as it always was, going through the normal local validation
-	// next (offline-first, unchanged).
-	if saleInput.SaleID == "" {
-		saleInput.SaleID = uuid.NewString()
-	}
-	if abandonedUnder() {
-		why = "tender refused (the basket was abandoned during authorize)"
-		return "", &tenderAbandonedError{}
-	}
-	var reservedVoucherIDs []string
-	for i := range saleInput.Payments {
-		if saleInput.Payments[i].VoucherID == "" {
-			continue
-		}
-		preauth, maybeReserved, err := voucherRedeemWriteThrough(recordCtx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
-		if err != nil {
-			releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
-			why = "tender refused (a voucher could not be reserved)"
-			return "", err
-		}
-		saleInput.Payments[i].VoucherPreauthorized = preauth
-		// A confirmed reservation (preauth) and a merely POSSIBLE one
-		// (maybeReserved — the primary may have committed before its
-		// response was lost, reserveVoucherOnPrimary's own doc comment)
-		// are tracked the same way here: release is idempotent-safe on a
-		// voucher that was never actually reserved, so over-releasing on a
-		// later failure costs nothing, while skipping a possible
-		// reservation would leave exactly the orphaned-debit-with-no-sale
-		// class ADR-0084 exists to close.
-		if preauth || maybeReserved {
-			reservedVoucherIDs = append(reservedVoucherIDs, saleInput.Payments[i].VoucherID)
-		}
-	}
-
-	if !engine.BeginTenderCommit(attemptID) {
-		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
-		why = "tender refused (the basket was abandoned during authorize)"
-		return "", &tenderAbandonedError{}
-	}
-	// ut-docs#6923: the commit span runs from here to the basket reset below;
-	// no clear/park/open is admitted inside it. Released on every exit path.
-	commitHeld := true
-	endCommit := func() {
-		if commitHeld {
-			commitHeld = false
-			engine.EndTenderCommit()
-		}
-	}
-	defer endCommit()
 	// ut-docs#6653: the legs' settled rows are written inside the sale's own
 	// transaction (a leg with no journal row is skipped there).
 	saleInput.LegRequestIDs = saleInput.LegRequestIDs[:0:0]
@@ -989,12 +1014,13 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 	if err != nil {
-		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		// ut-docs#6602: no sale row; the deferred reversal sends the
-		// captured card legs back.
+		// captured card legs back, and the voucher defer releases the
+		// reservations (ut-docs#7019).
 		return "", err
 	}
 	ownCaptured = false
+	vouchersOwned = false // the sale row owns the reservations now
 	if tenderCommittedHook != nil {
 		tenderCommittedHook(engine)
 	}
