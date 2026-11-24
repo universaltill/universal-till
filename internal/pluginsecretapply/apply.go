@@ -80,12 +80,6 @@ var allowed = map[string]target{
 	},
 }
 
-// IsAllowed reports whether (plugin, key) is the allow-listed secret pair.
-func IsAllowed(pluginID, settingKey string) bool {
-	t, ok := allowed[pluginID]
-	return ok && t.secretKey == settingKey
-}
-
 // SecretKeyFor returns the allow-listed secret setting of a plugin: the
 // plugin's settings page offers the one-time-code entry only for these.
 func SecretKeyFor(pluginID string) (string, bool) {
@@ -134,8 +128,6 @@ type plaintext struct {
 	Value string            `json:"value"`
 	Aux   map[string]string `json:"aux"`
 }
-
-func (p plaintext) clear() bool { return p.Value == "" }
 
 func printable(s string, max int) bool {
 	if len(s) > max || !utf8.ValidString(s) {

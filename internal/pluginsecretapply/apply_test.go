@@ -198,17 +198,6 @@ func TestApply_ManifestUnreadableIsRetryable(t *testing.T) {
 	}
 }
 
-func TestIsAllowed(t *testing.T) {
-	if !IsAllowed("sumup", "sumup_api_key") {
-		t.Fatal("pair must be allowed")
-	}
-	for _, c := range [][2]string{{"sumup", "x"}, {"x", "sumup_api_key"}, {"sumup", "sumup_merchant_code"}, {"", ""}} {
-		if IsAllowed(c[0], c[1]) {
-			t.Fatalf("%v must not be allowed", c)
-		}
-	}
-}
-
 func TestSecretStore_PlaintextShapes(t *testing.T) {
 	cases := map[string]string{
 		"bad json":    "not json",
@@ -223,7 +212,7 @@ func TestSecretStore_PlaintextShapes(t *testing.T) {
 		}
 	}
 	c, err := parsePlaintext([]byte(`{"v":1,"ver":4,"value":"","aux":{"sumup_merchant_code":""}}`))
-	if err != nil || !c.clear() || c.Ver != 4 {
+	if err != nil || c.Value != "" || c.Ver != 4 {
 		t.Fatalf("clear: %+v %v", c, err)
 	}
 }
