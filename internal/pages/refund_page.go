@@ -849,7 +849,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1795: canonicalize case here, once, at the boundary --
 		// every downstream use (EnsurePaymentMethod, the persisted
 		// PaymentInput.MethodID, the plugin-entry lookup in
-		// blockingPaymentEventWithResponseAndID, and the fiscal.MethodKeyOKC
+		// blockingPaymentEventDispatch, and the fiscal.MethodKeyOKC
 		// fail-closed check below) then agrees on one form. Lowercasing
 		// here rather than making each comparison site case-insensitive
 		// avoids a differently-cased request minting a second, orphaned
@@ -1120,10 +1120,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// (refundDelivered) the whole recording runs detached: a client that
 		// disconnects (tab closed, LAN blip) must not leave money out with no
 		// return sale and no per-leg row. Cash / hookless methods moved nothing
-		// yet, so until the return commits a gone client still records nothing
-		// (ADR-0146 D1: the cashier hands cash over only after this request
-		// succeeds). pos.CompleteSale is the irreversible step: once it has
-		// committed, everything after it runs detached for every method.
+		// yet, so until fiscal.sign.ask is dispatched a gone client still
+		// records nothing (ADR-0146 D1: the cashier hands cash over only after
+		// this request succeeds); once a signer has been asked the return is
+		// recorded detached too (ut-docs#6910, ADR-0044 D1). pos.CompleteSale
+		// is the irreversible step: once it has committed, everything after it
+		// runs detached for every method.
 		recordCtx := r.Context()
 		if refundDelivered {
 			recordCtx = context.WithoutCancel(recordCtx)
@@ -1188,7 +1190,18 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same amount — the exact gap that blocked the first attempt at
 		// this dispatch (universal-till PR #594, closed unmerged; see
 		// docs/code-reviews/2026-09-03-fiscal-sign-refund-return-dispatch-1405.md).
+		if refundBeforeFiscalSignHook != nil {
+			refundBeforeFiscalSignHook()
+		}
+		if err := recordCtx.Err(); err != nil { // ut-docs#6910; no-op when refundDelivered (detached)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "refund.error.server", "refund",
+				fmt.Errorf("refund refused: client disconnected before fiscal signing: %w", err))
+			return
+		}
 		signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+		if signRes.Asked {
+			recordCtx = context.WithoutCancel(recordCtx) // a signer may have signed: record it (ADR-0044 D1)
+		}
 
 		// ADR-0146 Decision 1 (ut-docs#3408, amends ADR-0136 Decision 0): a
 		// cannot-sign answer is a property of this refund's own data, not an
@@ -1297,7 +1310,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// blockingPaymentEventWithResponseAndID publishes `payment.<key>.<suffix>`
+// blockingPaymentEventDispatch publishes `payment.<key>.<suffix>`
 // for the method's owning payment plugin and BLOCKS on the result: (nil,
 // nil) when the method has no payment entry, or its plugin never declared
 // the hook (cash stays cash), the plugin's raw response when it approves,
@@ -1332,14 +1345,13 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 // for the identical reason once the refund gate started calling this
 // function directly; payment_event_test.go now calls this function
 // directly too, passing requestID="".
-func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, error) {
-	resp, _, err := blockingPaymentEventDispatch(ctx, d, method, suffix, requestID, payload)
-	return resp, err
-}
-
-// blockingPaymentEventDispatch is blockingPaymentEventWithResponseAndID
-// plus whether the event was actually delivered to a subscriber. The
-// tender path needs that distinction (ADR-0136 Decision 2, ut-docs#3309):
+//
+// ut-docs#6653: its last thin wrapper, blockingPaymentEventWithResponseAndID,
+// was deleted once the reversal send moved to sendLegReversal, which calls
+// this function directly; the tests call it directly too.
+//
+// It also returns whether the event was actually delivered to a
+// subscriber. The tender path needs that distinction (ADR-0136 Decision 2, ut-docs#3309):
 // only a leg whose payment.<key>.authorize really reached a plugin can
 // have captured money that a refused cannot-sign tender must reverse — a
 // hookless/cash leg, or a post-settle-only plugin with no authorize hook,
@@ -1548,3 +1560,8 @@ func refundDeclineKey(err error) string {
 	}
 	return "refund.error.provider_declined"
 }
+
+// refundBeforeFiscalSignHook (tests only, ut-docs#6910) runs immediately
+// before the pre-ask recordCtx.Err() check, so a test can make the client
+// leave at exactly that instant.
+var refundBeforeFiscalSignHook func()

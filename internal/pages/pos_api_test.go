@@ -1063,7 +1063,7 @@ func TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused(t *testing.T)
 // behave IDENTICALLY to the exact-case request above -- routed to the real
 // OKC plugin, and refused when that plugin approves with no receipt
 // evidence. Before this card's fix, the case mismatch made
-// blockingPaymentEventWithResponseAndID's exact-string EntryKey lookup miss
+// blockingPaymentEventDispatch's exact-string EntryKey lookup miss
 // entirely: the plugin was never even invoked (confirmed via the counter
 // below), so the tender fell through as an ordinary payment method with no
 // fiscal-device gate ever applying -- a silent sidestep of the #1779/#1788
@@ -1235,7 +1235,7 @@ func TestTenderHandler_TRSystemOfRecordCashOnly_NoDeviceEvidence_Refused(t *test
 }
 
 // TestTenderHandler_ListPaymentEntriesDBError_FailsClosed is ut-docs#2278:
-// blockingPaymentEventWithResponseAndID used to treat a genuine
+// blockingPaymentEventDispatch used to treat a genuine
 // ListPaymentEntries DB error identically to "no payment entry configured"
 // -- (nil, nil) -- so the tender-authorize gate silently let the sale
 // complete with no chance for a payment plugin to veto it, even though its

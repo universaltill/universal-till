@@ -104,17 +104,28 @@ func (t *legJournalTracker) captured(ctx context.Context, e data.LegEntry) {
 	t.note(ctx, e, data.LegCaptured)
 }
 
-// journalReversal appends one reversal state for a captured leg. Best effort:
-// the send goes ahead whatever the journal says.
-func journalReversal(ctx context.Context, d *common.Deps, leg pos.CapturedLeg, state string) {
+// journalReversal appends one reversal state, with its reason, for a captured
+// leg. Best effort: the send goes ahead whatever the journal says.
+func journalReversal(ctx context.Context, d *common.Deps, leg pos.CapturedLeg, state, reason string) {
 	if d == nil || d.Db == nil {
 		return
 	}
 	err := data.NewPaymentLegJournalRepo(d.Db).Append(ctx, data.LegEntry{
 		RequestID: leg.RequestID, State: state, MethodID: leg.MethodID, AmountMinor: leg.Amount.Minor(), Currency: leg.Currency,
-		TipMinor: leg.TipAmount.Minor(), ReaderRef: leg.ReaderRef, TransactionRef: leg.TransactionRef,
+		TipMinor: leg.TipAmount.Minor(), ReaderRef: leg.ReaderRef, TransactionRef: leg.TransactionRef, Reason: reason,
 	})
 	if err != nil && !errors.Is(err, data.ErrLegJournalTransition) {
 		logging.L().Warnf("payment leg journal: could not record %s for authorize_request_id %s: %v (ut-docs#6653)", state, leg.RequestID, err)
+	}
+}
+
+// legFromRow is the captured leg a journal row describes, for a reversal send
+// from the row's own exact amount, tip, reference and reader. Money enters
+// only through money.FromMinor.
+func legFromRow(e data.LegEntry) pos.CapturedLeg {
+	return pos.CapturedLeg{
+		MethodID: e.MethodID, Currency: e.Currency, RequestID: e.RequestID,
+		Amount: money.FromMinor(e.AmountMinor), TransactionRef: e.TransactionRef,
+		TipAmount: money.FromMinor(e.TipMinor), ReaderRef: e.ReaderRef,
 	}
 }

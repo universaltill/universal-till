@@ -280,6 +280,11 @@ func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, 
 // production.
 var tenderCommittedHook func(engine *pos.Service)
 
+// tenderBeforeFiscalSignHook (tests only, ut-docs#6910) runs immediately
+// before the last-cancellable-point pre-check ahead of fiscal.sign.ask, so a
+// test can make the client leave at exactly that instant.
+var tenderBeforeFiscalSignHook func()
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -801,8 +806,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// ut-docs#6805 (mirrors refund_page.go recordCtx): once a leg's authorize
 	// really reached a plugin and approved (or a tap the broker confirmed),
-	// the recording runs detached. Cash / hookless legs moved nothing: until
-	// the sale commits, a gone client still records nothing.
+	// the recording runs detached. Cash / hookless legs moved nothing, so
+	// until fiscal.sign.ask is dispatched a gone client still records nothing;
+	// once a signer has been asked the recording detaches too (ut-docs#6910).
 	recordCtx := ctx
 	if len(capturedLegs) > 0 {
 		recordCtx = detached
@@ -833,38 +839,23 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Make it explicit instead.
 	saleInput.Payments = payments
 
-	// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#675): the tender-phase
-	// fiscal signing point fires HERE — after payment.<key>.authorize has
-	// resolved (the payable total, including any reader-reported tip above,
-	// is final) and before CompleteSale persists the sale. This ordering is
-	// load-bearing: signing concurrently with an in-flight authorize could
-	// produce an irreversible TSE record for a sale that is then declined
-	// and never persisted. Orthogonal to the ADR-0048 hard gate at the top
-	// of this function — the gate decides whether a sale may START; this
-	// point signs (or declares) every sale that actually completes, and
-	// fires regardless of the gate's decision. A backend-level failure
-	// (unreachable, timeout, known-offline) never refuses the sale — it
-	// lands on the proceed-and-declare surface below. A "cannot-sign"
-	// answer is the one exception (ADR-0136): see right below.
-	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
-
-	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
-	// admits no correct Beleg — not an outage — so it is refused right here,
-	// before any voucher is reserved and before CompleteSale: no sale row, no
-	// audit marker, the basket kept for the cashier to fix or void. The
-	// authorize loop above has already run (ADR-0044 Decision 1's ordering:
-	// a reader's tip is only final on its authorize answer), so every leg it
-	// captured is reversed first. A reversal that fails does not change the
-	// outcome — signing never happened, so nothing may be journaled as a
-	// sale — it becomes a named Problems-ring item for a human instead.
-	if signRes.Outcome == fiscalSignCannotSign {
-		why = "tender refused (fiscal signer answered cannot-sign)"
-		// The reversed authorizes are spent: the kept basket's next tender
-		// must mint fresh idempotency keys, or a provider deduping on the
-		// old key could replay an approval whose money was just returned.
-		engine.RotateTenderAttemptIDIf(attemptID)
-		log.Printf("tender refused: fiscal signer answered cannot-sign (%s) — %d captured leg(s) being reversed (ADR-0136)", signRes.Reason, len(capturedLegs))
-		return "", &fiscalCannotSignError{}
+	// ut-docs#7019: from here to CompleteSale the order is: mint the sale id,
+	// abandon check, cross-till voucher reservations, the tender commit point,
+	// and only THEN fiscal.sign.ask. Every refusal that can end a tender
+	// without a sale row (abandon, a definitive voucher refusal, a commit
+	// refusal) is decided before a signer may have signed, so after a
+	// dispatched ask the tender has two outcomes: recorded, or refused on
+	// cannot-sign (ADR-0136). A failing CompleteSale is the one known gap
+	// (tracked on ut-docs#7021).
+	//
+	// The sale id must exist BEFORE the first voucher reservation (it is the
+	// idempotency key, see below) and pos.CompleteSale honours a pre-set id.
+	if saleInput.SaleID == "" {
+		saleInput.SaleID = uuid.NewString()
+	}
+	if abandonedUnder() {
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
 	}
 
 	// Cross-till voucher redemption (ut-docs#1668, made atomic by ADR-0084 /
@@ -879,7 +870,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// debit on the primary's database, so two tills racing for one balance
 	// commit one after the other and the second is refused cleanly. A
 	// definitive refusal (void / insufficient balance) aborts the tender
-	// right here, with NO sale row ever attempted.
+	// right here, with NO sale row ever attempted and (ut-docs#7019) before
+	// any fiscal signer is asked.
 	//
 	// The reservation IS a debit on the primary (this is what #1668's
 	// read-only design deliberately avoided, and what ADR-0084 makes safe):
@@ -887,18 +879,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	//     persisted under and journals up with, so the primary's eventual
 	//     journal replay (pos.CompleteSale, VoucherRedemptionRecorded)
 	//     recognizes the debit it already holds and does not apply it
-	//     again. That id must therefore exist BEFORE the first reservation:
-	//     dispatchFiscalSignStart above only mints it when a plugin
-	//     subscribes to fiscal.sign.start — on most tills nothing does —
-	//     so it is minted here if still empty (pos.CompleteSale honours a
-	//     pre-set SaleID rather than generating its own).
+	//     again. The id is minted above, before the first reservation.
 	//   - Every reservation made in THIS attempt is tracked, and released
-	//     on the primary (releaseReservedVouchers → POST .../release) if a
-	//     later payment is refused or pos.CompleteSale itself fails for any
-	//     reason — synchronously, before returning, and before any local
-	//     sale row exists, so no journal entry can ever be produced for a
-	//     released attempt. This closes the orphaned-debit bug the first
-	//     draft had. (A crash in the window between a successful
+	//     on the primary (releaseReservedVouchers → POST .../release) by the
+	//     defer below on every exit that does not persist the sale: a later
+	//     payment refused, a client gone or an abandon before the ask, a
+	//     fiscal cannot-sign answer (ut-docs#7019), or pos.CompleteSale
+	//     failing — synchronously, in this request, before any local sale
+	//     row exists, so no journal entry can ever be produced for a
+	//     released attempt. (A crash in the window between a successful
 	//     reservation and the local commit is the accepted residual risk,
 	//     ADR-0084 Decision 4.) "Reservation made" includes a MERELY
 	//     POSSIBLE one — voucherRedeemWriteThrough's maybeReserved, a
@@ -913,21 +902,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Not a replica, or the primary unreachable / 404: this payment is left
 	// exactly as it always was, going through the normal local validation
 	// next (offline-first, unchanged).
-	if saleInput.SaleID == "" {
-		saleInput.SaleID = uuid.NewString()
-	}
-	if abandonedUnder() {
-		why = "tender refused (the basket was abandoned during authorize)"
-		return "", &tenderAbandonedError{}
-	}
 	var reservedVoucherIDs []string
+	vouchersOwned := true
+	defer func() {
+		if vouchersOwned && len(reservedVoucherIDs) > 0 {
+			releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
+		}
+	}()
 	for i := range saleInput.Payments {
 		if saleInput.Payments[i].VoucherID == "" {
 			continue
 		}
 		preauth, maybeReserved, err := voucherRedeemWriteThrough(recordCtx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
 		if err != nil {
-			releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 			why = "tender refused (a voucher could not be reserved)"
 			return "", err
 		}
@@ -946,12 +933,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 
 	if !engine.BeginTenderCommit(attemptID) {
-		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		why = "tender refused (the basket was abandoned during authorize)"
 		return "", &tenderAbandonedError{}
 	}
 	// ut-docs#6923: the commit span runs from here to the basket reset below;
-	// no clear/park/open is admitted inside it. Released on every exit path.
+	// no clear/park/open is admitted inside it (ut-docs#7019: that now
+	// includes the fiscal ask). Released on every exit path.
 	commitHeld := true
 	endCommit := func() {
 		if commitHeld {
@@ -960,6 +947,61 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 	}
 	defer endCommit()
+
+	// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#675): the tender-phase
+	// fiscal signing point fires HERE — after payment.<key>.authorize has
+	// resolved (the payable total, including any reader-reported tip above,
+	// is final) and before CompleteSale persists the sale. This ordering is
+	// load-bearing: signing concurrently with an in-flight authorize could
+	// produce an irreversible TSE record for a sale that is then declined
+	// and never persisted. Orthogonal to the ADR-0048 hard gate at the top
+	// of this function — the gate decides whether a sale may START; this
+	// point signs (or declares) every sale that actually completes, and
+	// fires regardless of the gate's decision. A backend-level failure
+	// (unreachable, timeout, known-offline) never refuses the sale — it
+	// lands on the proceed-and-declare surface below. A "cannot-sign"
+	// answer is the one exception (ADR-0136): see right below.
+	// ut-docs#6910: last cancellable point; nothing irreversible has happened
+	// yet on a non-detached path. Once the ask is sent a signer may have
+	// signed, so the recording is detached (ADR-0044 D1).
+	if tenderBeforeFiscalSignHook != nil {
+		tenderBeforeFiscalSignHook()
+	}
+	if err := recordCtx.Err(); err != nil {
+		why = "tender refused (the client disconnected before fiscal signing)"
+		return "", fmt.Errorf("tender refused: client disconnected before fiscal signing: %w", err)
+	}
+	// No abandonedUnder() / attempt check after the ask, and none may be
+	// added (ut-docs#7019): the commit point is held, so BeginAbandon refuses
+	// and no cashier or kiosk clear/park/resume/landing can rotate the
+	// attempt; a check here would bring back the signed-but-unrecorded tender
+	// this order removes.
+	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+	if signRes.Asked {
+		recordCtx = detached // a signer may have signed: record it (ADR-0044 D1)
+	}
+
+	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
+	// admits no correct Beleg — not an outage — so it is refused right here,
+	// before CompleteSale: no sale row, no audit marker, the basket kept for
+	// the cashier to fix or void. (ut-docs#7019: the voucher reservations
+	// and the commit point were taken before the ask, so the defers above
+	// release them.) The authorize loop above has already run (ADR-0044
+	// Decision 1's ordering: a reader's tip is only final on its authorize
+	// answer), so every leg it captured is reversed first. A reversal that
+	// fails does not change the outcome — signing never happened, so nothing
+	// may be journaled as a sale — it becomes a named Problems-ring item for
+	// a human instead.
+	if signRes.Outcome == fiscalSignCannotSign {
+		why = "tender refused (fiscal signer answered cannot-sign)"
+		// The reversed authorizes are spent: the kept basket's next tender
+		// must mint fresh idempotency keys, or a provider deduping on the
+		// old key could replay an approval whose money was just returned.
+		engine.RotateTenderAttemptIDIf(attemptID)
+		log.Printf("tender refused: fiscal signer answered cannot-sign (%s) — %d captured leg(s) being reversed (ADR-0136)", signRes.Reason, len(capturedLegs))
+		return "", &fiscalCannotSignError{}
+	}
+
 	// ut-docs#6653: the legs' settled rows are written inside the sale's own
 	// transaction (a leg with no journal row is skipped there).
 	saleInput.LegRequestIDs = saleInput.LegRequestIDs[:0:0]
@@ -970,12 +1012,13 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 	if err != nil {
-		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		// ut-docs#6602: no sale row; the deferred reversal sends the
-		// captured card legs back.
+		// captured card legs back, and the voucher defer releases the
+		// reservations (ut-docs#7019).
 		return "", err
 	}
 	ownCaptured = false
+	vouchersOwned = false // the sale row owns the reservations now
 	if tenderCommittedHook != nil {
 		tenderCommittedHook(engine)
 	}
@@ -2917,7 +2960,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
-			// plugin-entry lookup (blockingPaymentEventWithResponseAndID),
+			// plugin-entry lookup (blockingPaymentEventDispatch),
 			// and every fiscal.MethodKeyOKC comparison below then agree on
 			// one form. See refund_page.go's identical fix for why this
 			// canonicalizes the request value rather than making each
@@ -4320,49 +4363,85 @@ func reversePaymentLegsDetail(ctx context.Context, d *common.Deps, legs []pos.Ca
 		if tapRefundMainOnly(ctx, d, leg.MethodID) {
 			failed++
 			mainOnly++
-			journalReversal(ctx, d, leg, data.LegReverseFailed)
+			// ut-docs#6653 slice 3: reverse_failed may only follow reversing
+			// (Decision 9.2), so the refused leg opens its chain first; nothing
+			// is sent. Without it the leg stayed captured and was never listed.
+			journalReversal(ctx, d, leg, data.LegReversing, "")
+			journalReversal(ctx, d, leg, data.LegReverseFailed, data.LegReasonMainTillOnly)
 			logging.L().Warnf("%s, but this additional till cannot return a card tap — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: refund it on the main till (ADR-0198 Amendment 2026-11-23)", what, leg.MethodID, leg.Amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef))
 			continue
 		}
 		// ut-docs#6653: reversing is journaled before the send, the outcome
 		// after it. Best effort: the live in-memory reversal always goes ahead.
-		journalReversal(ctx, d, leg, data.LegReversing)
-		amount := leg.Amount
-		payload := map[string]any{
-			"method":               leg.MethodID,
-			"amount":               amount.Minor(),
-			"currency":             leg.Currency,
-			"reversal":             true,
-			"authorize_request_id": leg.RequestID,
-		}
-		if leg.ReaderRef != "" {
-			// ut-docs#6566: one leg, so the reader is unambiguous at the top
-			// level too; additive, a plugin that ignores it keeps working.
-			payload["reader_id"] = leg.ReaderRef
-		}
-		if leg.TransactionRef != "" {
-			op := map[string]any{
-				"transaction_ref": leg.TransactionRef,
-				"amount":          amount.Minor(),
-				"tip_amount":      leg.TipAmount.Minor(),
-			}
-			if leg.ReaderRef != "" {
-				op["reader_id"] = leg.ReaderRef
-			}
-			payload["original_payments"] = []map[string]any{op}
-		}
-		// ut-docs#6455: a tap leg's reversal is bound to its PaymentIntent and
-		// to exactly the amount it captured.
-		refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, "refund:reversal:"+leg.RequestID+":1")
-		if _, err := blockingPaymentEventWithResponseAndID(refundCtx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
+		journalReversal(ctx, d, leg, data.LegReversing, "")
+		// The live send is always attempt 1, whatever the journal holds: a
+		// re-send of a first send that timed out at the provider must carry
+		// the same key, or the provider cannot dedupe it (ut-docs#6653 F4).
+		if _, err := sendLegReversal(ctx, d, leg, 1); err != nil {
 			failed++
-			journalReversal(ctx, d, leg, data.LegReverseFailed)
-			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
+			journalReversal(ctx, d, leg, data.LegReverseFailed, data.LegReasonReversalFailed)
+			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, leg.Amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
 			continue
 		}
-		journalReversal(ctx, d, leg, data.LegReversed)
+		journalReversal(ctx, d, leg, data.LegReversed, "")
 	}
 	return failed, mainOnly
+}
+
+// reversalRefundKey is the broker idempotency key of the n-th send of a
+// leg's reversal: refund:reversal:<authorize request id>:<n>. A live send is
+// always 1; a manager's Retry is the leg's count of reversing rows (>= 2).
+func reversalRefundKey(requestID string, n int) string {
+	return "refund:reversal:" + requestID + ":" + strconv.Itoa(n)
+}
+
+// reversalEventID is the refund event id of the n-th send: reversalRequestID
+// for the first (and every live) send, reversal:<id>:<n> from a Retry on, so a
+// provider that stores a failed answer under the event id does not replay it
+// (ut-docs#6653 F2, payment-provider-contract.md).
+func reversalEventID(requestID string, n int) string {
+	if n <= 1 || requestID == "" {
+		return reversalRequestID(requestID)
+	}
+	return reversalRequestID(requestID) + ":" + strconv.Itoa(n)
+}
+
+// sendLegReversal dispatches the Decision 2 reversal of one captured leg: the
+// blocking payment.<key>.refund event, with the base refund payload plus
+// reversal:true and authorize_request_id, the leg's own exact amount and
+// full reference. dispatched is false when no plugin subscribes to the
+// method's refund event (nothing was sent): the live path ignores that as it
+// always did, a Retry treats it as a failure.
+func sendLegReversal(ctx context.Context, d *common.Deps, leg pos.CapturedLeg, n int) (dispatched bool, err error) {
+	amount := leg.Amount
+	payload := map[string]any{
+		"method":               leg.MethodID,
+		"amount":               amount.Minor(),
+		"currency":             leg.Currency,
+		"reversal":             true,
+		"authorize_request_id": leg.RequestID,
+	}
+	if leg.ReaderRef != "" {
+		// ut-docs#6566: one leg, so the reader is unambiguous at the top
+		// level too; additive, a plugin that ignores it keeps working.
+		payload["reader_id"] = leg.ReaderRef
+	}
+	if leg.TransactionRef != "" {
+		op := map[string]any{
+			"transaction_ref": leg.TransactionRef,
+			"amount":          amount.Minor(),
+			"tip_amount":      leg.TipAmount.Minor(),
+		}
+		if leg.ReaderRef != "" {
+			op["reader_id"] = leg.ReaderRef
+		}
+		payload["original_payments"] = []map[string]any{op}
+	}
+	// ut-docs#6455: a tap leg's reversal is bound to its PaymentIntent and
+	// to exactly the amount it captured.
+	refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, reversalRefundKey(leg.RequestID, n))
+	_, dispatched, err = blockingPaymentEventDispatch(refundCtx, d, leg.MethodID, "refund", reversalEventID(leg.RequestID, n), payload)
+	return dispatched, err
 }
 
 // isISO4217Code reports whether c is three uppercase ASCII letters.

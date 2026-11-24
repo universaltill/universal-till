@@ -18,7 +18,7 @@ Cash is built in; card and other payment methods come as plugins from the store 
 2. If you use a card reader, set its id in the plugin settings on that till.
 3. At checkout, tap **Pay** (it shows the total) to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set the preferred method and its fees in **Configuring payment methods** below) — pick the cheaper one; a declined card leaves the basket untouched. The preferred method is the panel's first button and spans its whole width, so **Pay** then that button charges the exact amount owed in two taps.
 4. On a card reader the customer has about 18 seconds to tap or insert. After that the till tells the reader to stop and shows **Payment declined**, so a card offered too late is refused. If the card was already being read when time ran out, the payment still goes through and the sale shows as paid. After a card decline that came after a wait, tap **Pay** again on the **same basket** first: the till checks the earlier attempt and, if it went through, completes the sale with it instead of charging again. If it is declined again straight away, the earlier attempt is still being checked — wait a minute and tap **Pay** again. If you change the basket or pick another method instead, check the reader's screen or your provider's dashboard before charging again.
-   If this till cannot record a card payment safely, it will not take it, and after a restart it returns any card payment that never became a sale and records any it could not settle in the till's log for a manager to check at the payment provider.
+   If this till cannot record a card payment safely, it will not take it, and after a restart it returns any card payment that never became a sale and lists any it could not settle under **Settings → Payments → Payments needing attention** (and in the till's log) for a manager to check at the payment provider.
 5. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
 
 ## Install, set up and update a card plugin (Stripe, SumUp)
@@ -108,9 +108,9 @@ Sometimes a card reader can't tell the till whether a payment went through. The 
 - **Tap Pay again with the same payment.** The till asks the provider again, using the same request, so the customer is not charged twice. Any other payment (a different method or amount) is refused until this one is settled.
 - **If you clear the sale instead** (**New sale**), park it, or open another order over it, the till sends back the card payments it already knows were taken for that sale, automatically. The payment it could not confirm is **not** sent back, because the customer may never have been charged. A red message tells you which case applies.
 - **What to do next:** check the payment with your payment provider, and refund it there if the customer was charged. Do not charge the customer again until you have checked.
-- **Where to find the details:** each payment (method, amount and request reference) is listed under **Recent problems** on the Back office page. Your provider's dashboard shows the final state of each payment.
+- **Where to find the details:** a card payment the till could not send back, or could not settle after a restart, is listed under **Settings → Payments → Payments needing attention** (see below). Each payment (method, amount and request reference) is also listed under **Recent problems** on the Back office page. Your provider's dashboard shows the final state of each payment.
 
-The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too. Once the till has started saving a paid sale, **Clear**, **Hold** and opening another order are refused for that moment with a "payment in progress" notice, so a sale that was paid is never parked or sent back; try again once the sale is done.
+The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too. Once the till has started signing (where a fiscal signer is installed) or saving a paid sale, **Clear**, **Hold** and opening another order are refused for that moment with a "payment in progress" notice, so a sale that was paid is never parked or sent back; try again once the sale is done.
 
 ## When a card payment is declined
 
@@ -121,6 +121,17 @@ If the card provider refuses a payment, a red message appears at the top of the 
 - **The card reader is not connected:** check it is switched on and online, then try again.
 - **The card reader is busy with another payment:** wait a moment and try again.
 - **The card payment service refused this till's connection:** ask a manager to check the card payment settings for the plugin.
+
+## Payments needing attention
+
+A manager sees this card under **Settings → Payments**. It lists card payments the till could not deal with by itself: a refund that **failed** (the customer may still be charged), and a payment the till could not confirm because it restarted (**Please check**). Cashiers do not see it, and it is hidden while nothing needs attention. Each row shows the amount, the payment method, the time and the end of the provider's reference, so you can find the payment in your provider's dashboard.
+
+1. **Check the payment with your payment provider first.** Match it by amount, time and reference. The list can only tell you what the till knows.
+2. **Refund failed:** if the provider shows the payment was **not** refunded, choose **Try refund again**. The till asks for a manager PIN and sends one more refund for the exact amount of the original payment. If it goes through, the row leaves the list. If it fails again, the row stays: refund it in your provider's dashboard instead. If the provider shows the payment **was** refunded already, do not try again: the customer would be refunded twice.
+3. **Mark as handled** once the payment is refunded or confirmed at the provider (or was never charged). It asks for a manager PIN, sends nothing to the provider and takes the row off the list. You can add a short note, which is kept in the audit log with your name. A **Please check** payment can only be marked as handled: the till never sends a refund for it, because the money may already have moved.
+4. On an **additional till** a card tap cannot be refunded here: refund it on the main till, then mark it as handled.
+
+The list and **Mark as handled** work without the internet. Sending a refund needs the payment provider, as any refund does. None of this stops sales at the till.
 
 ## When a Tap to Pay payment is not confirmed
 

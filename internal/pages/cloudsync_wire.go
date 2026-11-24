@@ -1703,13 +1703,6 @@ func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingI
 // anything is persisted. inactive lands the plugin switched off in the persist
 // transaction (ut-docs#6930).
 func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck, inactive bool, adoptPaymentKeys []string) (string, error) {
-	// ADR-0194 (Apple 2.5.2): a cloud directive, a replica convergence or an
-	// auto-install never fetches a code plugin on the App Store build. Before
-	// any status write or network use; the bundled set is the only code there.
-	listingType, codeErr := refuseCodeInstall(d, listingID)
-	if codeErr != nil {
-		return "", codeErr
-	}
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 
 	// One read of the listing's existing record feeds two protections below:
@@ -1746,6 +1739,22 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 			rec.CurrentVersion = prior.CurrentVersion
 		}
 		_ = statusStore.Save(ctx, rec)
+	}
+
+	// ADR-0194 (Apple 2.5.2): a cloud directive, a replica convergence or an
+	// auto-install never fetches a code plugin on the App Store build. Before
+	// any network use; the bundled set is the only code there. The refusal is
+	// recorded (non-retryable) so a stale "can retry" record left by an
+	// earlier build stops showing (ut-docs#7016).
+	listingType, codeErr := refuseCodeInstall(d, listingID)
+	if codeErr != nil {
+		// Only an existing record is rewritten: a refusal on a listing that
+		// never had one still leaves nothing behind.
+		if hadPrior {
+			failure := plugins.ClassifyInstallError(codeErr, false)
+			saveFailed(failure.MessageKey, failure.Retryable)
+		}
+		return "", codeErr
 	}
 
 	// ut-docs#495: a pinned (upgrade) install can fail the version-mismatch

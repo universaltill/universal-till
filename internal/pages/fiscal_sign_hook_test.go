@@ -1637,3 +1637,43 @@ func TestFiscalSignPayload_ChargePartPerRate(t *testing.T) {
 		t.Fatalf("a sale without a charge must not send the charge parts: %s", raw)
 	}
 }
+
+// ut-docs#6910: Asked is true only when the ask was really sent; a parent
+// ctx cancelled inside the handler does not turn an approval into a failure.
+func TestDispatchFiscalSignAsk_AskedOnlyWhenDispatched(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	in := pos.SaleInput{Currency: "EUR"}
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &in); res.Asked {
+		t.Fatalf("no signer installed: Asked must be false, got %+v", res)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-unit", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		cancel()
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	res := dispatchFiscalSignAsk(ctx, dp, &in)
+	if !res.Asked || res.Outcome != fiscalSignApproved {
+		t.Fatalf("answered ask: want Asked && approved even though the parent ctx was cancelled mid-ask, got %+v", res)
+	}
+}
+
+// ut-docs#6910: a known-offline tender is never sent, so Asked stays false
+// (the cancellable SkippedOffline path) and the sale proceeds-and-declares.
+func TestDispatchFiscalSignAsk_KnownOfflineNotAsked(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	var calls atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-offline", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	grantSignerPerm(t, dp, "com.test.fiscal-sign-6910-offline", "net:*")
+	off := pos.SaleInput{Currency: "EUR", Offline: true}
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &off); res.Asked || res.Outcome != fiscalSignSkippedOffline {
+		t.Fatalf("known-offline: want Asked=false and SkippedOffline, got %+v", res)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("known-offline must not dispatch, got %d calls", calls.Load())
+	}
+}

@@ -1663,7 +1663,7 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 }
 
 // TestPostRefund_ListPaymentEntriesDBError_FailsClosed is ut-docs#2278:
-// blockingPaymentEventWithResponseAndID used to treat a genuine
+// blockingPaymentEventDispatch used to treat a genuine
 // ListPaymentEntries DB error identically to "no payment entry configured"
 // -- (nil, nil) -- silently letting the refund proceed with no chance for a
 // payment plugin to veto it. Dropping plugin_entries forces that exact DB
@@ -1845,7 +1845,7 @@ func TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused(t *testing.T) 
 // to the real OKC plugin, and refused when that plugin approves with no
 // receipt evidence. Before this card's fix, refund_page.go only
 // strings.TrimSpace'd the form value (no case-fold), so the case mismatch
-// made blockingPaymentEventWithResponseAndID's exact-string EntryKey
+// made blockingPaymentEventDispatch's exact-string EntryKey
 // lookup miss entirely: the plugin was never invoked (confirmed via the
 // counter below), and the case-sensitive `method == fiscal.MethodKeyOKC`
 // fail-closed check also never matched -- the refund silently completed as

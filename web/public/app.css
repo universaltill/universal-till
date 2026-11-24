@@ -6554,6 +6554,8 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
    "Light: no animations, flat look (fastest)") must never outgrow its card
    at 360px — it shrinks and the native control truncates the label. */
 .set-row select { max-inline-size: 100%; min-inline-size: 0; }
+/* ut-docs#7015: a long path in a settings row has no break point; let it wrap inside the card. */
+.set-row code { max-inline-size: 100%; min-inline-size: 0; overflow-wrap: anywhere; }
 /* Stacked checkbox row (was an inline style on four stock/receipt labels). */
 .set-block { display: block; margin-block: .35rem; }
 /* ut-docs#5738: a label-wrapped checkbox in Settings is a >=44px touch row
@@ -8515,3 +8517,23 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 #card-readers-list .btn, #reader-requests .btn { min-block-size: 56px; inline-size: auto; justify-content: center; }
 .reader-actions .btn { inline-size: 100%; }
 #card-readers-list input, #reader-requests input { min-block-size: 56px; margin: 0; }
+
+/* ut-docs#6653 slice 3: "Payments needing attention" on Settings -> Payments.
+   Rows are stacked blocks (never a table): facts and actions sit side by side
+   from ~34rem and stack below it, so a 360px phone gets full-width buttons.
+   Logical properties only (RTL); buttons wrap their label (German is longest)
+   and keep a gap so a thumb cannot hit both. */
+.pay-attn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pay-attn-row { display: flex; flex-wrap: wrap; gap: .8rem 1rem; padding-block: .8rem; border-block-start: 1px solid var(--border); }
+.pay-attn-facts { flex: 1 1 16rem; min-inline-size: 0; overflow-wrap: anywhere; }
+.pay-attn-facts p { margin-block: .25rem; }
+.pay-attn-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.pay-attn-amount { font-size: 1.15rem; }
+.pay-attn-actions { flex: 1 1 14rem; min-inline-size: 0; display: flex; flex-direction: column; gap: .9rem; }
+.pay-attn-actions form { display: flex; flex-direction: column; gap: .5rem; margin: 0; }
+.pay-attn-note { display: flex; flex-direction: column; gap: .25rem; }
+.pay-attn-note input { inline-size: 100%; min-inline-size: 0; box-sizing: border-box; }
+.pay-attn-btn { inline-size: 100%; justify-content: center; text-align: center; white-space: normal; }
+.pay-attn-msg:focus { outline: none; }
+.pay-attn-flash { margin-block: .4rem; font-weight: 600; }
+@media (min-width: 34rem) { .pay-attn-actions { flex: 0 0 15rem; } }

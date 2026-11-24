@@ -108,12 +108,16 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		// KioskEngine, not Engine (ut-docs#449): this route is reachable
 		// without a login, so resetting the shared cashier engine here used
 		// to wipe the till's live sale. Only the kiosk's own basket may be
-		// cleared. d.KioskEngine is nil in some page-level test harnesses
+		// cleared — and not while a sale is committing (resetUnlessCommitting,
+		// ut-docs#7022). d.KioskEngine is nil in some page-level test harnesses
 		// that never exercise the basket (e.g. TestSelfOrderModeRedirectsHome)
 		// — this route is reachable from those too since it's part of the "/"
 		// mode-redirect flow, so guard rather than assume it's always set.
 		if d.KioskEngine != nil {
-			d.KioskEngine.Reset()
+			// An abandon (ut-docs#6602 escape hatch while a tender
+			// authorizes), skipped once the sale is committing
+			// (ut-docs#7022): the start screen renders either way.
+			resetUnlessCommitting(d.KioskEngine)
 		}
 		// The start screen also ends a customer's language pick
 		// (ut-docs#4200): the idle timeout, the confirmation screen's
