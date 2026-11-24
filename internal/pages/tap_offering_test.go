@@ -320,3 +320,19 @@ func TestTapReversal_AdditionalTillFailsWithMainTillWording(t *testing.T) {
 		t.Fatalf("toast key = %q (unchanged path)", got)
 	}
 }
+
+// Review finding: a joined till in self-order display mode reports "kiosk" to
+// the cloud, which narrows its credential; the till must not offer a tap the
+// cloud will refuse, even though its roster/setting still says additional.
+func TestTapOffer_AdditionalTillInSelfOrderModeIsAKioskNoTap(t *testing.T) {
+	e := tapRig(t)
+	ctx := context.Background()
+	e.joinTill(t, data.TillRoleAdditional)
+	if err := e.dp.Settings.Set(ctx, "display.mode", "self_order"); err != nil {
+		t.Fatal(err)
+	}
+	if got := effectiveReaderSource(ctx, e.dp, readerSourcePOS); got != readerSourceJoined {
+		t.Fatalf("effective source = %q, want %q", got, readerSourceJoined)
+	}
+	e.wantText(t, e.tender(t), "tap.start_failed")
+}

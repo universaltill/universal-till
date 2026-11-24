@@ -77,6 +77,12 @@ func tapJoinedRole(ctx context.Context, d *common.Deps) (role string, explicit b
 	if d.Settings == nil || d.SyncPrimaryURL(ctx) == "" {
 		return "", false
 	}
+	// A self-order display is a kiosk whatever the roster says: it is what the
+	// till reports to the cloud (cloudsync.joinedTillRole), which narrows the
+	// credential, so the till must not offer a tap the cloud will refuse.
+	if dm, _, _ := d.Settings.Get(ctx, "display.mode"); strings.TrimSpace(dm) == "self_order" {
+		return "kiosk", true
+	}
 	if v, _, _ := d.Settings.Get(ctx, tillRoleSettingsKey); data.ValidTillRole(strings.TrimSpace(v)) {
 		return strings.TrimSpace(v), true
 	}
