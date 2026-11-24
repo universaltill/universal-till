@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -149,14 +150,16 @@ func TestSelfOrderShop_ClientDisconnectDuringAuthorizeStillRecordsSale(t *testin
 	}
 }
 
-// T4: guard. Nothing moved money (cash): a client that leaves before the
-// commit records nothing (the cashier hands goods over only on success).
-func TestTender_ClientDisconnectCashTenderRecordsNothing(t *testing.T) {
+// T4 (ut-docs#6910, replaces the #6805 guard that pinned "records nothing"):
+// a signer has been asked and approved, then the client leaves. The TSE holds
+// a signed transaction, so the sale MUST be recorded (ADR-0044 D1); a gone
+// client is no third outcome next to "recorded" and "refused by cannot-sign".
+func TestTender_ClientDisconnectAfterCashSignStillRecordsSale(t *testing.T) {
 	mux, dp := newFiscalSignDeps(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var asked atomic.Int32
-	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6805-cash", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-cash", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
 		asked.Add(1)
 		cancel()
 		return json.RawMessage(`{"status":"approved"}`), nil
@@ -168,8 +171,146 @@ func TestTender_ClientDisconnectCashTenderRecordsNothing(t *testing.T) {
 	if asked.Load() != 1 {
 		t.Fatalf("fiscal.sign.ask answered %d times, want 1", asked.Load())
 	}
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 1 {
+		t.Fatalf("a signed cash sale must be recorded despite the disconnect, got %d sales (response %d: %s)", n, rec.Code, rec.Body.String())
+	}
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM payments WHERE method_id = 'cash'"); n != 1 {
+		t.Fatalf("cash payment rows = %d, want 1", n)
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("an approved sale carries no unsigned marker, got %d", n)
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 0 {
+		t.Fatalf("basket must be reset after the sale, has %d lines", len(lines))
+	}
+}
+
+// ut-docs#6910: the client is already gone BEFORE the ask is dispatched.
+// Nothing was signed, so nothing is recorded and the
+// ask is never sent.
+func TestTender_ClientDisconnectBeforeCashSignRecordsNothing(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var asked atomic.Int32
+	// The client leaves exactly at the last cancellable point (a pre-cancelled
+	// ctx would be refused far earlier, by the age-restricted read).
+	tenderBeforeFiscalSignHook = cancel
+	t.Cleanup(func() { tenderBeforeFiscalSignHook = nil })
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-before-ask", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		asked.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	postTenderCtx(t, mux, ctx, `{"payments":[{"method":"cash","amount":120}]}`)
+	if asked.Load() != 0 {
+		t.Fatalf("fiscal.sign.ask answered %d times, want 0 (client was gone before dispatch)", asked.Load())
+	}
 	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
-		t.Fatalf("a cash tender whose client left before the commit must record no sale, got %d (response %d)", n, rec.Code)
+		t.Fatalf("sales = %d, want 0", n)
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("basket must be intact, has %d lines", len(lines))
+	}
+}
+
+// ut-docs#6910 AC3: no sign.ask subscriber (nothing can have signed): a gone
+// client still records nothing, so the cashier's retry cannot double-count.
+func TestTender_ClientDisconnectCashNoSignerRecordsNothing(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// gone at the last cancellable point; no sign.ask subscriber is installed at all
+	tenderBeforeFiscalSignHook = cancel
+	t.Cleanup(func() { tenderBeforeFiscalSignHook = nil })
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	postTenderCtx(t, mux, ctx, `{"payments":[{"method":"cash","amount":120}]}`)
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
+		t.Fatalf("sales = %d, want 0", n)
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("basket must be intact, has %d lines", len(lines))
+	}
+}
+
+// ut-docs#6910 / ADR-0136: cannot-sign signed nothing, so it still refuses
+// with no row even though the client left; the detach changes nothing there.
+func TestTender_ClientDisconnectAfterCashSignCannotSignRefused(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-cannot", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		cancel()
+		return json.RawMessage(`{"status":"cannot-sign"}`), nil
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	postTenderCtx(t, mux, ctx, `{"payments":[{"method":"cash","amount":120}]}`)
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
+		t.Fatalf("cannot-sign must refuse with no sale row, got %d", n)
+	}
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM payments"); n != 0 {
+		t.Fatalf("cannot-sign must leave no payment row, got %d", n)
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("basket must be intact, has %d lines", len(lines))
+	}
+}
+
+// ut-docs#6910: a backend failure answer after the client left is the
+// proceed-and-declare path (ADR-0044): the sale is recorded and declared.
+func TestTender_ClientDisconnectAfterCashSignBackendFailureDeclares(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-down", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		cancel()
+		return json.RawMessage(`{"status":"unreachable"}`), nil
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	rec := postTenderCtx(t, mux, ctx, `{"payments":[{"method":"cash","amount":120}]}`)
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 1 {
+		t.Fatalf("sales = %d, want 1 (response %d: %s)", n, rec.Code, rec.Body.String())
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 1 {
+		t.Fatalf("unsigned_fiscal_signing rows = %d, want 1", n)
+	}
+}
+
+// ut-docs#6910: the detached ask is still bounded by fiscalSignAskBudget, so
+// a wedged signer cannot hold checkout (ADR-0003); the sale is declared.
+func TestTender_ClientDisconnectWedgedSignerStaysBounded(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	orig := fiscalSignAskBudget
+	fiscalSignAskBudget = 50 * time.Millisecond
+	t.Cleanup(func() { fiscalSignAskBudget = orig })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-wedged", func(hctx context.Context, _ plugins.Event) (json.RawMessage, error) {
+		cancel()
+		<-hctx.Done()
+		return nil, hctx.Err()
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	rec := postTenderCtx(t, mux, ctx, `{"payments":[{"method":"cash","amount":120}]}`)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("request took %v, want < 1s (budget bounds the detached ask)", d)
+	}
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 1 {
+		t.Fatalf("sales = %d, want 1 (response %d: %s)", n, rec.Code, rec.Body.String())
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 1 {
+		t.Fatalf("unsigned_fiscal_signing rows = %d, want 1", n)
 	}
 }
 

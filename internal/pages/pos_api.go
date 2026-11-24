@@ -280,6 +280,11 @@ func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, 
 // production.
 var tenderCommittedHook func(engine *pos.Service)
 
+// tenderBeforeFiscalSignHook (tests only, ut-docs#6910) runs immediately
+// before the last-cancellable-point pre-check ahead of fiscal.sign.ask, so a
+// test can make the client leave at exactly that instant.
+var tenderBeforeFiscalSignHook func()
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -801,8 +806,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// ut-docs#6805 (mirrors refund_page.go recordCtx): once a leg's authorize
 	// really reached a plugin and approved (or a tap the broker confirmed),
-	// the recording runs detached. Cash / hookless legs moved nothing: until
-	// the sale commits, a gone client still records nothing.
+	// the recording runs detached. Cash / hookless legs moved nothing, so
+	// until fiscal.sign.ask is dispatched a gone client still records nothing;
+	// once a signer has been asked the recording detaches too (ut-docs#6910).
 	recordCtx := ctx
 	if len(capturedLegs) > 0 {
 		recordCtx = detached
@@ -846,7 +852,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// (unreachable, timeout, known-offline) never refuses the sale — it
 	// lands on the proceed-and-declare surface below. A "cannot-sign"
 	// answer is the one exception (ADR-0136): see right below.
+	// ut-docs#6910: last cancellable point; nothing irreversible has happened
+	// yet on a non-detached path. Once the ask is sent a signer may have
+	// signed, so the recording is detached (ADR-0044 D1).
+	if tenderBeforeFiscalSignHook != nil {
+		tenderBeforeFiscalSignHook()
+	}
+	if err := recordCtx.Err(); err != nil {
+		why = "tender refused (the client disconnected before fiscal signing)"
+		return "", fmt.Errorf("tender refused: client disconnected before fiscal signing: %w", err)
+	}
 	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+	if signRes.Asked {
+		recordCtx = detached // a signer may have signed: record it (ADR-0044 D1)
+	}
 
 	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
 	// admits no correct Beleg — not an outage — so it is refused right here,

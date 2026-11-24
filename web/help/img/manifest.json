@@ -478,7 +478,7 @@
       "sha256": "d2b375c33157d90dc1231d6d46cf6c9e14c0c091a717057fbfc6793cb80b76ec"
     },
     "internal/pages/fiscal_sign_hook.go": {
-      "sha256": "3fdfc842f0b1bdd006ff3115121b1ed326a30e6c14986d92b237471a199daf5d"
+      "sha256": "79a7fe770b209ba8ae6a064175bbde8534d4ab0b82201410583acc3821d987dc"
     },
     "internal/pages/fiscal_sign_reconcile.go": {
       "sha256": "337d23ac1d4b64f6020961784facfb028a2d0afd2873a3d944f4f0eec998d512"

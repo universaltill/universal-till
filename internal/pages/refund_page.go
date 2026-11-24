@@ -1120,10 +1120,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// (refundDelivered) the whole recording runs detached: a client that
 		// disconnects (tab closed, LAN blip) must not leave money out with no
 		// return sale and no per-leg row. Cash / hookless methods moved nothing
-		// yet, so until the return commits a gone client still records nothing
-		// (ADR-0146 D1: the cashier hands cash over only after this request
-		// succeeds). pos.CompleteSale is the irreversible step: once it has
-		// committed, everything after it runs detached for every method.
+		// yet, so until fiscal.sign.ask is dispatched a gone client still
+		// records nothing (ADR-0146 D1: the cashier hands cash over only after
+		// this request succeeds); once a signer has been asked the return is
+		// recorded detached too (ut-docs#6910, ADR-0044 D1). pos.CompleteSale
+		// is the irreversible step: once it has committed, everything after it
+		// runs detached for every method.
 		recordCtx := r.Context()
 		if refundDelivered {
 			recordCtx = context.WithoutCancel(recordCtx)
@@ -1188,7 +1190,18 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same amount — the exact gap that blocked the first attempt at
 		// this dispatch (universal-till PR #594, closed unmerged; see
 		// docs/code-reviews/2026-09-03-fiscal-sign-refund-return-dispatch-1405.md).
+		if refundBeforeFiscalSignHook != nil {
+			refundBeforeFiscalSignHook()
+		}
+		if err := recordCtx.Err(); err != nil { // ut-docs#6910; no-op when refundDelivered (detached)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "refund.error.server", "refund",
+				fmt.Errorf("refund refused: client disconnected before fiscal signing: %w", err))
+			return
+		}
 		signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+		if signRes.Asked {
+			recordCtx = context.WithoutCancel(recordCtx) // a signer may have signed: record it (ADR-0044 D1)
+		}
 
 		// ADR-0146 Decision 1 (ut-docs#3408, amends ADR-0136 Decision 0): a
 		// cannot-sign answer is a property of this refund's own data, not an
@@ -1548,3 +1561,8 @@ func refundDeclineKey(err error) string {
 	}
 	return "refund.error.provider_declined"
 }
+
+// refundBeforeFiscalSignHook (tests only, ut-docs#6910) runs immediately
+// before the pre-ask recordCtx.Err() check, so a test can make the client
+// leave at exactly that instant.
+var refundBeforeFiscalSignHook func()

@@ -48,11 +48,10 @@ func TestRefund_ClientDisconnectAfterProviderRefundStillRecordsReturn(t *testing
 	}
 }
 
-// AC2: no money moved electronically (cash, no refund subscriber). The client
-// goes away mid-request, after the payment step (from the fiscal.sign.ask
-// answerer), but BEFORE the return commits -- nothing is recorded, because the
-// cashier hands cash over only after this request succeeds (ADR-0146 D1).
-func TestRefund_ClientDisconnectCashRefundRecordsNothing(t *testing.T) {
+// ut-docs#6910 (inverts the #6784 AC2 guard): a signer was asked and approved
+// the cash refund, then the client left. The signed return must be recorded
+// (ADR-0044 D1; contract 1.4.0 forbids a belated re-sign).
+func TestRefund_ClientDisconnectAfterCashSignStillRecordsReturn(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
@@ -63,20 +62,82 @@ func TestRefund_ClientDisconnectCashRefundRecordsNothing(t *testing.T) {
 	var asked atomic.Int32
 	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-disconnect", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
 		asked.Add(1)
-		cancel() // client disconnects after the payment step, before the commit
+		cancel() // client disconnects after the signer approved
 		return json.RawMessage(`{"status":"approved"}`), nil
 	})
 
+	rec := postRefundCtx(t, mux, ctx, receiptNo)
+
+	if asked.Load() != 1 {
+		t.Fatalf("fiscal.sign.ask answered %d times, want 1 (the disconnect must happen mid-request)", asked.Load())
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`); n != 1 {
+		t.Fatalf("a signed cash refund must be recorded despite the disconnect, got %d returns (response %d: %s)", n, rec.Code, rec.Body.String())
+	}
+	if rec.Code >= 500 {
+		t.Fatalf("response %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#6910: the client is already gone before the ask is dispatched:
+// nothing signed, nothing recorded.
+func TestRefund_ClientDisconnectBeforeCashSignRecordsNothing(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var asked atomic.Int32
+	refundBeforeFiscalSignHook = cancel // gone at the last cancellable point
+	t.Cleanup(func() { refundBeforeFiscalSignHook = nil })
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-rbefore-ask", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		asked.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+
+	postRefundCtx(t, mux, ctx, receiptNo)
+
+	if asked.Load() != 0 {
+		t.Fatalf("fiscal.sign.ask answered %d times, want 0", asked.Load())
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`); n != 0 {
+		t.Fatalf("returns = %d, want 0", n)
+	}
+}
+
+// ut-docs#6910 / ADR-0146: cannot-sign refuses the refund (409, no return)
+// whether or not the client is still there.
+func TestRefund_ClientDisconnectAfterCashSignCannotSignRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-6910-rcannot", func(_ context.Context, _ plugins.Event) (json.RawMessage, error) {
+		cancel()
+		return json.RawMessage(`{"status":"cannot-sign"}`), nil
+	})
+
+	rec := postRefundCtx(t, mux, ctx, receiptNo)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("response %d, want 409 (ADR-0146): %s", rec.Code, rec.Body.String())
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`); n != 0 {
+		t.Fatalf("returns = %d, want 0", n)
+	}
+}
+
+func postRefundCtx(t *testing.T, mux *http.ServeMux, ctx context.Context, receiptNo string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/refund",
 		strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=cash")).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-
-	if asked.Load() != 1 {
-		t.Fatalf("fiscal.sign.ask answered %d times, want 1 (the disconnect must happen mid-request)", asked.Load())
-	}
-	if n := countRows(t, dp, `SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`); n != 0 {
-		t.Fatalf("a cash refund whose client left before the commit must record no return, got %d (response %d)", n, rec.Code)
-	}
+	return rec
 }
