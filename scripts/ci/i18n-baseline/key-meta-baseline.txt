@@ -2128,12 +2128,7 @@ selforder.order_type.dine_in
 selforder.order_type.label
 selforder.order_type.takeaway
 selforder.remove
-selforder.table_busy.hint
-selforder.table_busy.retry
-selforder.table_busy.title
 selforder.tap_to_start
-selforder.till_busy.hint
-selforder.till_busy.title
 selforder.title
 selforder.welcome
 settings.about.english_only

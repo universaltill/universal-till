@@ -123,8 +123,6 @@ internal/pos/service.go: unreachable func: Service.ScanQty
 internal/pos/service.go: unreachable func: Service.SetLineOrderType
 internal/pos/service.go: unreachable func: Service.Tender
 internal/pos/session_manager.go: unreachable func: SessionBasketManager.Create
-internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwner
-internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwnerActive
 internal/pos/tapconfirm.go: unreachable func: ConfirmTap
 internal/pos/tapconfirm.go: unreachable func: PaymentPendingError.Error
 internal/procrestart/procrestart.go: unreachable func: InProcess

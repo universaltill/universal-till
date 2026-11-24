@@ -69,6 +69,17 @@ Release notes for the till. Versions come from the release tag
 - **About screen with legal links (ut-docs#6402).** A new About screen, open to every signed-in role on every channel, links to the privacy notice, the terms, a generated open-source licences page (CI fails when it is stale) and account deletion.
 - **Store-build review fixes (ut-docs#6388, #6401, #6402).** On Google Play and App Store builds the Support partner topic shows no link or QR, the Software update topic no longer explains sideloading and is not linked from Settings, and the setup wizard's update routes answer 404. The About screen's privacy link opens the app privacy notice, the licences open inside the till with a back link, and web addresses are shown as text on a kiosk. The licences page now also lists the Go runtime and the front-end code shipped with the till. `guard-store-strings.sh` also catches schemeless checkout addresses, prices, "Upgrade now" style wording, templates, scripts and translations; a Play Android build must carry `-PinstallChannel=play`.
 
+### Changed
+
+- **Table QR codes now open the cloud — reprint the ones you printed
+  (ut-docs#4338, ADR-0159).** The QR on the Tables page opens your shop's
+  ordering page in the cloud, so it needs the Shop plan or above and a till
+  connected to the cloud. The till no longer serves table ordering on the
+  shop network: **every table QR printed before this update stops working
+  and must be reprinted**, and another device's browser can no longer open
+  the self-order kiosk unless its network is allowed with
+  `UT_UI_ALLOW_CIDRS`.
+
 ### Fixed
 
 - **First-run "Start selling" did nothing (ut-docs#6929, Microsoft Store

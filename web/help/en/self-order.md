@@ -15,7 +15,7 @@ Self-order turns a till into a customer-facing kiosk: shoppers browse your items
 
 ## Which shops it suits
 
-Self-order fits counter-service cafés, bakeries and quick-service shops, where a customer orders at a screen and collects at the counter. Guests ordering from their own phone at a table use the table QR variant of the same screens; see [Tables & floor plan](/help/tables).
+Self-order fits counter-service cafés, bakeries and quick-service shops, where a customer orders at a screen and collects at the counter. Guests ordering from their own phone at a table do not use these screens: the table QR opens a cloud page instead; see [Tables & floor plan](/help/tables).
 
 ## Set up a kiosk
 
@@ -40,17 +40,17 @@ Self-order fits counter-service cafés, bakeries and quick-service shops, where 
 
    ![The options picker open on an item with pack sizes](img/self-order-options.png)
 
-5. **Cart.** Each line has − and + for the quantity and ✕ to remove it, and shows the item's photo or icon, the same picture as its tile. The cart carries a **Dine in** / **Takeaway** toggle (or "Table X" for a table QR); the toggle is hidden if your shop doesn't ask dine in or takeaway; this is recorded on the receipt, journal and kitchen ticket, and changes the tax only if a tax plugin for your region uses it. Below are **Subtotal**, **Service Charge** (only when you set one, or a plugin adds a levy), **Tax** and **Total**. The total is exactly what is charged, the same as a sale at the till. An empty cart says "Your cart is empty — tap an item to add it."
+5. **Cart.** Each line has − and + for the quantity and ✕ to remove it, and shows the item's photo or icon, the same picture as its tile. The cart carries a **Dine in** / **Takeaway** toggle; the toggle is hidden if your shop doesn't ask dine in or takeaway; this is recorded on the receipt, journal and kitchen ticket, and changes the tax only if a tax plugin for your region uses it. Below are **Subtotal**, **Service Charge** (only when you set one, or a plugin adds a levy), **Tax** and **Total**. The total is exactly what is charged, the same as a sale at the till. An empty cart says "Your cart is empty — tap an item to add it."
 6. **Pay at the kiosk.** Tap **Checkout** and the kiosk shows "**Choose a payment method**". Every active payment method except cash is offered (card, gift card, voucher…). Tap **Cancel** or a method.
 
    ![The kiosk's payment method picker](img/self-order-checkout.png)
 
 7. **Confirmation.** "**Order placed!**" with the **Order number**, a plain number such as 12, and **Done**. The kiosk returns to the start screen by itself after about 20 seconds. There is no tracking QR yet; see [Customer order tracking](/help/customer-order-tracking).
-8. **Left alone.** After the idle reset time with no touch, the kiosk goes back to the start screen, the basket is cleared and the language returns to the shop's. A table-QR phone goes back to its own table and keeps its basket.
+8. **Left alone.** After the idle reset time with no touch, the kiosk goes back to the start screen, the basket is cleared and the language returns to the shop's.
 
 ## Pay at the counter
 
-With **Pay at counter**, the cart button reads **Place order**, and the dialog "**Pay at the counter**" shows the total and a **Place order** button. The kiosk takes no payment. It shows the customer an order number such as C-12, and the order waits in **Open orders** until a cashier brings it up and takes payment. It becomes a normal sale then. The kitchen ticket prints at payment for walk-up orders, and at once for a table-QR dine-in order. See [Open orders](/help/open-orders).
+With **Pay at counter**, the cart button reads **Place order**, and the dialog "**Pay at the counter**" shows the total and a **Place order** button. The kiosk takes no payment. It shows the customer an order number such as C-12, and the order waits in **Open orders** until a cashier brings it up and takes payment. It becomes a normal sale then. The kitchen ticket prints at payment for walk-up orders. See [Open orders](/help/open-orders).
 
 ![The pay-at-the-counter dialog](img/self-order-counter.png)
 
@@ -71,7 +71,6 @@ Each line is the message the customer sees, what causes it and what to do.
 - The age-restricted message ("This order includes an age-restricted item. Please pay at the counter…"). The kiosk cannot check ID, so staff take that order. See [Age-restricted sales](/help/age-restricted-sales).
 - "Some items can't be ordered here right now — please pay at the counter." The tax plugin for your region is unavailable. Staff take the order at the till.
 - "Ordering here is unavailable right now — please order at the counter.", "Sorry, this order can't be completed right now. Please see the counter." and "Payment couldn't be confirmed — please pay at the counter." These come from the fiscal setup. Check the fiscal device or plugin and take the order at the counter.
-- "This table is already in use" and "We can’t start a new order right now", each with **Try again**. Someone else is using that table's phone, or the till is busy with many orders. Wait a minute and tap **Try again**.
 - "No items found." The catalogue or the chosen category is empty. Gift vouchers are never listed on the kiosk, and inactive items don't show.
 - A receipt in the shop's language instead of the customer's: your receipt printer can't print that language's letters.
 - The kiosk resets while someone is still ordering: the idle reset time is too short. Raise it under **Kiosk idle reset**.

@@ -105,32 +105,8 @@ func TestSessionManager_RemoveSettledSessionCallsNoHandler(t *testing.T) {
 	}
 }
 
-func TestSessionManager_EvictSkipsSessionWithPendingTender(t *testing.T) {
-	m, now := newTestSessionManager(t)
-	h, calls := recordingAbandonHandler(t, m, func() *Service { return nil })
-	m.SetAbandonedTenderHandler(h)
-	oldTok, oldSvc, _ := m.Create() // oldest by clock
-	oldSvc.LockTender("sig", twoLegPending())
-	for i := 1; i < MaxLiveSelfOrderSessions; i++ {
-		*now = now.Add(time.Second)
-		if _, _, ok := m.Create(); !ok {
-			t.Fatalf("Create %d refused", i)
-		}
-	}
-	*now = now.Add(time.Second)
-	if _, _, ok := m.Create(); !ok {
-		t.Fatal("Create at the cap must evict another empty session")
-	}
-	if _, ok := m.Get(oldTok); !ok {
-		t.Fatal("the session with a pending tender must not be evicted")
-	}
-	if n := len(calls()); n != 0 {
-		t.Fatalf("handler calls = %d, want 0", n)
-	}
-}
-
 func TestSessionManager_HandlerReachesEverySession(t *testing.T) {
-	m, now := newTestSessionManager(t)
+	m, _ := newTestSessionManager(t)
 	_, s1, _ := m.Create() // before the handler is set
 	var mu sync.Mutex
 	n := 0
@@ -141,10 +117,7 @@ func TestSessionManager_HandlerReachesEverySession(t *testing.T) {
 		return AbandonResult{}
 	})
 	_, s2, _ := m.Create()
-	_, s3, refusal := m.BindTable("t1", "Table 1", "", nil, time.Hour, time.Minute, *now)
-	if refusal != BindOK {
-		t.Fatalf("BindTable refused: %v", refusal)
-	}
+	_, s3, _ := m.Create()
 	s4, ok := m.NewDetached()
 	if !ok {
 		t.Fatal("NewDetached failed")

@@ -32,32 +32,6 @@
     <main>
       <img class="selforder-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
-      {{ if .Busy }}
-      {{/* ADR-0103 Decision 4 (ut-docs#2261, narrowed from ut-docs#815's
-           original cross-table guard once per-table sessions made
-           different tables independent): this SAME table already has a
-           live, recently-active order from a DIFFERENT phone (two phones
-           scanning one table). Never silently join/wipe that order — say
-           so, and let this guest retry in a few minutes: the guard's own
-           recency window (selfOrderTableBusyMaxIdle) means an abandoned
-           order stops blocking well before the busy screen would ever be
-           a dead end. */}}
-      {{ if .TillBusy }}
-      {{/* ut-docs#2490: the table may be free — the till refused to start
-           another session (the per-source mint limiter, or the session
-           cap). Different remedy (wait a moment), so never tell this guest
-           someone else is at their table: on shared guest Wi-Fi a real
-           guest's first scan can hit the limiter. */}}
-      <h1>{{ T "selforder.till_busy.title" }}</h1>
-      <p class="selforder-hint">{{ T "selforder.till_busy.hint" }}</p>
-      {{ else }}
-      <h1>{{ T "selforder.table_busy.title" }}</h1>
-      <p class="selforder-hint">{{ T "selforder.table_busy.hint" }}</p>
-      {{ end }}
-      <button type="button" class="btn primary selforder-start" data-action="reload-page">
-        {{ T "selforder.table_busy.retry" }}
-      </button>
-      {{ else }}
       <h1>{{ T "selforder.welcome" }}</h1>
       <a class="btn primary selforder-start" href="/self-order/shop">
         {{ T "selforder.tap_to_start" }}
@@ -70,7 +44,6 @@
         {{ range . }}<a class="btn secondary selforder-lang" href="/self-order/language?code={{ .Code }}" lang="{{ .Code }}"{{ if .Current }} aria-current="true"{{ end }}>{{ .NativeName }}</a>
         {{ end }}
       </nav>
-      {{ end }}
       {{ end }}
     </main>
     <script>

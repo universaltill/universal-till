@@ -14,10 +14,16 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// tableQRRegistered reports whether this till is registered with the cloud.
+// A package seam because the enrol status is process-global: tests swap it
+// (restoring on cleanup) instead of mutating that state.
+var tableQRRegistered = func() bool { return enroll.CurrentStatus().Registered }
 
 // tableTile is one table as the SVG floor plan renders it: the persisted
 // entity plus presentation-ready live state. OpenMinutes is the elapsed time
@@ -420,16 +426,20 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)
 	})
 
-	// Self-order QR (ut-docs#815): a staff-facing surface (manager/back-
-	// office, same gate as every other /api/tables/* route here) that lets
-	// a shop view/print the code a guest scans AT that table to reach
-	// /self-order?table=<id> on their own phone. Same data:image/png URI
-	// pattern as orderTrackingQRView (order_tracking.go) / the enrol-token
-	// QR (sync_api.go) -- best-effort at building a dialable URL (no LAN
-	// address -> ErrKey, never a 500), so a manager previewing this on a
-	// till with no network still gets a clear message instead of a broken
-	// panel. GET, not gated by requirePrimary: previewing/printing a QR
-	// reads nothing that differs between primary and replica.
+	// Table QR (ut-docs#815, reworked by ut-docs#4338 / ADR-0159 §1): a
+	// staff-facing surface (manager/back-office, same gate as every other
+	// /api/tables/* route here) that shows the code a guest scans AT that
+	// table. It opens the CLOUD's guest page, <cloud web base>/t/<table
+	// guest token> -- never this till (the LAN /self-order?table= link is
+	// gone) -- so the QR carries only the unguessable token: no table id, no
+	// till address. Shown only when the plan offers order_tracking (Shop and
+	// above, display-only like orderTrackingOffered's other use), the till
+	// is registered, the table is enabled and the cloud address is usable;
+	// every other state is a translated message in the same dialog, never a
+	// 500. Main till only: a replica renders a message and never mints (its
+	// synced token copy may lag). GET, not gated by requirePrimary:
+	// previewing a QR changes nothing the primary owns beyond the one-off
+	// token mint for a table that predates migration 076.
 	mux.HandleFunc("GET /api/tables/{id}/qr", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireManager(w, r); !ok {
 			return
@@ -446,25 +456,50 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 			return
 		}
-		host, err := advertisableHost(r.Host)
-		if err != nil {
+		msg := func(key string) {
 			httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
 				"Label":  t.Label,
-				"ErrKey": "sync.error.no_lan_address",
+				"ErrKey": key,
 			})(w, r)
+		}
+		if !t.Enabled {
+			msg("tables.qr.table_disabled")
 			return
 		}
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			msg("tables.error.replica_use_primary")
+			return
 		}
-		u := scheme + "://" + host + "/self-order?table=" + url.QueryEscape(t.ID)
+		if !orderTrackingOffered(r.Context(), d) {
+			msg("tables.qr.needs_plan")
+			return
+		}
+		if !tableQRRegistered() {
+			msg("tables.qr.needs_cloud")
+			return
+		}
+		endpoint := ""
+		if d.Cfg != nil {
+			endpoint = enroll.Effective(d.Cfg).Marketplace.EndpointURL
+		}
+		base, ok := guestTableBase(endpoint)
+		if !ok {
+			msg("tables.qr.no_cloud_address")
+			return
+		}
+		tok, err := posRepo.EnsureTableGuestToken(r.Context(), id)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "tables.error.load_failed", "tables_qr", err)
+			return
+		}
+		if tok == "" { // deactivated between the read above and the mint
+			msg("tables.qr.table_disabled")
+			return
+		}
+		u := base + "/t/" + url.PathEscape(tok)
 		png, err := qrcode.Encode(u, qrcode.Medium, 220)
 		if err != nil {
-			httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
-				"Label":  t.Label,
-				"ErrKey": "sync.error.no_lan_address",
-			})(w, r)
+			msg("tables.qr.no_cloud_address")
 			return
 		}
 		httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
@@ -473,4 +508,17 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			"URL":   u,
 		})(w, r)
 	})
+}
+
+// guestTableBase is the cloud's public web base for a till's configured API
+// endpoint (enroll.WebBase, the derivation the claim links use), ok=false
+// when it is empty or not an http(s) URL with a host -- the QR must never
+// encode a half-formed address.
+func guestTableBase(endpoint string) (string, bool) {
+	b := enroll.WebBase(strings.TrimSpace(endpoint))
+	u, err := url.Parse(b)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", false
+	}
+	return b, true
 }
