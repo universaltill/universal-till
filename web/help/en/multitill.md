@@ -19,7 +19,7 @@ Run several tills on the same shop network: one is the main till, the others joi
 ## When you need a second till
 
 - **A second counter, or busy periods.** Add an **additional till**. It rings up sales like any other till, keeps selling if the network drops, and shares the shop's catalog and settings.
-- **A kiosk, table-QR or order station.** Join it as a **satellite** (see "Additional tills and satellites" below). It needs the main till to work.
+- **A kiosk or order station.** Join it as a **satellite** (see "Additional tills and satellites" below). It needs the main till to work.
 - **A standby that can take over.** Turn on the copy of every sale on each additional till (see "A copy of every sale on every till"). If the main till dies, you can promote one of them (see "When the main till was replaced").
 
 ## What is shared and what stays on each till
@@ -90,7 +90,7 @@ Taking a payment on the phone: the cashier chooses the card tender and the phone
 
 ## Additional tills and satellites
 
-Every joined till has a role. An additional till works offline and rings up sales like any other till; it is the default. A satellite is a kiosk, table-QR or order station that needs the main till to work.
+Every joined till has a role. An additional till works offline and rings up sales like any other till; it is the default. A satellite is a kiosk or order station that needs the main till to work.
 
 - When a till joins (on the Tills page or the first setup screen), choose **Additional till** or **Satellite** under **Join as**, below the till's name. Additional till is already selected.
 - On the main till, each pairing request on the Tills page shows the role the till asked for in its Role column. A manager can change it there before pressing Approve; the till joins with the role chosen at approval.
