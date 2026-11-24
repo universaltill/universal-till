@@ -32,8 +32,10 @@ type DirectiveResult struct {
 	DirectiveType string
 	Status        string
 	Message       string
-	Posted        bool
-	CreatedAt     string
+	// MessageKey is the en.json key of a failure's reason (ut-docs#6975), "" when none.
+	MessageKey string
+	Posted     bool
+	CreatedAt  string
 }
 
 // DirectiveResultsRepo owns all SQL for directive_results.
@@ -54,10 +56,10 @@ func (r *DirectiveResultsRepo) Save(ctx context.Context, res DirectiveResult) er
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := r.db.ExecContext(ctx, `
-INSERT INTO directive_results (directive_id, directive_type, status, message, posted, created_at)
-VALUES (?, ?, ?, ?, 0, ?)
+INSERT INTO directive_results (directive_id, directive_type, status, message, message_key, posted, created_at)
+VALUES (?, ?, ?, ?, ?, 0, ?)
 ON CONFLICT(directive_id) DO NOTHING`,
-		res.DirectiveID, res.DirectiveType, res.Status, res.Message, now); err != nil {
+		res.DirectiveID, res.DirectiveType, res.Status, res.Message, res.MessageKey, now); err != nil {
 		return fmt.Errorf("save directive result: %w", err)
 	}
 	// The row is stored; a Prune failure must not read as a lost result
@@ -74,9 +76,9 @@ func (r *DirectiveResultsRepo) Get(ctx context.Context, directiveID string) (Dir
 	var g DirectiveResult
 	var posted int
 	err := r.db.QueryRowContext(ctx, `
-SELECT directive_id, directive_type, status, message, posted, created_at
+SELECT directive_id, directive_type, status, message, message_key, posted, created_at
 FROM directive_results WHERE directive_id = ?`, directiveID).
-		Scan(&g.DirectiveID, &g.DirectiveType, &g.Status, &g.Message, &posted, &g.CreatedAt)
+		Scan(&g.DirectiveID, &g.DirectiveType, &g.Status, &g.Message, &g.MessageKey, &posted, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DirectiveResult{}, false, nil
 	}

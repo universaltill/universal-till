@@ -83,3 +83,16 @@ func TestDirectiveResults_PruneBounds(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6975: the install-error message key is stored with the result.
+func TestDirectiveResults_MessageKeyRoundTrips(t *testing.T) {
+	_, repo := openDirectiveResultsRepo(t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, DirectiveResult{DirectiveID: "d1", DirectiveType: "install_plugin", Status: "failed", Message: "x", MessageKey: "plugins.install.error.retryable"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := repo.Get(ctx, "d1")
+	if err != nil || !ok || got.MessageKey != "plugins.install.error.retryable" {
+		t.Fatalf("got %+v ok %v err %v", got, ok, err)
+	}
+}

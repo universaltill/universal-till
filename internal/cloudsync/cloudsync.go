@@ -918,6 +918,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing listing_id"
 		}
 		msg, err = hooks.InstallPlugin(ctx, id)
+		noteReason(ctx, err)
 	case "remove_plugin":
 		if hooks.RemovePlugin == nil {
 			return "failed", "remove_plugin is not supported on this till"
