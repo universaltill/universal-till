@@ -206,6 +206,7 @@ func tapRigWith(t *testing.T, withReadersHook bool) *tapEnv {
 	mux, dp := authRig(t)
 	registerTapPay(mux, dp)
 	registerTapAttention(mux, dp)
+	registerLegAttention(mux, dp)
 	// ut-docs#6458: a tap entry is offered only on a ready device (or with a
 	// paired phone reader); these tests are about what happens after the offer.
 	devicepay.SetBridge(&fakeTapBridge{caps: capsReady})

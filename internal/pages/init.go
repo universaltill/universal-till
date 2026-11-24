@@ -743,6 +743,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerCardReaders(mux, dp)        // ut-docs#6566: per-till card reader registry: picker + manager page
 	registerTapPay(mux, dp)             // ut-docs#6455: tap payment Check again + manager resolve
 	registerTapAttention(mux, dp)       // ut-docs#6795: tap attempts left open by a restart / New sale / park
+	registerLegAttention(mux, dp)       // ut-docs#6653: payment legs needing attention: list, Retry, Resolve
 	registerLocations(mux, dp)
 	registerRegisters(mux, dp)        // registers admin: create/rename/deactivate tills (ut-docs#651)
 	registerFiscalRegisterDE(mux, dp) // §146a Abs. 4 AO fiscal register (ut-docs#665)

@@ -1204,6 +1204,18 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   if (t && t.id === 'notices-bell') utNoticesBurgerLabel();
 });
 
+// ut-docs#6653 slice 3: after a Retry / Resolve answer replaces the "Payments
+// needing attention" card, the pressed button no longer exists; move focus to
+// the card's flash region (tabindex -1) so a keyboard or screen-reader user
+// hears the outcome instead of being dropped at the top of the page. Only when
+// the answer carries a flash, so the lazy load of the card never takes focus.
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (!t || t.id !== 'pay-attention') return;
+  var msg = t.querySelector('#pay-attention-msg[data-focus-after-action]');
+  if (msg && msg.textContent.trim() !== '') msg.focus();
+});
+
 // ADR-0098: app.js loads once per document (defer) -- the readyState guard
 // covers the deferred-script case; boosted arrivals come through afterSwap.
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleToastDismiss);

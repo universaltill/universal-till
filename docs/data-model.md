@@ -115,6 +115,36 @@ whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
 roster.
 
+*Attention list, Retry and Resolve (ut-docs#6653 slice 3, Decision 9.6; no
+migration, every move is an INSERT in the 9.2 set).* A manager (permission
+`refund`) sees the legs whose newest row is `reverse_failed` or `warned`, oldest
+first, in the Settings -> Payments card "Payments needing attention"
+(`GET /ui/settings/payment-attention`, an empty fragment for anyone else and
+when the list is empty) and in `GET /api/pay/attempts/attention`, which gains
+`legs` and `legs_count` beside the unchanged `attempts`/`count` (`request_id`,
+`method`, `amount_minor`, `currency`, `state`, `reason`, masked
+`transaction_ref`, `at`; a leg has no sale id).
+**Retry** (`POST /api/pay/legs/retry`, `reverse_failed` only, fresh manager PIN,
+audited `payment_leg_retry`) appends a `reversing` row (`PaymentLegJournalRepo.
+BeginRetry`, which refuses every other state, so a second Retry while one is
+in flight is refused and a journal that cannot be written sends nothing), then
+sends exactly one reversal from the row's own amount, tip, reference and reader
+on a detached context, then appends `reversed`, or `reverse_failed` with reason
+`reversal_failed` / `no_refund_plugin` (no plugin heard the refund: never
+`reversed`). n is the number of `reversing` rows of the leg, so the first Retry
+is 2: the event id is `reversal:<id>:<n>` and the tap broker key
+`refund:reversal:<id>:<n>`. A live reversal always sends `reversal:<id>` and
+`:1`, whatever the journal holds, so a re-send of a timed-out first send keeps
+the provider's dedupe. A `warned` leg is never re-sent. On an additional till a
+refused tap reversal writes `reversing` then `reverse_failed` (reason
+`main_till_only`), sends nothing, and Retry there answers 409.
+**Resolve** (`POST /api/pay/legs/resolve`, `warned` or `reverse_failed`, fresh
+manager PIN, audited `payment_leg_resolve`) appends `resolved` with reason
+`manager_resolved`; the optional one-line note (200 runes) is in the audit only.
+It calls no provider. One Retry or Resolve per leg runs at a time (the tap
+resolve's in-flight guard, same key space), the durable backstop being
+`BeginRetry`.
+
 **`payment_attempts`** (migration 111; ut-docs#6455, ut-docs#6795, ADR-0198
 §6.8) is core's till-local record of one card-present (Tap to Pay) attempt,
 keyed by the authorize request id. States: `pending` (written before the

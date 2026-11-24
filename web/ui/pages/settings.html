@@ -1014,6 +1014,11 @@
   </fieldset>
 </div>
 {{ end }}
+{{/* ut-docs#6653 slice 3: payment legs needing attention (Retry / Resolve).
+     Lazy-loaded like lan-access: empty for a cashier and when nothing needs a
+     manager, so most tills show nothing. Outside the set-lock fieldset: Retry
+     and Resolve are payment actions, not shop-wide setting writes. */}}
+<div id="pay-attention" hx-get="/ui/settings/payment-attention" hx-trigger="load" hx-swap="innerHTML"></div>
 <!-- ut-docs#1817: the short customer-facing order number scheme -- a sale
      keeps its permanent receipt_no unchanged (refunds/reports/fiscal
      record); this only picks how the SEPARATE, additional display number

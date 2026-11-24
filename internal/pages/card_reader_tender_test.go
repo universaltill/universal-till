@@ -40,6 +40,10 @@ type readerPlugin struct {
 	// onAuth, when set, runs inside each authorize dispatch with the
 	// dispatch context (ut-docs#6455: the payment broker binding rides on it).
 	onAuth func(ctx context.Context, ev plugins.Event)
+	// onRefund, when set, runs inside each refund dispatch (ut-docs#6653
+	// slice 3: the binding and the event id a Retry carries). Its error is
+	// the plugin's answer; it may block to hold the provider call open.
+	onRefund func(ctx context.Context, ev plugins.Event) error
 }
 
 func (rp *readerPlugin) authCalls() []authCall {
@@ -117,9 +121,16 @@ func seedReaderPlugin(t *testing.T, dp *common.Deps, pluginID, method string, ho
 			}
 			return json.RawMessage(a), nil
 		case "payment." + method + ".refund":
+			p["_event_id"] = ev.ID // test-only: the refund request id
 			rp.mu.Lock()
 			rp.refunds = append(rp.refunds, p)
+			hook := rp.onRefund
 			rp.mu.Unlock()
+			if hook != nil {
+				if err := hook(ctx, ev); err != nil {
+					return nil, err
+				}
+			}
 			return json.RawMessage(`{"outcome":"refunded"}`), nil
 		case "payment." + method + ".readers":
 			rp.mu.Lock()

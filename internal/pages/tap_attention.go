@@ -141,7 +141,14 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 				out = append(out, attentionDTO(a))
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"attempts": out, "count": len(out)}, "error": nil})
+		// ut-docs#6653 slice 3 (additive): payment-journal legs needing attention.
+		legs, err := legAttentionDTOs(r.Context(), d)
+		if err != nil {
+			logging.L().Errorf("tap attention list: legs: %v", err)
+			writeAttentionError(w, http.StatusInternalServerError, locale, "legs_unreadable", "common.error.server")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"attempts": out, "count": len(out), "legs": legs, "legs_count": len(legs)}, "error": nil})
 	})
 
 	mux.HandleFunc("POST /api/pay/attempts/attention/resolve", func(w http.ResponseWriter, r *http.Request) {

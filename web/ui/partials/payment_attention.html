@@ -1,0 +1,56 @@
+{{/* payment_attention.html (ut-docs#6653 slice 3, ADR-0136 Decision 9.6): the
+     manager's "Payments needing attention" card on Settings -> Payments.
+     Rendered into #pay-attention by GET /ui/settings/payment-attention and,
+     with a flash, by every answer of POST /api/pay/legs/retry|resolve (they
+     send HX-Retarget: #pay-attention).
+
+     The row forms and the step-up PIN dialog aim at #pay-attention-msg, so the
+     PIN dialog's hint never replaces the card; the answer retargets to the whole
+     card, which keeps the list, the counts and the empty state right.
+
+     Data: Rows (oldest first), ShowList (false for a refused session), Flash,
+     FlashWarn. A reverse_failed row carries Retry; both states carry Resolve.
+     The PIN dialog (elevation_prompt.html) is the confirmation, so there is no
+     hx-confirm: its summary names the amount, the method and the double-refund
+     warning. */}}
+<section class="card pay-attn" data-testid="pay-attention" aria-labelledby="pay-attention-title">
+  <h2 id="pay-attention-title">{{ T "pay.attention.title" }} {{ helpLink "payments" }}</h2>
+  {{ if .ShowList }}<p class="muted">{{ T "pay.attention.help" }}</p>{{ end }}
+  <div id="pay-attention-msg" class="pay-attn-msg" role="status" aria-live="polite" tabindex="-1" data-focus-after-action>{{ if .Flash }}<p class="pay-attn-flash">{{ if .FlashWarn }}<span aria-hidden="true">&#9888;</span> {{ end }}{{ .Flash }}</p>{{ end }}</div>
+  {{ if .ShowList }}
+  {{ if .Rows }}
+  <ul class="pay-attn-list">
+    {{ range .Rows }}
+    <li class="pay-attn-row" data-testid="pay-attention-row" data-state="{{ .State }}">
+      <div class="pay-attn-facts">
+        <p class="pay-attn-head"><strong class="pay-attn-amount">{{ .Amount }}</strong>
+          <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
+        <p class="muted">{{ .Method }} &middot; {{ shortdatetime .At }}</p>
+        <p>{{ if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
+        {{ if .Reason }}<p class="muted">{{ .Reason }}</p>{{ end }}
+        {{ if .RefTail }}<p class="muted">{{ printf (T "pay.attention.reference") .RefTail }}</p>{{ end }}
+        {{ if .Retryable }}<p id="pay-attn-check-{{ .N }}" class="tap-warning pay-attn-check">{{ T "pay.attention.check_first" }}</p>{{ end }}
+      </div>
+      <div class="pay-attn-actions">
+        {{ if .Retryable }}
+        <form hx-post="/api/pay/legs/retry" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+          <input type="hidden" name="request_id" value="{{ .RequestID }}">
+          <button type="submit" class="btn btn-touch secondary pay-attn-btn" aria-describedby="pay-attn-check-{{ .N }}">{{ T "pay.attention.retry" }}</button>
+        </form>
+        {{ end }}
+        <form class="pay-attn-resolve" hx-post="/api/pay/legs/resolve" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+          <input type="hidden" name="request_id" value="{{ .RequestID }}">
+          <label class="pay-attn-note">{{ T "pay.attention.note" }}
+            <input type="text" name="note" maxlength="200" autocomplete="off">
+          </label>
+          <button type="submit" class="btn btn-touch pay-attn-btn">{{ T "pay.attention.resolve" }}</button>
+        </form>
+      </div>
+    </li>
+    {{ end }}
+  </ul>
+  {{ else }}
+  <p class="muted">{{ T "pay.attention.empty" }}</p>
+  {{ end }}
+  {{ end }}
+</section>

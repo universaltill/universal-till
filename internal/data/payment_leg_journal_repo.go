@@ -34,6 +34,11 @@ const (
 
 	// LegReasonRestart is the reason boot writes on a leg it warns about.
 	LegReasonRestart = "till_restarted"
+	// ut-docs#6653 slice 3: why a leg is reverse_failed or resolved.
+	LegReasonMainTillOnly    = "main_till_only"
+	LegReasonReversalFailed  = "reversal_failed"
+	LegReasonNoRefundPlugin  = "no_refund_plugin"
+	LegReasonManagerResolved = "manager_resolved"
 
 	legJournalScanMax = 1000
 )
@@ -49,6 +54,8 @@ var (
 	ErrLegJournalTransition = errors.New("payment leg journal: transition not allowed")
 	// ErrLegJournalInvalid: the entry is malformed.
 	ErrLegJournalInvalid = errors.New("payment leg journal: invalid entry")
+	// ErrLegJournalNotFound: the leg has no row.
+	ErrLegJournalNotFound = errors.New("payment leg journal: leg not found")
 )
 
 // legFrom lists, per target state, the states it may follow ("" = no row
@@ -245,15 +252,11 @@ func (r *PaymentLegJournalRepo) Latest(ctx context.Context, id string) (LegEntry
 	return e, e.State != "", nil
 }
 
-// ListBefore returns, per leg, the newest row when its state is one of
-// states and it was written before cutoff, oldest first, at most limit rows
-// (capped at legJournalScanMax). Times are compared parsed, in Go.
-func (r *PaymentLegJournalRepo) ListBefore(ctx context.Context, cutoff time.Time, states []string, limit int) ([]LegEntry, error) {
+// listNewest returns, per leg, the newest row when its state is one of
+// states, oldest first, at most legJournalScanMax rows.
+func (r *PaymentLegJournalRepo) listNewest(ctx context.Context, states []string) ([]LegEntry, error) {
 	if len(states) == 0 {
 		return nil, nil
-	}
-	if limit <= 0 || limit > legJournalScanMax {
-		limit = legJournalScanMax
 	}
 	args := make([]any, 0, len(states)+1)
 	for _, s := range states {
@@ -275,9 +278,86 @@ ORDER BY j.seq LIMIT ?`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("scan payment leg journal: %w", err)
 		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListCurrent returns, per leg, the newest row when its state is one of
+// states, oldest first, at most limit rows (capped at legJournalScanMax):
+// the manager's attention list (ut-docs#6653 slice 3).
+func (r *PaymentLegJournalRepo) ListCurrent(ctx context.Context, states []string, limit int) ([]LegEntry, error) {
+	rows, err := r.listNewest(ctx, states)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > legJournalScanMax {
+		limit = legJournalScanMax
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+// BeginRetry opens a manager's Retry of a reverse_failed leg, in one
+// transaction: it writes the reversing row (a copy of the failed row, no
+// reason) and returns that failed row and the retry's counter n, the number
+// of reversing rows the leg now has. A reverse_failed leg always has at least
+// one earlier reversing row, so the first Retry is 2 and never collides with
+// the live send's 1 (ADR-0136 Decision 9.6). Any state but reverse_failed is
+// ErrLegJournalTransition, reversing included, so a second Retry while one is
+// in flight is refused (Append's same-state no-op would let it through, which
+// is why Retry never goes through Append). No row is ErrLegJournalNotFound.
+// Any other failure is an ErrJournalWrite and nothing was written: the caller
+// must not send.
+func (r *PaymentLegJournalRepo) BeginRetry(ctx context.Context, requestID string) (cur LegEntry, n int, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LegEntry{}, 0, fmt.Errorf("%w: begin: %v", ErrJournalWrite, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, err = latestLeg(ctx, tx, requestID)
+	if err != nil {
+		return LegEntry{}, 0, fmt.Errorf("%w: read: %v", ErrJournalWrite, err)
+	}
+	if cur.State == "" {
+		return LegEntry{}, 0, ErrLegJournalNotFound
+	}
+	if cur.State != LegReverseFailed {
+		return LegEntry{}, 0, fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, LegReversing)
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_leg_journal WHERE request_id = ? AND state = ?`, requestID, LegReversing).Scan(&count); err != nil {
+		return LegEntry{}, 0, fmt.Errorf("%w: count: %v", ErrJournalWrite, err)
+	}
+	next := cur
+	next.State, next.Reason = LegReversing, ""
+	if err := insertLeg(ctx, tx, next, time.Now()); err != nil {
+		return LegEntry{}, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return LegEntry{}, 0, fmt.Errorf("%w: commit: %v", ErrJournalWrite, err)
+	}
+	return cur, count + 1, nil
+}
+
+// ListBefore returns, per leg, the newest row when its state is one of
+// states and it was written before cutoff, oldest first, at most limit rows
+// (capped at legJournalScanMax). Times are compared parsed, in Go.
+func (r *PaymentLegJournalRepo) ListBefore(ctx context.Context, cutoff time.Time, states []string, limit int) ([]LegEntry, error) {
+	if limit <= 0 || limit > legJournalScanMax {
+		limit = legJournalScanMax
+	}
+	rows, err := r.listNewest(ctx, states)
+	if err != nil {
+		return nil, err
+	}
+	var out []LegEntry
+	for _, e := range rows {
 		if e.At.Before(cutoff) && len(out) < limit {
 			out = append(out, e)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }

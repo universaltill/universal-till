@@ -7,7 +7,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -27,11 +26,13 @@ type LegReconcileResult struct {
 //
 //   - captured with no sale, not a tap/phone leg: the Decision 2 reversal,
 //     with the full reference and exact captured amount from the row.
-//   - captured tap/phone leg (ADR-0198): never automatic; logged only (the
-//     attention list is a follow-up), the charged-tap-no-sale flow is the manager's.
-//   - reversing (crashed mid-send), unknown, asked: warned and logged (the
-//     attention list is a follow-up). Never a refund and never a re-send: money may never have moved, or
-//     the provider may already have paid it out.
+//   - captured tap/phone leg (ADR-0198): never automatic; logged only, the
+//     charged-tap-no-sale flow is the manager's.
+//   - reversing (crashed mid-send), unknown, asked: warned and logged, and
+//     listed for a manager on Settings -> Payments (Payments needing
+//     attention; Retry for reverse_failed, Resolve; leg_attention.go). Never
+//     a refund and never a re-send here: money may never have moved, or the
+//     provider may already have paid it out.
 //
 // Rows already warned, reverse_failed or terminal are not touched, so a second
 // boot does nothing. Errors are logged, never returned to boot or checkout.
@@ -79,11 +80,7 @@ func reconcileCaptured(ctx context.Context, d *common.Deps, row data.LegEntry, r
 		logging.L().Warnf("card payment captured and never became a sale — method %q, amount %d %s, authorize_request_id %s: a tap payment is returned only by a manager (ADR-0198); check it at the provider (ADR-0136 Decision 9, ut-docs#6653)", row.MethodID, row.AmountMinor, row.Currency, row.RequestID)
 		return
 	}
-	leg := pos.CapturedLeg{
-		MethodID: row.MethodID, Currency: row.Currency, RequestID: row.RequestID,
-		Amount: money.FromMinor(row.AmountMinor), TransactionRef: row.TransactionRef,
-		TipAmount: money.FromMinor(row.TipMinor), ReaderRef: row.ReaderRef,
-	}
+	leg := legFromRow(row)
 	// The send is not cancelled with the boot pass: once it starts it runs to
 	// the plugin's own call timeout, like a live reversal (ut-docs#6805).
 	if failed := reversePaymentLegs(context.WithoutCancel(ctx), d, []pos.CapturedLeg{leg}, "payment captured by the last run never became a sale"); failed > 0 {
