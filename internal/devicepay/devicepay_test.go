@@ -502,3 +502,59 @@ func TestResolveHasOnlyTheManagerResolveCaller(t *testing.T) {
 		t.Fatalf("devicepay.Resolve is called from %v: add it to `allowed` only once the caller passes the signed-in auth.User (manager-gated, never an HTTP route)", found)
 	}
 }
+
+// ut-docs#6981: the native Setup answer carries an optional raw error code
+// ("detail"); the Swift side shares the golden.
+func TestSetupGolden(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "setup_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r SetupResult
+	if err := strictDecode(string(raw), &r); err != nil {
+		t.Fatalf("golden setup does not decode strictly: %v", err)
+	}
+	if want := (SetupResult{OK: false, Reason: "other", Detail: "stripe 2900"}); r != want {
+		t.Fatalf("golden setup decoded to %+v, want %+v", r, want)
+	}
+}
+
+func TestSetup_DetailSanitised(t *testing.T) {
+	cases := []struct {
+		name, reply string
+		want        SetupResult
+	}{
+		{"kept", `{"ok":false,"reason":"other","detail":"stripe 2900"}`, SetupResult{Reason: "other", Detail: "stripe 2900"}},
+		{"domain code kept", `{"ok":false,"reason":"other","detail":"NSURLErrorDomain -1009"}`, SetupResult{Reason: "other", Detail: "NSURLErrorDomain -1009"}},
+		{"too long dropped", `{"ok":false,"reason":"other","detail":"` + strings.Repeat("a", 65) + `"}`, SetupResult{Reason: "other"}},
+		{"newline dropped", `{"ok":false,"reason":"other","detail":"x\ny"}`, SetupResult{Reason: "other"}},
+		{"markup dropped", `{"ok":false,"reason":"other","detail":"<b>"}`, SetupResult{Reason: "other"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fb := &fakeBridge{setupReply: c.reply}
+			SetBridge(fb)
+			t.Cleanup(func() { SetBridge(nil) })
+			if got := Setup(context.Background(), ProviderStripe); got != c.want {
+				t.Fatalf("Setup = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestSetup_ReasonNotCodeShaped(t *testing.T) {
+	for _, reply := range []string{
+		`{"ok":false,"reason":"Terms Not"}`,
+		`{"ok":false,"reason":"<script>"}`,
+		`{"ok":false,"reason":"` + strings.Repeat("a", 65) + `"}`,
+		`{"ok":false,"reason":"other","extra":1}`, // strictness kept
+	} {
+		fb := &fakeBridge{setupReply: reply}
+		SetBridge(fb)
+		got := Setup(context.Background(), ProviderStripe)
+		SetBridge(nil)
+		if got.OK || got.Reason != ReasonBadNativeResult || got.Detail != "" {
+			t.Fatalf("Setup(%s) = %+v, want bad_native_result", reply, got)
+		}
+	}
+}

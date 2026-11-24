@@ -484,7 +484,7 @@ final class TapToPayCoordinator {
             guard let self else { return }
             switch result {
             case .failure(let err):
-                done(.failure(ReasonError(TapToPayReason.fromCloud(err.code))))
+                done(.failure(ReasonError(TapToPayReason.fromCloud(err.code), detail: err.code)))
             case .success(let s):
                 let onboarded = (s["onboarded"] as? Bool) == true && (s["charges_enabled"] as? Bool) == true
                 guard onboarded, let loc = s["location_id"] as? String, !loc.isEmpty else {
@@ -499,7 +499,12 @@ final class TapToPayCoordinator {
 
     struct ReasonError: Error, Equatable {
         let reason: String
-        init(_ reason: String) { self.reason = reason }
+        /// The raw cloud code behind `reason`, for "Details for support".
+        let detail: String?
+        init(_ reason: String, detail: String? = nil) {
+            self.reason = reason
+            self.detail = detail
+        }
     }
 
     /// Runs a blocking cloud call off the queue and hands the result back on it.
@@ -549,29 +554,30 @@ final class TapToPayCoordinator {
             }
             self.setupInFlight = true
             self.setupFailed = false
-            let done: (String?) -> Void = { reason in
+            let done: (String?, String?) -> Void = { reason, detail in
                 self.setupInFlight = false
                 self.setupFailed = reason != nil
                 self.refreshCapability()
-                completion(SetupOutcome(ok: reason == nil, reason: reason))
+                completion(SetupOutcome(ok: reason == nil, reason: reason, detail: detail))
             }
             self.location.ensureWhenInUse { granted in
                 self.queue.async {
                     guard granted else {
                         self.lastConnectError = .locationDenied
-                        done(TapToPayReason.locationDenied)
+                        done(TapToPayReason.locationDenied, nil)
                         return
                     }
                     self.resolveLocation(force: true) { loc in
                         if case .failure(let e) = loc {
                             self.lastCloudReason = e.reason
-                            done(e.reason)
+                            done(e.reason, e.detail)
                             return
                         }
                         self.lastCloudReason = nil
                         self.ensureConnected(allowTerms: true) { err in
                             if let err {
-                                done(err.reason)
+                                let reason = err == .canceledByReader ? TapToPayReason.canceledByUser : err.reason
+                                done(reason, err.detail)
                                 return
                             }
                             let first = !self.store.isSetupDone(self.provider)
@@ -579,7 +585,7 @@ final class TapToPayCoordinator {
                             if first {
                                 self.education.presentHowToTap { _ in }
                             }
-                            done(nil)
+                            done(nil, nil)
                         }
                     }
                 }

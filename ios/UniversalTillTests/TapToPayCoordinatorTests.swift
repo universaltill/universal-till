@@ -409,6 +409,33 @@ final class TapToPayCoordinatorTests: XCTestCase {
         XCTAssertEqual(education.presented, 0)
     }
 
+    // ut-docs#6981: Setup keeps the native / cloud error code for support.
+    private func runSetup() -> SetupOutcome? {
+        var outcome: SetupOutcome?
+        coordinator.setup { outcome = $0 }
+        coordinator.flush()
+        return outcome
+    }
+
+    func testSetupKeepsReaderErrorCode() {
+        reader.connectError = .other("stripe 2900")
+        XCTAssertEqual(runSetup(), SetupOutcome(ok: false, reason: TapToPayReason.other, detail: "stripe 2900"))
+    }
+
+    func testSetupCancelledByReader() {
+        reader.connectError = .canceledByReader
+        XCTAssertEqual(runSetup(), SetupOutcome(ok: false, reason: TapToPayReason.canceledByUser))
+    }
+
+    func testSetupPassesCloudCodes() {
+        for code in ["insecure_endpoint", "device_role_forbidden", "unauthorized"] {
+            cloud.responses["onboarding_status"] = .failure(CloudError(code: code))
+            XCTAssertEqual(runSetup(), SetupOutcome(ok: false, reason: code, detail: code), code)
+        }
+        cloud.responses["onboarding_status"] = .failure(CloudError(code: "http_418"))
+        XCTAssertEqual(runSetup(), SetupOutcome(ok: false, reason: TapToPayReason.other, detail: "http_418"))
+    }
+
     func testPrewarmConnectsOnlyAfterSetupAndNeverAllowsTerms() {
         coordinator.prewarm()
         coordinator.flush()

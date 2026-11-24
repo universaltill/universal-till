@@ -4,6 +4,23 @@
      state is "preparing". No text field anywhere (no OS keyboard); a state
      is an icon + a word + a tag, never colour alone. The permission names
      never appear and the form carries none. */}}
+{{/* One action button (Allow card taps or Set up), rendered once per page: in
+     #tap-status for the Next step, in the list for any other. A disabled
+     button always has its reason right after it and points at it
+     (ut-docs#6981, ADR-0198 3.8). */}}
+{{ define "tap_settings_action" }}
+{{ if eq .Action "setup" }}
+<button type="button" id="tap-setup" class="btn primary tap-btn" data-testid="tap-setup"
+        hx-post="/settings/tap-to-pay/setup" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
+        {{ if not .ActionOK }}disabled{{ end }}{{ if .Busy }} aria-busy="true"{{ end }}{{ if .HintKey }} aria-describedby="tap-hint-{{ .ID }}"{{ end }}>{{ T "tap.settings.btn.setup" }}</button>
+{{ else if eq .Action "grant" }}
+<button type="button" id="tap-grant" class="btn primary tap-btn" data-testid="tap-grant"
+        hx-post="/settings/tap-to-pay/grant" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
+        hx-confirm="{{ T "tap.settings.grant_confirm" }}" data-confirm-ok="{{ T "tap.settings.btn.grant" }}"
+        {{ if not .ActionOK }}disabled{{ end }}{{ if .HintKey }} aria-describedby="tap-hint-{{ .ID }}"{{ end }}>{{ T "tap.settings.btn.grant" }}</button>
+{{ end }}
+{{ if .HintKey }}<p{{ if not .IsNext }} class="muted"{{ end }} id="tap-hint-{{ .ID }}" data-testid="tap-hint-{{ .ID }}">{{ T .HintKey }}</p>{{ end }}
+{{ end }}
 {{ define "tap_settings_body.html" }}
 {{ if not .Available }}
 <section id="tap-settings" class="card tap-settings" data-testid="tap-unavailable">
@@ -17,32 +34,27 @@
       <span class="tag{{ if eq .State "ready" }} ok{{ else if eq .State "needs_setup" }} warn{{ end }}">{{ T (printf "tap.settings.state.%s" .State) }}</span>
       {{ if .Test }}<span class="tag warn" data-testid="tap-test-mode">{{ T "tap.settings.mode.test" }}</span>{{ end }}
     </h2>
-    <p data-testid="tap-reason">{{ T .ReasonKey }}</p>
+    <p id="tap-reason" data-testid="tap-reason">{{ T .ReasonKey }}</p>
     {{ if and .Additional (ne .State "unavailable") }}<p class="muted" data-testid="tap-additional-note">{{ T "tap.settings.note.additional" }}</p>{{ end }}
     {{ if eq .State "preparing" }}{{ if gt .Progress 0 }}<progress max="100" value="{{ .Progress }}"></progress>{{ else }}<progress></progress>{{ end }}{{ end }}
+    {{ with .Next }}<div class="tap-actions">{{ template "tap_settings_action" . }}</div>{{ end }}
     {{ if .AlreadyMsg }}<p data-testid="tap-already">{{ T "tap.settings.setup_already" }}</p>{{ end }}
     {{ if .DoneNotice }}<p data-testid="tap-setup-done">{{ T "tap.settings.setup_done" }}</p>{{ end }}
-    {{ if .NoticeKey }}<div class="notice-block-warn" data-testid="tap-setup-failed"><p>{{ T .NoticeKey }}</p><p class="muted">{{ T .NoticeWhy }}</p></div>{{ end }}
+    {{ if .NoticeKey }}<div class="notice-block-warn" data-testid="tap-setup-failed"><p>{{ T .NoticeKey }}</p><p class="muted">{{ T .NoticeWhy }}</p>
+      {{ if .NoticeDetail }}<details class="tap-details" data-testid="tap-setup-detail"><summary>{{ T "tap.settings.details" }}</summary><code dir="ltr">{{ .NoticeDetail }}</code></details>{{ end }}</div>{{ end }}
   </div>
   <ol class="tap-steps">
     {{ range $i, $s := .Steps }}
     <li data-testid="tap-step-{{ $s.ID }}">
       <strong>{{ T (printf "tap.settings.step.%s" $s.ID) }}</strong>
       {{ if $s.Done }}<span class="tag ok">{{ T "tap.settings.step.done" }}</span>
+      {{ else if $s.IsNext }}<span class="tag warn">{{ T "tap.settings.step.next" }}</span>
       {{ else if $s.Unknown }}<span class="tag">{{ T "tap.settings.step.unknown" }}</span>
       {{ else }}<span class="tag warn">{{ T "tap.settings.step.todo" }}</span>{{ end }}
       <span class="muted">{{ T $s.LineKey }}</span>
       {{ if eq $s.ID "allow" }}{{ if $s.Done }}<span class="tag ok" data-testid="tap-permission-granted">{{ T "tap.settings.permission.granted" }}</span>{{ else }}<span class="tag warn" data-testid="tap-permission-missing">{{ T "tap.settings.permission.missing" }}</span>{{ end }}{{ end }}
-      {{ if eq $s.Action "setup" }}
-      <button type="button" id="tap-setup" class="btn primary tap-btn" data-testid="tap-setup"
-              hx-post="/settings/tap-to-pay/setup" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
-              {{ if not $s.ActionOK }}disabled aria-busy="true"{{ end }}>{{ T "tap.settings.btn.setup" }}</button>
-      {{ else if eq $s.Action "grant" }}
-      <button type="button" id="tap-grant" class="btn primary tap-btn" data-testid="tap-grant"
-              hx-post="/settings/tap-to-pay/grant" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
-              hx-confirm="{{ T "tap.settings.grant_confirm" }}" data-confirm-ok="{{ T "tap.settings.btn.grant" }}"
-              {{ if not $s.ActionOK }}disabled{{ end }}>{{ T "tap.settings.btn.grant" }}</button>
-      {{ end }}
+      {{ if $s.Detail }}<details class="tap-details" data-testid="tap-account-detail"><summary>{{ T "tap.settings.details" }}</summary><code dir="ltr">{{ $s.Detail }}</code></details>{{ end }}
+      {{ if not $s.IsNext }}{{ template "tap_settings_action" $s }}{{ end }}
     </li>
     {{ end }}
   </ol>

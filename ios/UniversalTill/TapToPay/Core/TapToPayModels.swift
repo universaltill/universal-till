@@ -77,6 +77,10 @@ struct CollectResult: Codable, Equatable {
 struct SetupOutcome: Codable, Equatable {
     var ok: Bool
     var reason: String?
+    /// The raw native / broker error code (e.g. "stripe 2900", "http_418"),
+    /// shown to support under "Details for support" (ut-docs#6981). A code,
+    /// never a message, body or token; nil is omitted from the JSON.
+    var detail: String? = nil
 }
 
 enum CapabilityState: String, Codable, Equatable {
@@ -98,8 +102,8 @@ struct Capability: Codable, Equatable {
     }
 }
 
-/// Reason strings shared with Go and the settings UI (#6458's
-/// settings.payments.ttp.reason.* keys).
+/// Reason strings shared with Go and the settings UI (the
+/// tap.settings.reason.* keys in web/locales/en.json).
 enum TapToPayReason {
     static let ipad = "ipad"
     static let iosTooOld = "ios_too_old"
@@ -111,6 +115,7 @@ enum TapToPayReason {
     static let locationDenied = "location_denied"
     static let offline = "offline"
     static let other = "other"
+    static let canceledByUser = "canceled_by_user"
 
     static let busy = "busy"
     static let amountMismatch = "amount_mismatch"
@@ -127,7 +132,11 @@ enum TapToPayReason {
     /// anything else reads as `other`.
     static func fromCloud(_ code: String) -> String {
         switch code {
-        case notOnboarded, offline, notEnrolled, "invalid_request", "provider_unavailable":
+        case notOnboarded, offline, notEnrolled, "invalid_request", "provider_unavailable",
+             "insecure_endpoint", "unauthorized", "token_retired", "device_credential_required",
+             "device_role_forbidden", "device_role_unrecorded", "device_role_unconfirmed",
+             "auth_unavailable", "not_enabled", "account_not_ready", "not_connected",
+             "account_disconnected", "profile_incomplete":
             return code
         default:
             return other

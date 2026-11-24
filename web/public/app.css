@@ -8459,6 +8459,16 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .tap-settings .tap-steps li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding-block: .75rem; border-block-start: 1px solid var(--border); }
 .tap-settings .tap-steps li:first-child { border-block-start: 0; }
 .tap-settings .tap-steps .muted { flex: 1 1 100%; }
+/* ut-docs#6981: the status block's one button is full width; "Details for
+   support" meets the 44px touch floor (no display:flex on summary: WebKit
+   drops the disclosure marker). */
+.tap-settings #tap-status .tap-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .75rem; }
+.tap-settings #tap-status .tap-actions > p { flex: 1 1 100%; margin: 0; }
+.tap-settings #tap-status .tap-btn { inline-size: 100%; }
+.tap-settings .tap-details { flex: 1 1 100%; margin-block-start: .25rem; }
+.tap-settings .tap-details > summary { min-block-size: 44px; padding-block: .6rem; cursor: pointer; }
+.tap-settings .tap-details > summary:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+.tap-settings .tap-details code { overflow-wrap: anywhere; }
 
 /* ut-docs#5989: stand-alone link rows meet the 44px touch floor. */
 .manual-about-link a, a[data-testid="photo-import-link"] { display: inline-flex; align-items: center; min-block-size: 44px; }

@@ -52,6 +52,12 @@ enum ReaderError: Error, Equatable {
         case .canceledByUs, .canceledByReader, .other: return TapToPayReason.other
         }
     }
+
+    /// The native error code of `.other` ("stripe 2900"), for support.
+    var detail: String? {
+        if case .other(let code) = self { return code }
+        return nil
+    }
 }
 
 protocol ReaderCancelable {

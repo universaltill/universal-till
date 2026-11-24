@@ -4818,5 +4818,20 @@
   "tap.reverse.main_only": "This card payment can't be returned from an additional till. The customer may still be charged: refund it on the main till.",
   "tap.start_failed.setup_again": "This till needs to be set up again before it can take Tap to Pay. Nothing was charged.",
   "tap.start_failed.setup_again_hint": "Ask the shop owner to set this till up again. Other payments still work.",
-  "tap.settings.source.setup_again": "This till needs to be set up again before it can use Tap to Pay. Ask the shop owner."
+  "tap.settings.source.setup_again": "This till needs to be set up again before it can use Tap to Pay. Ask the shop owner.",
+  "tap.settings.lead.allow": "Start by allowing card taps on this iPhone.",
+  "tap.settings.lead.apple": "Press Set up and follow Apple's steps on screen.",
+  "tap.settings.hint.allow_first": "Allow card taps first.",
+  "tap.settings.hint.plugin_missing": "Turn on the Stripe payment method in Plugins first.",
+  "tap.settings.step.next": "Next step",
+  "tap.settings.details": "Details for support",
+  "tap.settings.reason.not_enrolled": "This iPhone isn't linked to the shop's online account yet. Link it, then come back.",
+  "tap.settings.reason.insecure_endpoint": "This app is connected to a test server, so Tap to Pay can't work. Send support the code below.",
+  "tap.settings.reason.entitlement_missing": "This version of the app can't take Tap to Pay. Install the app from the App Store.",
+  "tap.settings.reason.busy": "This iPhone is busy with a payment or another setup. Wait for it to finish, then try again.",
+  "tap.settings.reason.cancelled": "It was cancelled on the iPhone screen. Press Set up to try again.",
+  "tap.settings.reason.apple_failed": "Apple or Stripe reported a problem. Try again. If it keeps happening, send support the code below.",
+  "tap.settings.reason.service_unavailable": "The payment service isn't answering right now. Try again in a few minutes.",
+  "tap.settings.reason.not_enabled": "Card payments aren't switched on for this shop yet. Switch them on in the shop's online account.",
+  "tap.settings.reason.not_connected": "No Stripe account is connected to this shop. Connect one in the shop's online account."
 }
