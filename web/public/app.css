@@ -898,9 +898,11 @@ body.sale-screen .session-admin-link { display: none; }
 .backoffice-problem-meta { font-size: .85rem; }
 .backoffice-problem-raw { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 16rem;
   overflow-y: auto; font-size: .8rem; text-align: start; unicode-bidi: plaintext; }
-.backoffice-problem > details > summary, .backoffice-support > summary { min-block-size: 44px; display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.backoffice-problem > details > summary, .backoffice-support > summary { min-block-size: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; cursor: pointer; }
 .backoffice-problem > details > summary::before, .backoffice-support > summary::before { content: "\25B8"; }
 .backoffice-problem > details[open] > summary::before, .backoffice-support[open] > summary::before { content: "\25BE"; }
+/* RTL: the closed chevron points toward the text (inline-start), so it flips. */
+html[dir="rtl"] .backoffice-problem > details:not([open]) > summary::before, html[dir="rtl"] .backoffice-support:not([open]) > summary::before { content: "\25C2"; }
 .backoffice-problem > details > summary::-webkit-details-marker, .backoffice-support > summary::-webkit-details-marker { display: none; }
 .backoffice-problem-snippet { overflow-wrap: anywhere; color: var(--muted, inherit); }
 .backoffice-problem > details > summary:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }

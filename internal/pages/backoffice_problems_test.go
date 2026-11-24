@@ -240,3 +240,32 @@ func TestProblemWhen_LocalizedDigits(t *testing.T) {
 		t.Errorf("fa time %q still has Latin digits", got)
 	}
 }
+
+// The startup line (data_dir, log path) reaches the copy text only for a
+// settings-permitted user and never on the public demo (review L3,
+// ut-docs#6978).
+func TestBackofficePage_StartupLineOnlyOutsideDemo(t *testing.T) {
+	initProblemsI18n(t)
+	t.Setenv("UT_AUTH", "off")
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	for _, demo := range []bool{false, true} {
+		cfg := &config.Config{Theme: "default", Demo: demo}
+		state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+		dp := &common.Deps{Cfg: cfg, Db: db, State: state, Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+		mux := http.NewServeMux()
+		registerBackofficePage(mux, dp)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/backoffice", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("demo=%v: status %d", demo, rec.Code)
+		}
+		has := strings.Contains(rec.Body.String(), "data_dir=")
+		if has == demo {
+			t.Errorf("demo=%v: startup line present=%v, want %v", demo, has, !demo)
+		}
+	}
+}

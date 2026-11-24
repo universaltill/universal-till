@@ -26,6 +26,8 @@ model from the author), one fix round (Sonnet), scoped Tester re-check of the fi
 | T1 | low (Tester) | "Show the text for support" summary 23–27px; row summaries lost the disclosure marker | fixed: 44px min height, visible chevrons; re-checked by Tester |
 | T2 | low (Tester) | Unclassified rows looked identical until opened | fixed: escaped 80-rune snippet in the summary, tested |
 | T3 | test gap (Tester) | 3 mutants survived (support block repeated row content; cloudsync prefix untested) | fixed by Tester in tests; 16/16 mutants now fail a test |
+| T4 | low (Tester re-check) | Closed disclosure chevron did not mirror in RTL (▸ pointed away from the text); "Show technical details:" squeezed next to the snippet at 360px | fixed [no-subagent: two-line CSS fix]: `html[dir="rtl"]` closed state uses ◂; summaries `flex-wrap: wrap`; computed `::before` content checked in Chromium for ltr/rtl; docs-shots regenerated |
+| T5 | test gap (Tester re-check) | The hidden case of the startup line (no `settings` permission, or demo) has no test | fixed: TestBackofficePage_StartupLineOnlyOutsideDemo (removing the demo gate fails it, re-verified) |
 | N | nit | unused fields/CSS, `unicode-bidi: plaintext` on the support pre, help keywords | fixed |
 
 Confirmed OK by the reviewer: html/template escaping of raw lines; problem lines are redacted in
