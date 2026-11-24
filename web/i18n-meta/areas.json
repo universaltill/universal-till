@@ -103,7 +103,8 @@
         "countrysettings",
         "translations",
         "subscription",
-        "registration"
+        "registration",
+        "pay"
       ]
     },
     "tills": {

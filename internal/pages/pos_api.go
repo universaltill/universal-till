@@ -2960,7 +2960,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
-			// plugin-entry lookup (blockingPaymentEventWithResponseAndID),
+			// plugin-entry lookup (blockingPaymentEventDispatch),
 			// and every fiscal.MethodKeyOKC comparison below then agree on
 			// one form. See refund_page.go's identical fix for why this
 			// canonicalizes the request value rather than making each
@@ -4363,49 +4363,85 @@ func reversePaymentLegsDetail(ctx context.Context, d *common.Deps, legs []pos.Ca
 		if tapRefundMainOnly(ctx, d, leg.MethodID) {
 			failed++
 			mainOnly++
-			journalReversal(ctx, d, leg, data.LegReverseFailed)
+			// ut-docs#6653 slice 3: reverse_failed may only follow reversing
+			// (Decision 9.2), so the refused leg opens its chain first; nothing
+			// is sent. Without it the leg stayed captured and was never listed.
+			journalReversal(ctx, d, leg, data.LegReversing, "")
+			journalReversal(ctx, d, leg, data.LegReverseFailed, data.LegReasonMainTillOnly)
 			logging.L().Warnf("%s, but this additional till cannot return a card tap — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: refund it on the main till (ADR-0198 Amendment 2026-11-23)", what, leg.MethodID, leg.Amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef))
 			continue
 		}
 		// ut-docs#6653: reversing is journaled before the send, the outcome
 		// after it. Best effort: the live in-memory reversal always goes ahead.
-		journalReversal(ctx, d, leg, data.LegReversing)
-		amount := leg.Amount
-		payload := map[string]any{
-			"method":               leg.MethodID,
-			"amount":               amount.Minor(),
-			"currency":             leg.Currency,
-			"reversal":             true,
-			"authorize_request_id": leg.RequestID,
-		}
-		if leg.ReaderRef != "" {
-			// ut-docs#6566: one leg, so the reader is unambiguous at the top
-			// level too; additive, a plugin that ignores it keeps working.
-			payload["reader_id"] = leg.ReaderRef
-		}
-		if leg.TransactionRef != "" {
-			op := map[string]any{
-				"transaction_ref": leg.TransactionRef,
-				"amount":          amount.Minor(),
-				"tip_amount":      leg.TipAmount.Minor(),
-			}
-			if leg.ReaderRef != "" {
-				op["reader_id"] = leg.ReaderRef
-			}
-			payload["original_payments"] = []map[string]any{op}
-		}
-		// ut-docs#6455: a tap leg's reversal is bound to its PaymentIntent and
-		// to exactly the amount it captured.
-		refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, "refund:reversal:"+leg.RequestID+":1")
-		if _, err := blockingPaymentEventWithResponseAndID(refundCtx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
+		journalReversal(ctx, d, leg, data.LegReversing, "")
+		// The live send is always attempt 1, whatever the journal holds: a
+		// re-send of a first send that timed out at the provider must carry
+		// the same key, or the provider cannot dedupe it (ut-docs#6653 F4).
+		if _, err := sendLegReversal(ctx, d, leg, 1); err != nil {
 			failed++
-			journalReversal(ctx, d, leg, data.LegReverseFailed)
-			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
+			journalReversal(ctx, d, leg, data.LegReverseFailed, data.LegReasonReversalFailed)
+			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, leg.Amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
 			continue
 		}
-		journalReversal(ctx, d, leg, data.LegReversed)
+		journalReversal(ctx, d, leg, data.LegReversed, "")
 	}
 	return failed, mainOnly
+}
+
+// reversalRefundKey is the broker idempotency key of the n-th send of a
+// leg's reversal: refund:reversal:<authorize request id>:<n>. A live send is
+// always 1; a manager's Retry is the leg's count of reversing rows (>= 2).
+func reversalRefundKey(requestID string, n int) string {
+	return "refund:reversal:" + requestID + ":" + strconv.Itoa(n)
+}
+
+// reversalEventID is the refund event id of the n-th send: reversalRequestID
+// for the first (and every live) send, reversal:<id>:<n> from a Retry on, so a
+// provider that stores a failed answer under the event id does not replay it
+// (ut-docs#6653 F2, payment-provider-contract.md).
+func reversalEventID(requestID string, n int) string {
+	if n <= 1 || requestID == "" {
+		return reversalRequestID(requestID)
+	}
+	return reversalRequestID(requestID) + ":" + strconv.Itoa(n)
+}
+
+// sendLegReversal dispatches the Decision 2 reversal of one captured leg: the
+// blocking payment.<key>.refund event, with the base refund payload plus
+// reversal:true and authorize_request_id, the leg's own exact amount and
+// full reference. dispatched is false when no plugin subscribes to the
+// method's refund event (nothing was sent): the live path ignores that as it
+// always did, a Retry treats it as a failure.
+func sendLegReversal(ctx context.Context, d *common.Deps, leg pos.CapturedLeg, n int) (dispatched bool, err error) {
+	amount := leg.Amount
+	payload := map[string]any{
+		"method":               leg.MethodID,
+		"amount":               amount.Minor(),
+		"currency":             leg.Currency,
+		"reversal":             true,
+		"authorize_request_id": leg.RequestID,
+	}
+	if leg.ReaderRef != "" {
+		// ut-docs#6566: one leg, so the reader is unambiguous at the top
+		// level too; additive, a plugin that ignores it keeps working.
+		payload["reader_id"] = leg.ReaderRef
+	}
+	if leg.TransactionRef != "" {
+		op := map[string]any{
+			"transaction_ref": leg.TransactionRef,
+			"amount":          amount.Minor(),
+			"tip_amount":      leg.TipAmount.Minor(),
+		}
+		if leg.ReaderRef != "" {
+			op["reader_id"] = leg.ReaderRef
+		}
+		payload["original_payments"] = []map[string]any{op}
+	}
+	// ut-docs#6455: a tap leg's reversal is bound to its PaymentIntent and
+	// to exactly the amount it captured.
+	refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, reversalRefundKey(leg.RequestID, n))
+	_, dispatched, err = blockingPaymentEventDispatch(refundCtx, d, leg.MethodID, "refund", reversalEventID(leg.RequestID, n), payload)
+	return dispatched, err
 }
 
 // isISO4217Code reports whether c is three uppercase ASCII letters.

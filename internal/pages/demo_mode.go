@@ -193,6 +193,11 @@ var demoDeniedRoutes = map[string]bool{
 	// ut-docs#6795: list and settle tap attempts left open; a demo till has none.
 	"GET /api/pay/attempts/attention":          true,
 	"POST /api/pay/attempts/attention/resolve": true,
+	// ut-docs#6653: payment legs needing attention (Retry, Resolve); a demo till
+	// takes no card. The lazy-loaded GET list stays allowed: it is read-only and
+	// empty on a demo till, and a refusal would show an orphan line in Settings.
+	"POST /api/pay/legs/retry":   true,
+	"POST /api/pay/legs/resolve": true,
 	// ut-docs#6538: a phone card reader's progress and cancel; a demo till has no readers.
 	"GET /ui/pay/tap/remote":      true,
 	"POST /pay/tap/remote/cancel": true,
@@ -601,6 +606,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/backup-cloud-restore/status":  true,
 	"GET /ui/offsite-nextstep":             true,
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
+	"GET /ui/settings/payment-attention":   true, // ut-docs#6653; read-only list, empty on a demo till
 	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,
 	"GET /ui/fiscal-chip":                  true,
