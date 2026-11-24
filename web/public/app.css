@@ -8448,7 +8448,8 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 /* ut-docs#6981: the status block's one button is full width; "Details for
    support" meets the 44px touch floor (no display:flex on summary: WebKit
    drops the disclosure marker). */
-.tap-settings #tap-status .tap-actions { display: flex; margin-block-start: .75rem; }
+.tap-settings #tap-status .tap-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .75rem; }
+.tap-settings #tap-status .tap-actions > p { flex: 1 1 100%; margin: 0; }
 .tap-settings #tap-status .tap-btn { inline-size: 100%; }
 .tap-settings .tap-details { flex: 1 1 100%; margin-block-start: .25rem; }
 .tap-settings .tap-details > summary { min-block-size: 44px; padding-block: .6rem; cursor: pointer; }
