@@ -53,6 +53,7 @@ func newTestAdvertiser(t *testing.T, primary bool) (*Advertiser, *int, func(bool
 		return role
 	}
 	a := NewAdvertiser(settings, isPrimary, 8080)
+	a.startSystem = nil // never spawn the real OS publisher in tests (ut-docs#6957)
 	starts := 0
 	a.newServer = func(zone mdns.Zone) (mdnsServer, error) {
 		starts++
