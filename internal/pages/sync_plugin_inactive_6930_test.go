@@ -165,7 +165,7 @@ func runBothOrders6930(t *testing.T, name string, mans map[string]*plugins.Manif
 			if !convergePluginSet(t.Context(), dp, rows) || len(*calls) != n {
 				t.Fatalf("second tick: installs %d -> %d, want a no-op", n, len(*calls))
 			}
-			if _, changed := followMarketplaceState(t.Context(), dp, rows); changed {
+			if _, changed := followMarketplaceState(t.Context(), dp, rows, false); changed {
 				t.Fatal("follow flipped something on the second pass")
 			}
 		})
