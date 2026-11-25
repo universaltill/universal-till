@@ -38,6 +38,22 @@ type Link interface {
 	ReaderState(readerID string) (fleetlink.ReaderStatus, bool)
 }
 
+// PhonePeer is the one thing CollectRemote talks to: a phone's link on the
+// main till (a *fleetlink.Peer), or, on an additional till, the relay through
+// the main (relayPeer). Closed fires once the phone cannot be reached any more.
+type PhonePeer interface {
+	Request(ctx context.Context, typ string, payload any) (json.RawMessage, error)
+	Notify(typ string, payload any) error
+	Closed() <-chan struct{}
+}
+
+// PhoneLink is Link with PhonePeer: what an additional till's relay provides
+// instead of a hub (ut-docs#6538 phase 2).
+type PhoneLink interface {
+	ReaderPeer(readerID string) PhonePeer
+	ReaderState(readerID string) (fleetlink.ReaderStatus, bool)
+}
+
 // Attempts reads core's attempt rows (*data.PaymentAttemptRepo).
 type Attempts interface {
 	Get(ctx context.Context, key string) (data.PaymentAttempt, bool, error)
@@ -48,7 +64,11 @@ type Broker func(ctx context.Context, provider, op string, body []byte) ([]byte,
 
 // Config wires a Service.
 type Config struct {
-	Link     Link
+	Link Link
+	// Phones is the second place a reader may live: when Link (the hub) has no
+	// such reader, Phones is asked (an additional till's relay through its
+	// main). Link may be nil when Phones is set.
+	Phones   PhoneLink
 	ByRef    func(ctx context.Context, ref string) (Reader, bool)
 	ByID     func(ctx context.Context, id string) (Reader, bool)
 	Attempts Attempts
@@ -60,6 +80,9 @@ type Config struct {
 	// AckTimeout bounds the wait for the phone's collect reply.
 	AckTimeout time.Duration
 	Now        func() time.Time
+
+	// The relay half (ut-docs#6538 phase 2; main till only, nil elsewhere).
+	Relay *RelayConfig
 }
 
 // Phases of a remote collect, as the till shows them.
@@ -88,7 +111,9 @@ type collect struct {
 	key      string
 	readerID string
 	name     string
-	peer     *fleetlink.Peer
+	peer     PhonePeer
+	relayTo  *fleetlink.Peer // set on a relayed collect: where the verdict goes
+	tillID   string          // the ringing till of a relayed collect
 	deadline time.Time
 	started  time.Time
 	phase    string // guarded by Service.mu
@@ -107,13 +132,15 @@ type phoneResult struct {
 type Service struct {
 	cfg Config
 
-	mu       sync.Mutex
-	inflight map[string]*collect // by reader id: one collect per reader
-	byKey    map[string]*collect // by idempotency key, while it can still take a result
-	lost     []string
-	busy     []string // keys the phone refused as busy (bounded, maxLost)
-	dropped  int
-	tokens   map[string][]time.Time
+	mu        sync.Mutex
+	inflight  map[string]*collect // by reader id: one collect per reader
+	byKey     map[string]*collect // by idempotency key, while it can still take a result
+	lost      []string
+	busy      []string // keys the phone refused as busy (bounded, maxLost)
+	dropped   int
+	tokens    map[string][]time.Time
+	relayRate map[string][]time.Time // relay timestamps per till (relay.go)
+	relayTill map[string]*collect    // the one in-flight relay of each till
 }
 
 // New builds a Service.
@@ -160,8 +187,8 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 	if !ok || !rd.Active {
 		return notStarted(devicepay.ReasonReaderUnreachable)
 	}
-	peer := s.cfg.Link.ReaderPeer(rd.ID)
-	st, linked := s.cfg.Link.ReaderState(rd.ID)
+	peer := s.phone(rd.ID)
+	st, linked := s.state(rd.ID)
 	if peer == nil || !linked {
 		return notStarted(devicepay.ReasonReaderUnreachable)
 	}
@@ -276,11 +303,72 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 	}
 }
 
+// phone is rd's link as a PhonePeer, nil when there is none (a nil
+// *fleetlink.Peer must not become a non-nil interface).
+func (s *Service) phone(readerID string) PhonePeer {
+	if s.cfg.Link != nil {
+		if p := s.cfg.Link.ReaderPeer(readerID); p != nil {
+			return p
+		}
+	}
+	if s.cfg.Phones != nil {
+		return s.cfg.Phones.ReaderPeer(readerID)
+	}
+	return nil
+}
+
+func (s *Service) state(readerID string) (fleetlink.ReaderStatus, bool) {
+	if s.cfg.Link != nil {
+		if st, ok := s.cfg.Link.ReaderState(readerID); ok {
+			return st, true
+		}
+	}
+	if s.cfg.Phones != nil {
+		return s.cfg.Phones.ReaderState(readerID)
+	}
+	return fleetlink.ReaderStatus{}, false
+}
+
+// PhoneState is the presence of the phone reader ref as this till sees it
+// (its own hub, or the relay through its main): ready, busy, needs_setup,
+// unavailable; ok is false for a ref it does not know. A collect in flight on
+// this till reads as busy even before the phone says so.
+func (s *Service) PhoneState(ctx context.Context, ref string) (string, bool) {
+	rd, ok := s.cfg.ByRef(ctx, ref)
+	if !ok || !rd.Active {
+		return "", false
+	}
+	s.mu.Lock()
+	held := s.inflight[rd.ID] != nil
+	s.mu.Unlock()
+	if held {
+		return fleetlink.ReaderBusy, true
+	}
+	st, linked := s.state(rd.ID)
+	if !linked {
+		return fleetlink.ReaderUnavailable, true
+	}
+	switch st.State {
+	case fleetlink.ReaderReady, fleetlink.ReaderBusy, fleetlink.ReaderNeedsSetup:
+		return st.State, true
+	}
+	return fleetlink.ReaderUnavailable, true
+}
+
 func (s *Service) begin(c *collect) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.inflight[c.readerID] != nil {
 		return false
+	}
+	if c.relayTo != nil { // a relayed sale: one per till, and its key must be new
+		if s.relayTill[c.tillID] != nil || s.byKey[c.key] != nil {
+			return false
+		}
+		if s.relayTill == nil {
+			s.relayTill = map[string]*collect{}
+		}
+		s.relayTill[c.tillID] = c
 	}
 	s.inflight[c.readerID] = c
 	s.byKey[c.key] = c
@@ -295,6 +383,9 @@ func (s *Service) end(c *collect) {
 	}
 	if s.byKey[c.key] == c {
 		delete(s.byKey, c.key)
+	}
+	if c.relayTo != nil && s.relayTill[c.tillID] == c {
+		delete(s.relayTill, c.tillID)
 	}
 }
 
@@ -365,7 +456,7 @@ func (s *Service) cancelIntent(a data.PaymentAttempt, pi string) bool {
 // out): tell the phone, then cancel the PaymentIntent. A cancel that finds the
 // payment already succeeded is applied as approved (#6304); one that cannot
 // tell is pending.
-func (s *Service) stop(peer *fleetlink.Peer, a data.PaymentAttempt, pi, reason string) devicepay.Result {
+func (s *Service) stop(peer PhonePeer, a data.PaymentAttempt, pi, reason string) devicepay.Result {
 	_ = peer.Notify(fleetlink.TypeReaderCancel, fleetlink.ReaderCancel{IdempotencyKey: a.Key})
 	if s.cancelIntent(a, pi) {
 		return devicepay.Result{Status: devicepay.StatusCancelled, Reason: reason}
@@ -417,6 +508,12 @@ func (s *Service) settle(a data.PaymentAttempt, pi string, m phoneResult) device
 // this main issued, on the link the collect was sent on, once: anything else
 // is dropped and counted (never logged with content).
 func (s *Service) ReaderResult(p *fleetlink.Peer, r fleetlink.ReaderResult, ok bool) {
+	s.ReaderResultFrom(p, r, ok)
+}
+
+// ReaderResultFrom is ReaderResult for any PhonePeer (the relay peer of an
+// additional till delivers the main's reader.relay.result through it).
+func (s *Service) ReaderResultFrom(p PhonePeer, r fleetlink.ReaderResult, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.byKey[r.IdempotencyKey]
@@ -438,7 +535,9 @@ func (s *Service) CancelActive() bool {
 	s.mu.Lock()
 	var cs []*collect
 	for _, c := range s.inflight {
-		cs = append(cs, c)
+		if c.relayTo == nil { // a relayed sale is cancelled by its own till
+			cs = append(cs, c)
+		}
 	}
 	s.mu.Unlock()
 	for _, c := range cs {
@@ -457,7 +556,7 @@ func (s *Service) TokenHandler(ctx context.Context, readerID string, _ json.RawM
 	if !ok || !rd.Active {
 		return nil, &fleetlink.RemoteError{Code: fleetlink.CodeReaderNotReady}
 	}
-	st, linked := s.cfg.Link.ReaderState(readerID)
+	st, linked := s.state(readerID)
 	if !linked || (st.State != fleetlink.ReaderReady && st.State != fleetlink.ReaderBusy) {
 		return nil, &fleetlink.RemoteError{Code: fleetlink.CodeReaderNotReady}
 	}
@@ -500,6 +599,9 @@ func (s *Service) Progress() (Progress, bool) {
 	defer s.mu.Unlock()
 	var best *collect
 	for _, c := range s.inflight {
+		if c.relayTo != nil {
+			continue // the Mac's cashier screen shows its own sale only
+		}
 		if best == nil || c.started.After(best.started) {
 			best = c
 		}

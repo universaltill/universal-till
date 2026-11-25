@@ -1,0 +1,21 @@
+{{/* ut-docs#6538 phase 2 (G9, G13a): manager-only, main till only. Shows this
+     till's id (type it with the address on a phone that cannot find the till
+     by itself) and the switch for phone card readers. The switch is a test
+     feature: it takes effect only for a shop the cloud has enabled for phone
+     readers. The state is in words, never colour alone. */}}
+<div id="reader-settings" class="card" role="region" aria-labelledby="reader-settings-title"
+     hx-get="/ui/tills/reader-settings" hx-trigger="tills-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <h4 id="reader-settings-title">{{ T "tap.reader.phone_pairing.title" }}</h4>
+  {{ if .MsgKey }}<p role="status" aria-live="polite">{{ T .MsgKey }}</p>{{ end }}
+  <p>{{ T "tap.reader.phone_pairing.switch" }}:
+    <strong class="tag" role="status">{{ if .On }}{{ T "tap.reader.phone_pairing.on" }}{{ else }}{{ T "tap.reader.phone_pairing.off" }}{{ end }}</strong></p>
+  <p class="muted">{{ T "tap.reader.phone_pairing.hint" }}</p>
+  <form class="reader-form" hx-post="/ui/tills/reader-settings/phone-pairing" hx-target="#reader-settings" hx-swap="outerHTML">
+    <input type="hidden" name="enabled" value="{{ if .On }}off{{ else }}on{{ end }}">
+    <label class="reader-field" for="phonepair-pin">{{ T "tills.pairing.manager_pin" }}
+      <input type="password" name="manager_pin" id="phonepair-pin" inputmode="numeric" autocomplete="off"></label>
+    <button class="btn {{ if .On }}secondary{{ else }}primary{{ end }}" type="submit">{{ if .On }}{{ T "tap.reader.phone_pairing.turn_off" }}{{ else }}{{ T "tap.reader.phone_pairing.turn_on" }}{{ end }}</button>
+  </form>
+  <p>{{ T "tap.reader.till_id.label" }}: <strong dir="ltr" class="till-id">{{ .TillID }}</strong></p>
+  <p class="muted">{{ T "tap.reader.till_id.help" }}</p>
+</div>

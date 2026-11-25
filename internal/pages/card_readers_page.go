@@ -88,6 +88,12 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 	if err != nil {
 		return view, err
 	}
+	// An additional till also lists the main's phones (relayed, never stored).
+	if onAdditionalTill(ctx, d) {
+		for _, m := range relayMethods(ctx, d, method) {
+			all = append(all, relayedReaders(ctx, d, m)...)
+		}
+	}
 	names := map[string]string{}
 	if pms, err := data.NewPOSRepo(d.Db).ListActivePaymentMethods(ctx); err == nil {
 		for _, m := range pms {
@@ -132,7 +138,14 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 		}
 	}
 	if pinnedID != "" {
-		if c, err := repo.Get(ctx, pinnedID); err == nil {
+		if isRelayRowID(pinnedID) {
+			for _, c := range rows {
+				if c.ID == pinnedID {
+					rows = []data.CardReader{c}
+					view.Pinned = true
+				}
+			}
+		} else if c, err := repo.Get(ctx, pinnedID); err == nil {
 			rows = []data.CardReader{c}
 			view.Pinned = true
 		}
@@ -142,6 +155,9 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 	var probes []cardreaders.Probe
 	if !view.Pinned {
 		for _, c := range rows {
+			if _, core := phoneState(ctx, d, c); core {
+				continue // a phone's presence is core's own knowledge (hub or relay)
+			}
 			if !inflight.Has(c.ID) && !unknownRows[c.ID] {
 				probes = append(probes, cardreaders.Probe{ID: c.ID, Method: c.MethodKey, Ref: c.ReaderRef})
 			}
@@ -157,6 +173,9 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 		a := states[c.ID]
 		if a.State == "" {
 			a.State = cardreaders.Unknown
+		}
+		if st, core := phoneState(ctx, d, c); core && !view.Pinned {
+			a = phoneAnswer(st)
 		}
 		switch {
 		case view.Pinned:

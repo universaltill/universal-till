@@ -56,8 +56,14 @@ func readersHook(method string) string { return "payment." + method + ".readers"
 // in managed mode, else (nil, false).
 func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRepo, method string) ([]data.CardReader, bool, error) {
 	rows, err := repo.ListActiveByMethod(ctx, method)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
 		return nil, false, err
+	}
+	// An additional till also has the main's phones, as synthetic rows that
+	// are never stored.
+	rows = append(rows, relayedReaders(ctx, d, method)...)
+	if len(rows) == 0 {
+		return nil, false, nil
 	}
 	ok, err := data.NewPluginRepo(d.Db).HasActiveHook(ctx, rows[0].PluginID, readersHook(method))
 	if err != nil || !ok {
@@ -75,6 +81,11 @@ func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRe
 func readerEligible(c data.CardReader, source string) bool {
 	if !data.ValidCardReaderPair(c.Kind, c.Transport) {
 		return false
+	}
+	if c.Source == relayedSource {
+		// A phone of the main, reached through the relay: an additional
+		// till's, never any other surface's (ADR-0198 amendment 2026-11-25).
+		return source == readerSourceAdditional
 	}
 	switch c.Kind {
 	case data.CardReaderKindSDK, data.CardReaderKindExternal:
@@ -195,6 +206,10 @@ func writeCardReaderError(w http.ResponseWriter, r *http.Request, e *cardReaderE
 // Best effort: a failure is logged and never fails the sale.
 func touchReaderLastUsed(ctx context.Context, d *common.Deps, rowID string) {
 	if rowID == "" {
+		return
+	}
+	if isRelayRowID(rowID) {
+		touchRelayLastUsed(ctx, d, rowID) // till-local setting, not a registry row
 		return
 	}
 	if err := data.NewCardReaderRepo(d.Db).TouchLastUsed(ctx, rowID); err != nil {

@@ -189,6 +189,13 @@ type Deps struct {
 	// (ut-docs#6538 R1b): set with Link in pages.Init, nil without a hub.
 	ReaderPay *readerlink.Service
 
+	// RelayReaders is an additional till's view of the main's phone readers
+	// and the relay to them (ut-docs#6538 phase 2, ADR-0198 amendment
+	// 2026-11-25): a short-lived directory, never persisted. Set in
+	// pages.Init; nil in bare-Deps tests. It offers nothing unless the till's
+	// link to its main is pinned TLS and the main advertises reader_relay.
+	RelayReaders *readerlink.RelayClient
+
 	// PendingLinks holds the joining tills' pending links on the main till
 	// (ADR-0114 §2 and its 2026-11-03 amendment, ut-docs#5297): one per
 	// pending pair request, resolved by approve/deny, closed on expiry and

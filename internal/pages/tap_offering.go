@@ -46,15 +46,17 @@ func tapOfferedOn(source string) bool {
 // tapEntryCapable reports whether a tap entry can be offered on this (main,
 // standalone or additional) till now (ADR-0198 2, conditions 2 and 4): this
 // device's native Tap to Pay is ready for the entry's provider, or, on a main
-// or standalone till only, an active paired phone reader is registered for the
-// entry (that path needs no local bridge, ADR-0198 6; an additional till never
-// uses a phone reader, O-3). A read error is "not capable" (fail closed).
+// or standalone till, an active paired phone reader is registered for the
+// entry (that path needs no local bridge, ADR-0198 6); on an additional till, a
+// READY phone reader of its main reached through the relay (ADR-0198 amendment
+// 2026-11-25; link pinned, main advertises it). A read error is "not capable"
+// (fail closed).
 func tapEntryCapable(ctx context.Context, d *common.Deps, method, provider string) bool {
 	if provider != "" && devicepay.Capabilities()[provider].Ready {
 		return true
 	}
 	if effectiveReaderSource(ctx, d, readerSourcePOS) == readerSourceAdditional {
-		return false
+		return relayedPhoneReady(ctx, d, method, provider)
 	}
 	rows, err := data.NewCardReaderRepo(d.Db).ListActive(ctx)
 	if err != nil {
