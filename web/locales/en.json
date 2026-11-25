@@ -1810,6 +1810,7 @@
   "plugins.manage.revoked_hint_no_update": "There is no replacement version yet. You can uninstall the plugin, or wait for an update. Turning this version back on only lasts about 30 minutes.",
   "plugins.manage.revoked_hint_update": "Press Update to install a version the Plugin Store still offers. Turning this version back on only lasts about 30 minutes.",
   "plugins.revoked.hint_unknown": "We can't check for a replacement right now. Reconnect to look for an update.",
+  "plugins.manage.broken_code_refused": "This version of the app can't run this plugin, so it won't be reinstalled. Uninstall it to clear this warning.",
   "plugins.manage.revoked_notice": "The Plugin Store withdrew version %s of this plugin, so this till turned it off.",
   "plugins.manage.revoked_notice_reason": "The Plugin Store withdrew version %[1]s of this plugin, so this till turned it off. Reason given: %[2]s",
   "plugins.manage.built_in_hint": "Included with the app. It updates with the app, and you turn it on or off here.",

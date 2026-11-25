@@ -54,9 +54,14 @@
                ⚠-suffix warning shape as the sync chip; the tooltip explains
                how each kind of plugin recovers (store installs re-fetch
                automatically; file imports need a manual re-import). */}}
-          <span class="tag" x-show="p.state === 'broken'"
+          <span class="tag" x-show="p.state === 'broken' && !p.codeRefused"
                 style="background:rgba(220,38,38,.12); color:var(--danger)"
                 title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
+          <span class="tag" x-show="p.codeRefused"
+                style="background:rgba(220,38,38,.12); color:var(--danger)"
+                title="{{ T "plugins.manage.broken_code_refused" }}">{{ T "plugins.manage.broken" }} ⚠</span>
+          {{/* ut-docs#7017: App Store build never reinstalls a broken code plugin. */}}
+          <p class="notice-block-warn" role="note" x-show="p.codeRefused" data-testid="plugin-code-refused-note">{{ T "plugins.manage.broken_code_refused" }}</p>
           {{/* ut-docs#5660: the marketplace withdrew the installed version and
                this till turned it off. Stays after a manual re-enable (the
                next check turns it off again). Same word as the notice. */}}
