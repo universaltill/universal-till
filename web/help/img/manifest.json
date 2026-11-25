@@ -541,7 +541,7 @@
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
     "internal/pages/leg_reconcile.go": {
-      "sha256": "9e18468578a27561be8012c3d3031c12308d397e693d879516785b0a223098c9"
+      "sha256": "ac20d465fb42fc52462c3c74055c009a78e5c6385d3d095967fe427010624c3b"
     },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"
@@ -1960,7 +1960,7 @@
       "sha256": "c73f6d2129c150973afb6f0232efb19295811ec17de5ecf0bc6fc4ee3f31329c"
     },
     "web/ui/partials/payment_attention.html": {
-      "sha256": "2e068c61f6255bd692564d98812f89ad7f42b52a6971a8645b04815050b9b381"
+      "sha256": "c42e720353c16d65cb886fca34a723edca54df5a21dd4c747426f54db07f95d3"
     },
     "web/ui/partials/pending_pairings.html": {
       "sha256": "84d33c4ca69d0ec124912fe8d5b0b2f83d1cd0c9fbff21be405c00105b0fb01f"

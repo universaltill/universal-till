@@ -17,6 +17,11 @@
      together. Both outcome buttons are secondary: neither is the default. A
      disabled first submit button makes Enter in the note a no-op, so a stray
      Enter can never pick "Not charged".
+     A .ChargedNoSale row (ut-docs#7028: a captured card tap whose sale never
+     saved; the customer WAS charged) has one action: record it as charged, so
+     the manager refunds at the provider. No Not charged, no reasons, no plain
+     Mark as handled; nothing is sent to the payment service. Card taps are not
+     paused while it is listed.
      The PIN dialog (elevation_prompt.html) is the confirmation, so there is no
      hx-confirm: its summary names the amount, the method and the double-refund
      warning. */}}
@@ -31,9 +36,9 @@
     <li class="pay-attn-row" data-testid="pay-attention-row" data-state="{{ .State }}">
       <div class="pay-attn-facts">
         <p class="pay-attn-head"><strong class="pay-attn-amount">{{ .Amount }}</strong>
-          <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
+          <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .ChargedNoSale }}{{ T "pay.attention.state.charged_no_sale" }}{{ else if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
         <p class="muted">{{ .Method }} &middot; {{ shortdatetime .At }}</p>
-        <p>{{ if .Tap }}{{ T "pay.attention.explain.tap" }}{{ else if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
+        <p>{{ if .ChargedNoSale }}{{ T "pay.attention.explain.charged_no_sale" }}{{ else if .Tap }}{{ T "pay.attention.explain.tap" }}{{ else if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
         {{ if .Reason }}<p class="muted">{{ .Reason }}</p>{{ end }}
         {{ if .RefTail }}<p class="muted">{{ printf (T "pay.attention.reference") .RefTail }}</p>{{ end }}
         {{ if .Retryable }}<p id="pay-attn-check-{{ .N }}" class="tap-warning pay-attn-check">{{ T "pay.attention.check_first" }}</p>{{ end }}
@@ -45,7 +50,18 @@
           <button type="submit" class="btn btn-touch secondary pay-attn-btn" aria-describedby="pay-attn-check-{{ .N }}">{{ T "pay.attention.retry" }}</button>
         </form>
         {{ end }}
-        {{ if .Tap }}
+        {{ if .ChargedNoSale }}
+        <form class="pay-attn-resolve" data-testid="pay-attention-charged-form" hx-post="/api/pay/legs/resolve" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[name=decision]">
+          <button type="submit" class="pay-attn-implicit" disabled hidden tabindex="-1" aria-hidden="true"></button>
+          <input type="hidden" name="request_id" value="{{ .RequestID }}">
+          <label class="pay-attn-note">{{ T "pay.attention.note" }}
+            <input type="text" name="note" maxlength="200" autocomplete="off" enterkeyhint="done">
+          </label>
+          <div class="pay-attn-choices">
+            <button type="submit" name="decision" value="charged_refund_at_provider" class="btn btn-touch secondary pay-attn-btn" data-testid="pay-attention-charged">{{ T "pay.attention.tap_charged" }}</button>
+          </div>
+        </form>
+        {{ else if .Tap }}
         <form class="pay-attn-resolve" data-testid="pay-attention-tap-form" hx-post="/api/pay/legs/resolve" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[name=decision]">
           <button type="submit" class="pay-attn-implicit" disabled hidden tabindex="-1" aria-hidden="true"></button>
           <input type="hidden" name="request_id" value="{{ .RequestID }}">
