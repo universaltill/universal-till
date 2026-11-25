@@ -423,3 +423,85 @@ func TestLegJournal_TapReasonRefusedOffCaptured_7028(t *testing.T) {
 		t.Fatalf("asked -> warned/tap_charged_no_sale: %v, want ErrLegJournalTransition", err)
 	}
 }
+
+// --- ut-docs#7027: AppendChain and the attempt_settled reason ---
+
+func legRows(t *testing.T, db *sql.DB, id string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM payment_leg_journal WHERE request_id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAppendChain_AllOrNothing_7027(t *testing.T) {
+	ctx := context.Background()
+	db := newLegJournalDB(t)
+	r := NewPaymentLegJournalRepo(db)
+	seedLegChain(t, r, "a", LegAsked, LegUnknown)
+	from, _, _ := r.Latest(ctx, "a")
+	warned, resolved := from, from
+	warned.State, warned.Reason = LegWarned, LegReasonRestart
+	resolved.State, resolved.Reason = LegResolved, LegReasonAttemptSettled
+	// (a) happy path: two rows
+	if err := r.AppendChain(ctx, from, warned, resolved); err != nil {
+		t.Fatal(err)
+	}
+	if n := legRows(t, db, "a"); n != 4 {
+		t.Fatalf("rows = %d, want 4", n)
+	}
+	if cur, _, _ := r.Latest(ctx, "a"); cur.State != LegResolved || cur.Reason != LegReasonAttemptSettled {
+		t.Fatalf("latest = %+v", cur)
+	}
+	// (b) invalid second step: nothing written
+	seedLegChain(t, r, "b", LegAsked, LegUnknown)
+	from, _, _ = r.Latest(ctx, "b")
+	warned, bad := from, from
+	warned.State, warned.Reason = LegWarned, LegReasonRestart
+	bad.State = LegSettled
+	if err := r.AppendChain(ctx, from, warned, bad); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("err = %v, want transition", err)
+	}
+	if n := legRows(t, db, "b"); n != 2 {
+		t.Fatalf("rows = %d, want 2 (rolled back)", n)
+	}
+	// (c) stale from
+	seedLegChain(t, r, "c", LegAsked, LegUnknown)
+	from, _, _ = r.Latest(ctx, "c")
+	seedLegChain(t, r, "c", LegWarned)
+	warned, resolved = from, from
+	warned.State, warned.Reason = LegWarned, LegReasonRestart
+	resolved.State, resolved.Reason = LegResolved, LegReasonAttemptSettled
+	if err := r.AppendChain(ctx, from, warned, resolved); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("stale err = %v, want transition", err)
+	}
+	if n := legRows(t, db, "c"); n != 3 {
+		t.Fatalf("rows = %d, want 3", n)
+	}
+	// (d) invalid input
+	asked := from
+	asked.State = LegAsked
+	if err := r.AppendChain(ctx, from, asked); !errors.Is(err, ErrLegJournalInvalid) {
+		t.Fatalf("asked err = %v", err)
+	}
+	if err := r.AppendChain(ctx, from); !errors.Is(err, ErrLegJournalInvalid) {
+		t.Fatalf("empty err = %v", err)
+	}
+}
+
+func TestAppend_AttemptSettledReasonOnlyOnWarnedToResolved_7027(t *testing.T) {
+	ctx := context.Background()
+	r := NewPaymentLegJournalRepo(newLegJournalDB(t))
+	seedLegChain(t, r, "a", LegAsked, LegUnknown)
+	e := legEntry("a", LegWarned)
+	e.Reason = LegReasonAttemptSettled
+	if err := r.Append(ctx, e); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("unknown -> warned with attempt_settled: %v, want transition", err)
+	}
+	seedLegChain(t, r, "a", LegWarned)
+	e.State = LegResolved
+	if err := r.Append(ctx, e); err != nil {
+		t.Fatalf("warned -> resolved with attempt_settled: %v", err)
+	}
+}

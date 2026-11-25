@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1651,5 +1652,210 @@ func TestChargedNoSale_RetryAuditSaysAlreadyStamped_7028(t *testing.T) {
 	audits := e.audit(t, "tap_resolve")
 	if len(audits) != 1 || audits[0]["stamped"] != false || audits[0]["already_stamped"] != true || audits[0]["attempt_reason"] != data.AttemptReasonChargedNoSale {
 		t.Fatalf("audits = %+v", audits)
+	}
+}
+
+// --- ut-docs#7027: boot closes a tap leg whose attempt a manager already settled ---
+
+// seedAttempt writes a payment_attempts row under key in the given state
+// (and, for approved + charged_no_sale, the manager's stamp).
+func (e *legEnv) seedAttempt(t *testing.T, key, state, reason string) {
+	t.Helper()
+	repo := data.NewPaymentAttemptRepo(e.dp.Db)
+	ctx := context.Background()
+	if _, err := repo.Begin(ctx, data.PaymentAttempt{Key: key, Provider: "stripe", AmountMinor: 120, Currency: "gbp", Deadline: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if state == data.AttemptPending {
+		return
+	}
+	if err := repo.Mark(ctx, key, state, data.AttemptUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	if reason == data.AttemptReasonChargedNoSale {
+		if _, _, err := repo.MarkChargedNoSale(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (e *legEnv) bootUnknown(t *testing.T, id string, states ...string) (LegReconcileResult, time.Time) {
+	t.Helper()
+	e.seed(t, id, "tapstripe", states...)
+	start := time.Now().Add(-time.Second)
+	return ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute)), start
+}
+
+func (e *legEnv) wantNotListed(t *testing.T, id string) {
+	t.Helper()
+	if body := e.fragment(t, e.manager).Body.String(); strings.Contains(body, `data-testid="pay-attention-row"`) || strings.Contains(body, id) {
+		t.Fatalf("card lists the closed leg: %s", body)
+	}
+	l := e.listJSON(t)
+	if len(l.Data.Legs) != 0 || len(l.Data.Attempts) != 0 || l.Data.LegsCount != 0 {
+		t.Fatalf("json lists the closed leg: %+v", l.Data)
+	}
+}
+
+func (e *legEnv) wantClosed(t *testing.T, id string) {
+	t.Helper()
+	ch := e.chain(t, id)
+	if n := len(ch); n < 2 || ch[n-1] != data.LegResolved || ch[n-2] != data.LegWarned {
+		t.Fatalf("chain = %v, want ... warned resolved", ch)
+	}
+	if got := e.last(t, id); got.Reason != data.LegReasonAttemptSettled {
+		t.Fatalf("resolved reason = %q, want %q", got.Reason, data.LegReasonAttemptSettled)
+	}
+}
+
+// AC1
+func TestLegReconcile_UnknownTapWithResolvedAttemptIsClosed_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptResolvedNotCharged, "")
+	res, start := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	if res.Closed != 1 || res.Warned != 0 {
+		t.Fatalf("result = %+v, want Closed=1 Warned=0", res)
+	}
+	e.wantClosed(t, "tap-1")
+	rows, err := e.dp.Db.Query(`SELECT state, reason, at FROM payment_leg_journal WHERE request_id = 'tap-1' ORDER BY seq DESC LIMIT 2`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []struct{ state, reason string }{{data.LegResolved, data.LegReasonAttemptSettled}, {data.LegWarned, data.LegReasonRestart}}
+	for i := 0; rows.Next(); i++ {
+		var s, r, at string
+		_ = rows.Scan(&s, &r, &at)
+		ts, _ := time.Parse(time.RFC3339Nano, at)
+		if s != want[i].state || r != want[i].reason || ts.Before(start) {
+			t.Fatalf("row %d = %s/%s at %s, want %s/%s after %s", i, s, r, at, want[i].state, want[i].reason, start)
+		}
+	}
+	e.wantNotListed(t, "tap-1")
+}
+
+// AC2
+func TestLegReconcile_UnknownTapChargedNoSaleAttemptIsClosedAttemptUntouched_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptApproved, data.AttemptReasonChargedNoSale)
+	before := e.attemptByKey(t, "tap-1")
+	res, _ := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	if res.Closed != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	e.wantClosed(t, "tap-1")
+	if after := e.attemptByKey(t, "tap-1"); after != before {
+		t.Fatalf("attempt changed: %+v -> %+v", before, after)
+	}
+	if n := e.refundCount(); n != 0 {
+		t.Fatalf("refund dispatched: %d", n)
+	}
+	e.wantNotListed(t, "tap-1")
+}
+
+// E4
+func TestLegReconcile_AskedTapWithCancelledOrDeclinedAttemptIsClosed_7027(t *testing.T) {
+	for _, att := range []string{data.AttemptCancelled, data.AttemptDeclined} {
+		for _, chain := range [][]string{{data.LegAsked}, {data.LegAsked, data.LegUnknown}} {
+			e := legRig(t)
+			e.seedAttempt(t, "tap-1", att, "")
+			res, _ := e.bootUnknown(t, "tap-1", chain...)
+			if res.Closed != 1 {
+				t.Fatalf("%s %v: result = %+v", att, chain, res)
+			}
+			e.wantClosed(t, "tap-1")
+		}
+	}
+}
+
+// AC7
+func TestLegReconcile_DecidedTapLegClosedOnceSecondBootNoop_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptResolvedNotCharged, "")
+	_, _ = e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	e.wantClosed(t, "tap-1")
+	rows := countRows(t, e.dp, "SELECT COUNT(*) FROM payment_leg_journal")
+	if res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute)); res != (LegReconcileResult{}) {
+		t.Fatalf("second boot = %+v, want zero", res)
+	}
+	if n := countRows(t, e.dp, "SELECT COUNT(*) FROM payment_leg_journal"); n != rows {
+		t.Fatalf("second boot appended %d rows", n-rows)
+	}
+	e.wantClosed(t, "tap-1")
+}
+
+// AC8
+func TestLegReconcile_ClosedTapLegLogsNoRefundWarning_7027(t *testing.T) {
+	e := legRig(t)
+	buf := &syncBuffer{}
+	t.Cleanup(logging.CaptureForTest(buf))
+	e.seedAttempt(t, "tap-1", data.AttemptResolvedNotCharged, "")
+	_, _ = e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	e.wantClosed(t, "tap-1")
+	out := buf.String()
+	if strings.Contains(out, "refund it there") {
+		t.Fatalf("closed leg logged the refund warning: %s", out)
+	}
+	if !strings.Contains(out, "tap-1") || !strings.Contains(out, data.AttemptResolvedNotCharged) {
+		t.Fatalf("no info line naming the id and attempt state: %s", out)
+	}
+}
+
+// AC3 (regression guard)
+func TestLegReconcile_UnknownTapWithOpenAttemptStaysTapRow_7027(t *testing.T) {
+	e := legRig(t)
+	e.orphan(t, "tap-1", "stripe") // attempt unknown/till_restarted
+	res, _ := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	if res.Warned != 1 || res.Closed != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegWarned || got.Reason != data.LegReasonRestart {
+		t.Fatalf("leg = %s/%s", got.State, got.Reason)
+	}
+	if l := e.listJSON(t); l.Data.Count != 1 {
+		t.Fatalf("json = %+v", l.Data)
+	}
+}
+
+// AC4, E3 (regression guard) and the reversing exemption
+func TestLegReconcile_ApprovedWithoutDecisionStaysListed_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptApproved, "")
+	res, _ := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	if res.Warned != 1 || res.Closed != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegWarned {
+		t.Fatalf("leg = %s, want warned", got.State)
+	}
+	if body := e.fragment(t, e.manager).Body.String(); !strings.Contains(body, `data-testid="pay-attention-row"`) {
+		t.Fatalf("not listed: %s", body)
+	}
+}
+
+func TestLegReconcile_ReversingLegWithDecidedAttemptStaysWarned_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptResolvedNotCharged, "")
+	res, _ := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegCaptured, data.LegReversing)
+	if res.Warned != 1 || res.Closed != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegWarned {
+		t.Fatalf("leg = %s, want warned", got.State)
+	}
+}
+
+// AC6 (regression guard)
+func TestLegReconcile_AttemptUnreadableUnknownLegIsWarned_7027(t *testing.T) {
+	e := legRig(t)
+	e.seedAttempt(t, "tap-1", data.AttemptResolvedNotCharged, "")
+	e.dropTable(t, "payment_attempts")
+	res, _ := e.bootUnknown(t, "tap-1", data.LegAsked, data.LegUnknown)
+	if res.Warned != 1 || res.Closed != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	ch := e.chain(t, "tap-1")
+	if ch[len(ch)-1] != data.LegWarned {
+		t.Fatalf("chain = %v, want ending warned with no resolved", ch)
 	}
 }
