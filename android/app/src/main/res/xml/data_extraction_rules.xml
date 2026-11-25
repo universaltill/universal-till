@@ -3,15 +3,23 @@
      local TLS key material out of cloud backup AND device-to-device transfer.
      The rest of the data dir may move; without secrets/install-id the new
      phone is detected as a restored install (internal/enroll/restored.go) and
-     asks to connect again. Paths are relative to filesDir. API 24-30 uses
-     backup_rules.xml. scripts/ci/guard-android-backup-rules.sh keeps both. -->
+     asks to connect again. ut-docs#6918: keys/ (the off-site backup key,
+     recovered by linking, the saved UTK1- key or a new key) and fiscal/ (the
+     signing-device credential, recovered by running signing-device setup
+     again) stay on this phone only. Paths are relative to filesDir. API 24-30
+     uses backup_rules.xml. scripts/ci/guard-android-backup-rules.sh keeps
+     both. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="secrets" />
         <exclude domain="file" path="tls" />
+        <exclude domain="file" path="keys" />
+        <exclude domain="file" path="fiscal" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="secrets" />
         <exclude domain="file" path="tls" />
+        <exclude domain="file" path="keys" />
+        <exclude domain="file" path="fiscal" />
     </device-transfer>
 </data-extraction-rules>

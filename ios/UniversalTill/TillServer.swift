@@ -31,10 +31,13 @@ enum TillServer {
 
     /// Creates the key folders (0700, as the Go side does) and marks each
     /// isExcludedFromBackup; the flag covers everything inside, including
-    /// files the Go side writes later. Re-applied on every launch because a
+    /// files the Go side writes later. keys/ holds the off-site backup key and
+    /// fiscal/ the signing-device credential (ut-docs#6918): neither may travel
+    /// in an iCloud backup or device transfer; they are linked or set up again
+    /// on the new device. Re-applied on every launch because a
     /// restore or an OS update can drop it.
     static func excludeSecretsFromBackup(in dir: URL) throws {
-        for name in ["secrets", "tls"] {
+        for name in ["secrets", "tls", "keys", "fiscal"] {
             var folder = dir.appendingPathComponent(name, isDirectory: true)
             try FileManager.default.createDirectory(
                 at: folder, withIntermediateDirectories: true,

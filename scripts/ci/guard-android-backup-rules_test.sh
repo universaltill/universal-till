@@ -8,7 +8,7 @@ set -euo pipefail
 
 # shellcheck source=scripts/ci/guard-test-sandbox.sh
 source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
-enter_guard_test_sandbox android/app/src/main internal/enroll
+enter_guard_test_sandbox android/app/src/main internal/enroll internal/offsitebackup internal/fiscal
 trap remove_guard_test_sandbox EXIT
 
 GUARD="scripts/ci/guard-android-backup-rules.sh"
@@ -16,6 +16,8 @@ MANIFEST="android/app/src/main/AndroidManifest.xml"
 EXTRACTION="android/app/src/main/res/xml/data_extraction_rules.xml"
 BACKUP="android/app/src/main/res/xml/backup_rules.xml"
 RESTORED="internal/enroll/restored.go"
+KEYSTORE="internal/offsitebackup/keystore.go"
+CREDSTORE="internal/fiscal/tse_credential_store.go"
 SERVICE="android/app/src/main/java/com/universaltill/pos/TillService.kt"
 FAIL_COUNT=0
 
@@ -23,7 +25,7 @@ FAIL_COUNT=0
 # Keep pristine copies so each case starts clean (the sandbox is a git repo
 # with everything staged, so restore from the index).
 restore_all() {
-  git checkout -q -- "${MANIFEST}" "${EXTRACTION}" "${BACKUP}" "${RESTORED}" "${SERVICE}" 2>/dev/null || true
+  git checkout -q -- "${MANIFEST}" "${EXTRACTION}" "${BACKUP}" "${RESTORED}" "${SERVICE}" "${KEYSTORE}" "${CREDSTORE}" 2>/dev/null || true
 }
 
 assert_passes() {
@@ -60,6 +62,16 @@ case_fails "extraction rules: an <include> added" "${EXTRACTION}" 's#</cloud-bac
 case_fails "backup rules: tls not excluded" "${BACKUP}" '/path="tls"/d'
 case_fails "backup rules: secrets not excluded" "${BACKUP}" '/path="secrets"/d'
 case_fails "backup rules: an <include> added" "${BACKUP}" 's#</full-backup-content>#<include domain="file" path="." /></full-backup-content>#'
+case_fails "extraction rules: keys not excluded (both blocks)" "${EXTRACTION}" '/path="keys"/d'
+case_fails "extraction rules: fiscal not excluded (both blocks)" "${EXTRACTION}" '/path="fiscal"/d'
+case_fails "backup rules: keys not excluded" "${BACKUP}" '/path="keys"/d'
+case_fails "backup rules: fiscal not excluded" "${BACKUP}" '/path="fiscal"/d'
+case_fails "off-site key dir moved out of keys/" "${KEYSTORE}" 's#paths\.Data\("keys"\)#paths.Data("state")#'
+case_fails "signing-device credential moved out of fiscal/" "${CREDSTORE}" 's#signingDeviceCredentialRelPath = \[\]string\{"fiscal",#signingDeviceCredentialRelPath = []string{"state",#'
+case_fails "legacy credential moved out of fiscal/" "${CREDSTORE}" 's#legacyTSECredentialRelPath = \[\]string\{"fiscal",#legacyTSECredentialRelPath = []string{"state",#'
+case_fails "off-site key dir moved, old path left in a comment" "${KEYSTORE}" 's#paths\.Data\("keys"\)#paths.Data("state")#;1i // paths.Data("keys")'
+case_fails "credential use moved off the RelPath var, old use in a comment" "${CREDSTORE}" 's#paths\.Data\(signingDeviceCredentialRelPath\.\.\.\)#paths.Data("state")#;1i // paths.Data(signingDeviceCredentialRelPath...)'
+case_fails "legacy credential use moved off the RelPath var" "${CREDSTORE}" 's#paths\.Data\(legacyTSECredentialRelPath\.\.\.\)#paths.Data("state")#'
 case_fails "install marker moved out of secrets/" "${RESTORED}" 's#\{"secrets", "install-id"\}#{"state", "install-id"}#'
 
 case_fails "data root no longer filesDir" "${SERVICE}" 's#Mobile\.start\(filesDir\.absolutePath\)#Mobile.start(getDir("till", 0).absolutePath)#'
