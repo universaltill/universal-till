@@ -34,6 +34,9 @@ const (
 
 	// LegReasonRestart is the reason boot writes on a leg it warns about.
 	LegReasonRestart = "till_restarted"
+	// LegReasonAttemptSettled: boot closed an unknown/asked tap leg whose
+	// payment attempt was already settled (ADR-0136 Decision 9.5, ut-docs#7027).
+	LegReasonAttemptSettled = "attempt_settled"
 	// LegReasonTapChargedNoSale: boot found a captured tap/phone leg with no
 	// sale; the customer was charged (ADR-0136 Decision 9.2, ut-docs#7028).
 	LegReasonTapChargedNoSale = "tap_charged_no_sale"
@@ -144,26 +147,43 @@ func (r *PaymentLegJournalRepo) Append(ctx context.Context, e LegEntry) error {
 	if err != nil {
 		return fmt.Errorf("%w: read: %v", ErrJournalWrite, err)
 	}
+	if _, err := appendTx(ctx, tx, cur, e, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: commit: %v", ErrJournalWrite, err)
+	}
+	return nil
+}
+
+// appendTx validates e against cur (the leg's newest row, read in tx) and
+// inserts it. It returns the new newest row; a same-state repeat writes
+// nothing and returns cur.
+func appendTx(ctx context.Context, tx *sql.Tx, cur, e LegEntry, now time.Time) (LegEntry, error) {
 	if cur.State == e.State {
-		return nil
+		return cur, nil
 	}
 	if !slices.Contains(legFrom[e.State], cur.State) {
-		return fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, e.State)
+		return cur, fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, e.State)
 	}
 	// captured -> warned exists only for a charged tap with no sale (ut-docs#7028).
 	if cur.State == LegCaptured && e.State == LegWarned && e.Reason != LegReasonTapChargedNoSale {
-		return fmt.Errorf("%w: %q -> %q needs reason %q", ErrLegJournalTransition, cur.State, e.State, LegReasonTapChargedNoSale)
+		return cur, fmt.Errorf("%w: %q -> %q needs reason %q", ErrLegJournalTransition, cur.State, e.State, LegReasonTapChargedNoSale)
 	}
 	// ...and the tap reason is written on no other move.
 	if e.Reason == LegReasonTapChargedNoSale && !(cur.State == LegCaptured && e.State == LegWarned) {
-		return fmt.Errorf("%w: reason %q is only for %q -> %q (not %q -> %q)", ErrLegJournalTransition, e.Reason, LegCaptured, LegWarned, cur.State, e.State)
+		return cur, fmt.Errorf("%w: reason %q is only for %q -> %q (not %q -> %q)", ErrLegJournalTransition, e.Reason, LegCaptured, LegWarned, cur.State, e.State)
+	}
+	// attempt_settled closes a leg boot already warned, and only that move (ut-docs#7027).
+	if e.Reason == LegReasonAttemptSettled && !(cur.State == LegWarned && e.State == LegResolved) {
+		return cur, fmt.Errorf("%w: reason %q is only for %q -> %q (not %q -> %q)", ErrLegJournalTransition, e.Reason, LegWarned, LegResolved, cur.State, e.State)
 	}
 	e.Ask = max(cur.Ask, 1)
 	if e.State == LegAsked {
 		e.Ask = cur.Ask + 1
 	}
 	if err := insertLeg(ctx, tx, e, now); err != nil {
-		return err
+		return cur, err
 	}
 	if e.State == LegAsked {
 		if _, err := tx.ExecContext(ctx, `
@@ -171,7 +191,46 @@ DELETE FROM payment_leg_journal WHERE request_id IN (
   SELECT j.request_id FROM payment_leg_journal j
   WHERE j.seq = (SELECT MAX(seq) FROM payment_leg_journal WHERE request_id = j.request_id)
     AND j.state IN (`+legTerminalSQL+`) AND j.at < ?)`, legTS(now.Add(-LegJournalRetention))); err != nil {
-			return fmt.Errorf("%w: sweep: %v", ErrJournalWrite, err)
+			return cur, fmt.Errorf("%w: sweep: %v", ErrJournalWrite, err)
+		}
+	}
+	e.Seq = 0
+	return e, nil
+}
+
+// AppendChain appends next in order, in one transaction, after the leg's
+// newest row, which must still be from (same Seq), else
+// ErrLegJournalTransition and nothing is written. Every step is checked as
+// Append checks it. All rows or none (ut-docs#7027). Every row is stamped
+// with the time of the call; a step's At is ignored.
+func (r *PaymentLegJournalRepo) AppendChain(ctx context.Context, from LegEntry, next ...LegEntry) error {
+	if len(next) == 0 {
+		return ErrLegJournalInvalid
+	}
+	for _, e := range next {
+		if e.RequestID == "" || e.MethodID == "" || e.AmountMinor < 0 || e.TipMinor < 0 || len(legFrom[e.State]) == 0 || e.State == LegAsked {
+			return ErrLegJournalInvalid
+		}
+	}
+	now := time.Now()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%w: begin: %v", ErrJournalWrite, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, err := latestLeg(ctx, tx, from.RequestID)
+	if err != nil {
+		return fmt.Errorf("%w: read: %v", ErrJournalWrite, err)
+	}
+	if cur.Seq != from.Seq {
+		return fmt.Errorf("%w: the leg changed since it was read", ErrLegJournalTransition)
+	}
+	for _, e := range next {
+		if e.RequestID != from.RequestID {
+			return ErrLegJournalInvalid
+		}
+		if cur, err = appendTx(ctx, tx, cur, e, now); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

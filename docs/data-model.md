@@ -114,7 +114,11 @@ tap/phone leg (ADR-0136 Decision 9.2, ut-docs#7028: the customer was charged and
 there is no sale; never refunded or sent to the provider, no attempt change; if
 no read shows a tap and either the attempt row or the plugin list could not be
 read it stays `captured` and the next boot decides), and warns
-`asked`/`unknown`/`reversing` legs without refunding or re-sending them. Chains
+`asked`/`unknown`/`reversing` legs without refunding or re-sending them, except an
+`asked`/`unknown` tap leg whose `payment_attempts` row is already decided
+(`resolved_not_charged`, `cancelled`, `declined`, or `approved` with reason
+`charged_no_sale`): that leg gets `warned` and `resolved` (reason `attempt_settled`) in
+one transaction and is not listed (ut-docs#7027). Chains
 whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
 roster.

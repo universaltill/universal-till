@@ -541,7 +541,7 @@
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
     "internal/pages/leg_reconcile.go": {
-      "sha256": "ac20d465fb42fc52462c3c74055c009a78e5c6385d3d095967fe427010624c3b"
+      "sha256": "4132d63a951270f0fd1c07137dff16f200dca22d5ac16b714378176816a5da70"
     },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"
