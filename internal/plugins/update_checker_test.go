@@ -71,6 +71,9 @@ func TestCheckForUpdatesFindsNewerVersion(t *testing.T) {
 	if u.PluginID != "com.test.upd" || u.InstalledVersion != "1.0.0" || u.AvailableVersion != "1.2.0" {
 		t.Fatalf("unexpected update: %+v", u)
 	}
+	if u.TrustTier != "verified" {
+		t.Fatalf("TrustTier = %q, want the catalogue tier verified", u.TrustTier)
+	}
 	if u.ArtifactHash != "bbb" {
 		t.Fatalf("sha256: prefix not stripped: %q", u.ArtifactHash)
 	}

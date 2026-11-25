@@ -165,7 +165,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "d41aa440e3044ed60ee085133f0491b8540c80f408029b1244549a6ae72b8d36",
+      "en": "78815be77e6e65b4a2ba6ac5793a213e4c8cccaee4d045b7fba8c687337d747c",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -631,7 +631,7 @@
       "sha256": "0e29a66c47462ee530560aae14ad4da5c257639d5c6e4eceacebc15607a810bf"
     },
     "internal/pages/plugins_page.go": {
-      "sha256": "774f99433bad34e0029d92944d2d11b75ad50a1ab6b30ad5689cb40981aa48e1"
+      "sha256": "2e36c0456554d6421694055c796387d75e6584290e0b5aebdbefc2336fe8f2e0"
     },
     "internal/pages/pos_value_gates.go": {
       "sha256": "93e5f123112a09d763a0b9a61acada59a93dac6413e4438d988bf9c04b4373c5"
@@ -1732,7 +1732,7 @@
       "sha256": "71460754b126e8347ceb9a2ff1542cc9a69da4065d72b54c39994fa6b8ad9b67"
     },
     "web/ui/pages/plugins.html": {
-      "sha256": "9b3ae048a045018218f26cfa665ada7b2847764da427c063aebe48ede4262a14"
+      "sha256": "f93b2d3830ff38e82043927ae271554f1ed64a95cabed66660877cb6e881e4ac"
     },
     "web/ui/pages/plugins_store.html": {
       "sha256": "eac6faa9e5e3d1d25c7d30915f2d2e24a49c447e16b451864774d709119da012"

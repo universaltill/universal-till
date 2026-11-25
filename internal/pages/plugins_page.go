@@ -143,6 +143,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			if isBundled {
 				hasUpdate, versionUnknown, latest = false, false, ""
 			}
+			trustLabelKey, trustHintKey := installedTrustKeys(row.TrustLevel)
 			item := map[string]any{
 				"bundled":          isBundled,
 				"mainControlled":   isBundled && d.SyncPrimaryURL(ctx) != "", // ADR-0194: on a satellite the main till switches it
@@ -153,6 +154,8 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				"version":          row.Version,
 				"enabled":          row.IsActive,
 				"trust":            row.TrustLevel,
+				"trustLabel":       httpx.T(loc, trustLabelKey),
+				"trustHint":        httpx.T(loc, trustHintKey),
 				"state":            row.InstallState,
 				"hasUpdate":        hasUpdate,
 				"latest":           latest,
@@ -190,6 +193,23 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			"pluginsJSON": template.JS(raw),
 		})(w, r)
 	})
+}
+
+// installedTrustKeys maps plugins.trust_level to the locale keys of the card
+// tag and its tooltip (ut-docs#6554), using the store badge's vocabulary.
+// Unknown or empty levels fall to "unverified": a label is never upgraded.
+// Exact match on purpose: a padded or re-cased "system" is not the bundled
+// level, so it fails closed to "unverified".
+func installedTrustKeys(level string) (label, hint string) {
+	switch level {
+	case "system":
+		return "plugins.trust.official", "plugins.trust.official_hint"
+	case "trusted", "verified":
+		return "plugins.trust.verified", "plugins.trust.verified_hint"
+	case "revoked":
+		return "plugins.trust.revoked", "plugins.trust.revoked_hint"
+	}
+	return "plugins.trust.unverified", "plugins.trust.unverified_hint"
 }
 
 // revocationNoticeText formats the card notice server-side so the template

@@ -22,7 +22,11 @@ type UpdateInfo struct {
 	ArtifactURL      string
 	ArtifactHash     string
 	DeviceArch       string
-	TrustTier        string
+	// TrustTier is the catalogue listing's raw trust tier. It is only emitted
+	// by GET /api/plugins/check-updates: install/update re-reads the tier via
+	// listingCatalogTier and maps it with marketplaceTrustTier (ut-docs#6549),
+	// so nothing here is persisted.
+	TrustTier string
 	// CanonicalType is the marketplace listing's plugin type (ADR-0002's
 	// 22-type taxonomy, e.g. "language", "theme") — carried through so a
 	// caller (StartPluginUpdateScheduler, ut-docs#1953) can decide whether
