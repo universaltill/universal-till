@@ -22,6 +22,12 @@
      the manager refunds at the provider. No Not charged, no reasons, no plain
      Mark as handled; nothing is sent to the payment service. Card taps are not
      paused while it is listed.
+     A .Refund row (ut-docs#7041: a provider refund journaled under a refund:
+     key) carries the original receipt number. .RefundNoReturn (the provider
+     refunded, the return was not recorded) says so and not to refund again;
+     other refund rows (the till restarted mid-refund) say the outcome is not
+     known. Both use the plain Mark as handled form; the PIN summary for the
+     first is pay.attention.refund.summary (chosen server side). Never Retry.
      The PIN dialog (elevation_prompt.html) is the confirmation, so there is no
      hx-confirm: its summary names the amount, the method and the double-refund
      warning. */}}
@@ -36,10 +42,11 @@
     <li class="pay-attn-row" data-testid="pay-attention-row" data-state="{{ .State }}">
       <div class="pay-attn-facts">
         <p class="pay-attn-head"><strong class="pay-attn-amount">{{ .Amount }}</strong>
-          <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .ChargedNoSale }}{{ T "pay.attention.state.charged_no_sale" }}{{ else if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
+          <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .RefundNoReturn }}{{ T "pay.attention.state.refund_no_return" }}{{ else if .ChargedNoSale }}{{ T "pay.attention.state.charged_no_sale" }}{{ else if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
         <p class="muted">{{ .Method }} &middot; {{ shortdatetime .At }}</p>
-        <p>{{ if .ChargedNoSale }}{{ T "pay.attention.explain.charged_no_sale" }}{{ else if .Tap }}{{ T "pay.attention.explain.tap" }}{{ else if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
+        <p>{{ if .RefundNoReturn }}{{ T "pay.attention.explain.refund_no_return" }}{{ else if .Refund }}{{ T "pay.attention.explain.refund_unconfirmed" }}{{ else if .ChargedNoSale }}{{ T "pay.attention.explain.charged_no_sale" }}{{ else if .Tap }}{{ T "pay.attention.explain.tap" }}{{ else if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
         {{ if .Reason }}<p class="muted">{{ .Reason }}</p>{{ end }}
+        {{ if .OriginalReceipt }}<p class="muted">{{ printf (T "pay.attention.original_receipt") .OriginalReceipt }}</p>{{ end }}
         {{ if .RefTail }}<p class="muted">{{ printf (T "pay.attention.reference") .RefTail }}</p>{{ end }}
         {{ if .Retryable }}<p id="pay-attn-check-{{ .N }}" class="tap-warning pay-attn-check">{{ T "pay.attention.check_first" }}</p>{{ end }}
       </div>

@@ -1859,3 +1859,82 @@ func TestLegReconcile_AttemptUnreadableUnknownLegIsWarned_7027(t *testing.T) {
 		t.Fatalf("chain = %v, want ending warned with no resolved", ch)
 	}
 }
+
+// --- ut-docs#7041: a refunded card whose return was not recorded ---
+
+// refundNoReturn journals a warned/refund_no_return refund leg for a real
+// original sale and returns its key and the original receipt number.
+func (e *legEnv) refundNoReturn(t *testing.T) (key, receipt string) {
+	t.Helper()
+	saleID, receipt := seedCompletedSaleForRefund(t, e.dp)
+	key = data.RefundLegKey(saleID, "cardpay", "att-1:abcd")
+	for _, s := range []string{data.LegAsked, data.LegCaptured, data.LegWarned} {
+		le := data.LegEntry{RequestID: key, State: s, MethodID: "cardpay", AmountMinor: 120, Currency: "EUR", TransactionRef: "re_123456789"}
+		if s == data.LegWarned {
+			le.Reason = data.LegReasonRefundNoReturn
+		}
+		if err := legRepo(e.dp).Append(context.Background(), le); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return key, receipt
+}
+
+func TestLegAttention_RefundNoReturnListedForManager(t *testing.T) {
+	e := legRig(t)
+	_, receipt := e.refundNoReturn(t)
+
+	frag := e.fragment(t, e.manager)
+	body := bodyText(frag)
+	for _, want := range []string{
+		enText(t, "pay.attention.state.refund_no_return"),
+		enText(t, "pay.attention.explain.refund_no_return"),
+		httpx.FormatMoneyInDisplay(120, "EUR", "en"),
+		"6789",
+		strings.Replace(enText(t, "pay.attention.original_receipt"), "%s", receipt, 1),
+		"/api/pay/legs/resolve",
+	} {
+		if frag.Code != 200 || !strings.Contains(body, want) {
+			t.Errorf("fragment lacks %q: %d %s", want, frag.Code, body)
+		}
+	}
+	if strings.Contains(body, "/api/pay/legs/retry") || strings.Contains(body, "re_123456789") {
+		t.Errorf("a refund row has no Retry and never shows the full reference: %s", body)
+	}
+	if rec := e.do(t, e.cashier, http.MethodGet, "/api/pay/attempts/attention", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier list = %d, want 403", rec.Code)
+	}
+	if f := e.fragment(t, e.cashier); strings.TrimSpace(f.Body.String()) != "" {
+		t.Fatalf("cashier fragment must be empty: %s", f.Body.String())
+	}
+}
+
+func TestLegAttention_ResolveRefundNoReturn(t *testing.T) {
+	e := legRig(t)
+	key, _ := e.refundNoReturn(t)
+
+	rec := e.resolve(t, e.manager, key, "", "")
+	e.wantElevationPrompt(t, rec)
+	if !strings.Contains(bodyText(rec), strings.Split(enText(t, "pay.attention.refund.summary"), "%s")[2]) {
+		t.Errorf("the PIN step is not the refund summary: %s", rec.Body.String())
+	}
+	if got := e.last(t, key); got.State != data.LegWarned {
+		t.Fatalf("an unauthorised resolve changed the journal: %s", got.State)
+	}
+
+	if rec := e.resolve(t, e.manager, key, dataAPITestManagerPIN, "noted"); rec.Code != 200 {
+		t.Fatalf("resolve = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.last(t, key); got.State != data.LegResolved || got.Reason != data.LegReasonManagerResolved {
+		t.Fatalf("leg = %s/%q", got.State, got.Reason)
+	}
+	if a := e.audit(t, "payment_leg_resolve"); len(a) != 1 {
+		t.Fatalf("audit events = %d, want 1", len(a))
+	}
+	if n := e.refundCount(); n != 0 {
+		t.Fatalf("Resolve dispatched %d refunds, want 0", n)
+	}
+	if strings.TrimSpace(e.fragment(t, e.manager).Body.String()) != "" {
+		t.Fatal("a resolved refund leg must leave the list")
+	}
+}

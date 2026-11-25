@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -17,6 +18,8 @@ const legReconcileMax = 500
 // LegReconcileResult counts what one ReconcilePaymentLegs pass did.
 type LegReconcileResult struct {
 	Reversed, ReverseFailed, Warned, TapLeftToManager, TapChargedNoSale int
+	// RefundNoReturn counts captured refund legs warned at boot (ut-docs#7041).
+	RefundNoReturn int
 	// Closed counts unknown/asked tap legs closed because their attempt was
 	// already decided (ut-docs#7027).
 	Closed int
@@ -71,7 +74,7 @@ func ReconcilePaymentLegs(ctx context.Context, d *common.Deps, startedAt time.Ti
 		}
 	}
 	if res != (LegReconcileResult{}) {
-		logging.L().Infof("payment legs: boot reconciliation: %d returned, %d could not be returned, %d need a human at the provider, %d charged tap payment(s) with no sale listed for a manager, %d tap payment(s) left captured, %d tap payment(s) already decided, closed (ut-docs#6653, ut-docs#7028, ut-docs#7027)", res.Reversed, res.ReverseFailed, res.Warned, res.TapChargedNoSale, res.TapLeftToManager, res.Closed)
+		logging.L().Infof("payment legs: boot reconciliation: %d returned, %d could not be returned, %d need a human at the provider, %d charged tap payment(s) with no sale listed for a manager, %d tap payment(s) left captured, %d tap payment(s) already decided, closed, %d refund(s) sent back with no return recorded listed for a manager (ut-docs#6653, ut-docs#7028, ut-docs#7027, ut-docs#7041)", res.Reversed, res.ReverseFailed, res.Warned, res.TapChargedNoSale, res.TapLeftToManager, res.Closed, res.RefundNoReturn)
 	}
 	return res
 }
@@ -132,6 +135,14 @@ func warnLeg(ctx context.Context, repo *data.PaymentLegJournalRepo, row data.Leg
 }
 
 func reconcileCaptured(ctx context.Context, d *common.Deps, row data.LegEntry, res *LegReconcileResult) {
+	// A captured refund leg: the provider refunded and the return never
+	// committed. Never reversed, re-sent or re-recorded (ADR-0136 9.8, ut-docs#7041).
+	if strings.HasPrefix(row.RequestID, data.LegRefundKeyPrefix) {
+		if warnRefundNoReturn(ctx, d, row, errors.New("the till stopped before the return was recorded")) {
+			res.RefundNoReturn++
+		}
+		return
+	}
 	// A payment_attempts row under the request id is proof of a tap; otherwise
 	// the method's plugin entry decides. No tap shown and a read failed: leave
 	// it captured (never reverse on doubt).

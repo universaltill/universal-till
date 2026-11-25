@@ -186,6 +186,10 @@ func TestSaleDetailPayments_StableOrderWhenPaidAtTies(t *testing.T) {
 // to payment.demopay.refund after the rig is built (keyed by the till DB).
 var refundErrOverrides sync.Map
 
+// refundRespOverrides: a test-set refund answer (raw JSON string, keyed by the
+// till DB) in place of the fake plugin's default (ut-docs#7041).
+var refundRespOverrides sync.Map
+
 // refundHookGates: a test-set func called before the fake plugin answers a
 // refund (keyed by the till DB), so it can block the provider call (#6742).
 var refundHookGates sync.Map

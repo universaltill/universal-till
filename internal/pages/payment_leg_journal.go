@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -128,4 +129,22 @@ func legFromRow(e data.LegEntry) pos.CapturedLeg {
 		Amount: money.FromMinor(e.AmountMinor), TransactionRef: e.TransactionRef,
 		TipAmount: money.FromMinor(e.TipMinor), ReaderRef: e.ReaderRef,
 	}
+}
+
+// warnRefundNoReturn appends warned/refund_no_return to a captured refund leg
+// and always logs a Problems item: the provider sent the money back to the
+// customer and no return sale is recorded. Best effort, it never changes an
+// HTTP answer. It reports whether the row was written (ADR-0136 Decision 9.8,
+// ut-docs#7041).
+func warnRefundNoReturn(ctx context.Context, d *common.Deps, e data.LegEntry, cause error) bool {
+	orig, _ := data.RefundLegOriginalSale(e.RequestID)
+	logging.L().Errorf("card refund SENT to the customer but the return was not recorded — method %q, amount %d %s, original sale %s, refund key %s, reference %s, cause: %v; listed under Payments needing attention (ADR-0136 Decision 9.8, ut-docs#7041)",
+		e.MethodID, e.AmountMinor, e.Currency, orig, e.RequestID, maskedLegRef(e.TransactionRef), cause)
+	next := e
+	next.State, next.Reason, next.At = data.LegWarned, data.LegReasonRefundNoReturn, time.Time{}
+	if err := data.NewPaymentLegJournalRepo(d.Db).Append(ctx, next); err != nil {
+		logging.L().Errorf("payment leg journal: could not record refund_no_return for %s: %v; the leg stays captured and the next start warns it (ut-docs#7041)", e.RequestID, err)
+		return false
+	}
+	return true
 }

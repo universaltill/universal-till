@@ -119,6 +119,9 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 				if refundErr != nil {
 					return nil, refundErr
 				}
+				if v, ok := refundRespOverrides.Load(dp.Db); ok {
+					return json.RawMessage(v.(string)), nil // ut-docs#7041
+				}
 				return json.RawMessage(`{"outcome":"refunded"}`), nil
 			}
 			return nil, nil

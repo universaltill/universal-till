@@ -65,6 +65,9 @@ type legAttentionDTO struct {
 	State          string `json:"state"`
 	Reason         string `json:"reason"`
 	TransactionRef string `json:"transaction_ref,omitempty"`
+	// OriginalSaleID is set for a refund leg (ut-docs#7041): the sale the
+	// provider refunded against, read from the leg's key.
+	OriginalSaleID string `json:"original_sale_id,omitempty"`
 	At             string `json:"at"`
 }
 
@@ -94,9 +97,10 @@ func legAttentionDTOs(ctx context.Context, d *common.Deps) ([]legAttentionDTO, e
 	}
 	out := make([]legAttentionDTO, 0, len(rows))
 	for _, e := range rows {
+		orig, _ := data.RefundLegOriginalSale(e.RequestID)
 		out = append(out, legAttentionDTO{
 			RequestID: e.RequestID, Method: e.MethodID, AmountMinor: money.FromMinor(e.AmountMinor).Minor(), Currency: e.Currency,
-			State: e.State, Reason: e.Reason, TransactionRef: maskedLegRef(e.TransactionRef), At: e.At.UTC().Format(time.RFC3339),
+			State: e.State, Reason: e.Reason, TransactionRef: maskedLegRef(e.TransactionRef), OriginalSaleID: orig, At: e.At.UTC().Format(time.RFC3339),
 		})
 	}
 	return out, nil
@@ -113,6 +117,9 @@ type legRow struct {
 	Retryable              bool
 	Tap                    bool // an open attempt shares the request id: settle by a decision (ut-docs#7025)
 	ChargedNoSale          bool // a charged tap with no sale (ut-docs#7028): one action, record it
+	Refund                 bool // a refund leg (ut-docs#7041)
+	RefundNoReturn         bool // the provider refunded, the return was not recorded (ut-docs#7041)
+	OriginalReceipt        string
 }
 
 // legCardView is the data of payment_attention.html.
@@ -125,8 +132,8 @@ type legCardView struct {
 
 func legReasonKey(reason string) string {
 	switch reason {
-	case data.LegReasonTapChargedNoSale:
-		return "" // the row's explanation carries the meaning (ut-docs#7028)
+	case data.LegReasonTapChargedNoSale, data.LegReasonRefundNoReturn:
+		return "" // the row's explanation carries the meaning (ut-docs#7028, ut-docs#7041)
 	case data.LegReasonRestart:
 		return "pay.attention.reason.till_restarted"
 	case data.LegReasonReversalFailed:
@@ -205,7 +212,13 @@ func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.
 		if k := legReasonKey(e.Reason); k != "" {
 			reason = httpx.T(locale, k)
 		}
+		_, isRefund := data.RefundLegOriginalSale(e.RequestID)
+		receipt := ""
+		if isRefund {
+			receipt = refundLegReceipt(ctx, d, e.RequestID)
+		}
 		rows = append(rows, legRow{
+			Refund: isRefund, RefundNoReturn: isRefundNoReturnLeg(e), OriginalReceipt: receipt,
 			N: i + 1, RequestID: e.RequestID, Amount: legAmount(e, locale), Method: method, Reason: reason,
 			RefTail: legRefTail(e.TransactionRef), State: e.State, At: e.At, Retryable: e.State == data.LegReverseFailed,
 			Tap: open[e.RequestID], ChargedNoSale: isChargedNoSaleLeg(e),
@@ -217,6 +230,26 @@ func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.
 // isChargedNoSaleLeg: boot found this tap leg captured with no sale (ut-docs#7028).
 func isChargedNoSaleLeg(e data.LegEntry) bool {
 	return e.State == data.LegWarned && e.Reason == data.LegReasonTapChargedNoSale
+}
+
+// isRefundNoReturnLeg: the provider refunded this card refund but the return
+// sale is not recorded (ut-docs#7041).
+func isRefundNoReturnLeg(e data.LegEntry) bool {
+	return e.State == data.LegWarned && e.Reason == data.LegReasonRefundNoReturn
+}
+
+// refundLegReceipt is the original sale's receipt number for a refund leg key,
+// "" when it cannot be read: the card never fails for it.
+func refundLegReceipt(ctx context.Context, d *common.Deps, key string) string {
+	id, ok := data.RefundLegOriginalSale(key)
+	if !ok {
+		return ""
+	}
+	detail, found, err := data.NewPOSRepo(d.Db).GetSaleDetailByID(ctx, id)
+	if err != nil || !found {
+		return ""
+	}
+	return detail.ReceiptNo
 }
 
 // legSummary is the PIN dialog's description of the action: amount and method.
@@ -323,6 +356,9 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 		}
 		if action == "resolve" && isChargedNoSaleLeg(cur) {
 			summaryKey = "pay.attention.charged_no_sale.summary" // core confirmed the charge: no broker wording
+		}
+		if action == "resolve" && isRefundNoReturnLeg(cur) {
+			summaryKey = "pay.attention.refund.summary" // money already went back: never invite a second refund (ut-docs#7041)
 		}
 		hidden := []elevationHiddenField{{Name: "request_id", Value: id}}
 		if extra != nil {

@@ -40,6 +40,11 @@ const (
 	// LegReasonTapChargedNoSale: boot found a captured tap/phone leg with no
 	// sale; the customer was charged (ADR-0136 Decision 9.2, ut-docs#7028).
 	LegReasonTapChargedNoSale = "tap_charged_no_sale"
+	// LegReasonRefundNoReturn: a provider refund was sent back to the customer
+	// but the return sale is not recorded (ADR-0136 Decision 9.8, ut-docs#7041).
+	LegReasonRefundNoReturn = "refund_no_return"
+	// LegRefundKeyPrefix starts the journal key of a refund leg.
+	LegRefundKeyPrefix = "refund:"
 	// ut-docs#6653 slice 3: why a leg is reverse_failed or resolved.
 	LegReasonMainTillOnly    = "main_till_only"
 	LegReasonReversalFailed  = "reversal_failed"
@@ -82,6 +87,23 @@ var legFrom = map[string][]string{
 // legTerminal: chains whose newest state is one of these are swept after
 // LegJournalRetention. warned and reverse_failed are never swept.
 const legTerminalSQL = `'settled','reversed','declined','resolved'`
+
+// RefundLegKey is the journal key of a refund leg: the tap refund key
+// `refund:<original sale id>:<method>:<request id>` (ut-docs#7041).
+func RefundLegKey(saleID, method, requestID string) string {
+	return LegRefundKeyPrefix + saleID + ":" + method + ":" + requestID
+}
+
+// RefundLegOriginalSale is the original sale id inside a refund leg key;
+// false for any other key.
+func RefundLegOriginalSale(key string) (string, bool) {
+	rest, ok := strings.CutPrefix(key, LegRefundKeyPrefix)
+	if !ok {
+		return "", false
+	}
+	id, _, _ := strings.Cut(rest, ":")
+	return id, id != ""
+}
 
 // LegEntry is one journal row.
 type LegEntry struct {
@@ -166,9 +188,14 @@ func appendTx(ctx context.Context, tx *sql.Tx, cur, e LegEntry, now time.Time) (
 	if !slices.Contains(legFrom[e.State], cur.State) {
 		return cur, fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, e.State)
 	}
-	// captured -> warned exists only for a charged tap with no sale (ut-docs#7028).
-	if cur.State == LegCaptured && e.State == LegWarned && e.Reason != LegReasonTapChargedNoSale {
-		return cur, fmt.Errorf("%w: %q -> %q needs reason %q", ErrLegJournalTransition, cur.State, e.State, LegReasonTapChargedNoSale)
+	// captured -> warned exists only for a charged tap with no sale (ut-docs#7028)
+	// or a refunded card whose return was not recorded (ut-docs#7041).
+	if cur.State == LegCaptured && e.State == LegWarned && e.Reason != LegReasonTapChargedNoSale && e.Reason != LegReasonRefundNoReturn {
+		return cur, fmt.Errorf("%w: %q -> %q needs reason %q or %q", ErrLegJournalTransition, cur.State, e.State, LegReasonTapChargedNoSale, LegReasonRefundNoReturn)
+	}
+	// ...and refund_no_return is written on no other move.
+	if e.Reason == LegReasonRefundNoReturn && !(cur.State == LegCaptured && e.State == LegWarned) {
+		return cur, fmt.Errorf("%w: reason %q is only for %q -> %q (not %q -> %q)", ErrLegJournalTransition, e.Reason, LegCaptured, LegWarned, cur.State, e.State)
 	}
 	// ...and the tap reason is written on no other move.
 	if e.Reason == LegReasonTapChargedNoSale && !(cur.State == LegCaptured && e.State == LegWarned) {

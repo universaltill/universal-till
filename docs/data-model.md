@@ -123,6 +123,22 @@ whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
 roster.
 
+A provider **refund** is a leg too (ADR-0136 Decision 9.8, ut-docs#7041): its
+`request_id` is `refund:<original sale id>:<method>:<refund request id>` (the
+refund's provider idempotency key; a refund with no request id gets a minted
+one), so it never collides with an authorize id and the original sale is read
+from the key (`data.RefundLegKey` / `RefundLegOriginalSale`). `asked` is written
+before the refund hook (fail closed), `captured` on approval with the plugin's
+`transaction_ref` when it reports one, `unknown`/`declined` on a provider
+answer (the cashier's retry re-asks under the same key, `ask` + 1), and `settled`
+inside the return sale's `CompleteSale` transaction. If the return does not
+commit after the provider refunded, `/api/refund` appends `warned` with reason
+`refund_no_return` at once, and boot does the same for a `captured` refund leg;
+a refund leg is never reversed, re-sent or re-recorded. A key already `captured`, `warned`
+or `resolved` is refused before the provider is asked. Cash and hookless
+refunds write nothing. No migration: `refund_no_return` is a reason on the
+existing `captured -> warned` move.
+
 *Attention list, Retry and Resolve (ut-docs#6653 slice 3, Decision 9.6; no
 migration, every move is an INSERT in the 9.2 set).* A manager (permission
 `refund`) sees the legs whose newest row is `reverse_failed` or `warned`, oldest
