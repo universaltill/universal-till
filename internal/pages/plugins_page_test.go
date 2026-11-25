@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -79,6 +80,8 @@ type pluginsManagerItem struct {
 	HasUpdate      bool   `json:"hasUpdate"`
 	VersionUnknown bool   `json:"versionUnknown"`
 	Bundled        bool   `json:"bundled"`
+	TrustLabel     string `json:"trustLabel"`
+	TrustHint      string `json:"trustHint"`
 }
 
 // An installed, enabled plugin with an active page entry using the reserved
@@ -449,6 +452,62 @@ func TestPluginsPage_GatedSlotDocsEntryFollowsRoleGate_3994(t *testing.T) {
 		}
 		if got.DocsRoute != tc.want {
 			t.Errorf("%s: docsRoute = %q, want %q", tc.name, got.DocsRoute, tc.want)
+		}
+	}
+}
+
+// ut-docs#6554: the card tag is a translated label, never the raw DB word.
+func TestPluginsPage_TrustTagIsTranslatedLabel_6554(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	cases := []struct{ id, level, key string }{
+		{"com.x.untrusted", "untrusted", "unverified"},
+		{"com.x.trusted", "trusted", "verified"},
+		{"com.x.verified", "verified", "verified"},
+		{"com.x.system", "system", "official"},
+		{"com.x.revoked", "revoked", "revoked"},
+		{"com.x.weird", "weird", "unverified"},
+	}
+	for _, c := range cases {
+		seedTestPlugin(t, d.Db, c.id, c.id, "1.0.0")
+		if _, err := d.Db.Exec(`UPDATE plugins SET trust_level = ? WHERE id = ?`, c.level, c.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+	items := pluginsManagerJSON(t, mux)
+	for _, c := range cases {
+		got, ok := items[c.id]
+		if !ok {
+			t.Fatalf("%s missing from payload", c.id)
+		}
+		wantLabel := httpx.T("en", "plugins.trust."+c.key)
+		wantHint := httpx.T("en", "plugins.trust."+c.key+"_hint")
+		if got.TrustLabel != wantLabel || got.TrustHint != wantHint || wantLabel == "" || strings.HasPrefix(wantLabel, "plugins.") {
+			t.Errorf("%s (%s): label=%q hint=%q, want %q / %q", c.id, c.level, got.TrustLabel, got.TrustHint, wantLabel, wantHint)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `x-text="p.trustLabel"`) || strings.Contains(body, `x-text="p.trust"`) {
+		t.Error("card tag must render p.trustLabel, not the raw p.trust")
+	}
+}
+
+func TestInstalledTrustKeys(t *testing.T) {
+	cases := map[string]string{
+		"system": "plugins.trust.official", " System ": "plugins.trust.official",
+		"trusted": "plugins.trust.verified", "verified": "plugins.trust.verified",
+		"revoked": "plugins.trust.revoked", "untrusted": "plugins.trust.unverified",
+		"": "plugins.trust.unverified", "official": "plugins.trust.unverified",
+	}
+	for in, want := range cases {
+		label, hint := installedTrustKeys(in)
+		if label != want || hint != want+"_hint" {
+			t.Errorf("installedTrustKeys(%q) = %q,%q want %q", in, label, hint, want)
 		}
 	}
 }

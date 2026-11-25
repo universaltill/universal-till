@@ -67,7 +67,7 @@
                next check turns it off again). Same word as the notice. */}}
           <span class="tag" x-show="p.revoked"
                 style="background:rgba(220,38,38,.12); color:var(--danger)">{{ T "plugins.manage.revoked" }} ⚠</span>
-          <span class="tag" x-text="p.trust"></span>
+          <span class="tag" x-text="p.trustLabel" :title="p.trustHint" data-testid="plugin-trust-tag"></span>
           <span class="tag" x-show="p.mainControlled" data-testid="plugin-main-controlled">{{ T "plugins.manage.main_till_controls" }}</span>
           <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
           {{/* ut-docs#2131: a plugin the till couldn't resolve against the

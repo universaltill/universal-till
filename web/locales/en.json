@@ -1962,6 +1962,8 @@
   "plugins.trust.level_updated": "Trust level updated",
   "plugins.trust.official": "Universal Till",
   "plugins.trust.official_hint": "Built and maintained by Universal Till",
+  "plugins.trust.revoked": "Not trusted",
+  "plugins.trust.revoked_hint": "Marked as not trusted on this till",
   "plugins.trust.unverified": "Unverified",
   "plugins.trust.unverified_hint": "Publisher not verified by the marketplace",
   "plugins.trust.verified": "Verified",
