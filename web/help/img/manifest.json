@@ -640,7 +640,7 @@
       "sha256": "7526d4d57a0652b0e92eeb90b603ceb1355a74d10f012ffcca8b463684468c0f"
     },
     "internal/pages/reader_relay.go": {
-      "sha256": "420e35340ce1be699e1be06855d2a2be0bde4ed56239fade6267d85d3ad0170b"
+      "sha256": "74277298b9970d1c4fbeb66860344845791a651410c7ce219c71618965235166"
     },
     "internal/pages/receipt_designer.go": {
       "sha256": "ccc77e85e8fe77a281cf8cb79702ada3b9be86fb5a42172f4048fd4c25189451"
