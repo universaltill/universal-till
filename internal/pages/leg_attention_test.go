@@ -825,6 +825,24 @@ func TestTapAttentionResolve_ClosesWarnedLeg_7025(t *testing.T) {
 	e.wantGateLifted(t)
 }
 
+// AC2: no journal leg means no leg_state in the audit (not an empty one).
+func TestTapAttentionResolve_AuditOmitsLegStateWithoutLeg_7025(t *testing.T) {
+	e := legRig(t)
+	e.orphan(t, "tap-1", "stripe")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	rec := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"leg_resolved":false`) {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	a := e.audit(t, "tap_resolve")
+	if len(a) != 1 {
+		t.Fatalf("tap_resolve audit = %+v", a)
+	}
+	if v, ok := a[0]["leg_state"]; ok {
+		t.Fatalf("leg_state = %#v, want absent when no leg was found", v)
+	}
+}
+
 // AC2: the money decision stands when the journal cannot be written.
 func TestTapAttentionResolve_JournalFailureStillSettles_7025(t *testing.T) {
 	e := legRig(t)
@@ -847,6 +865,35 @@ func TestTapAttentionResolve_JournalFailureStillSettles_7025(t *testing.T) {
 	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 || strings.Contains(body, "pay-attention-tap-form") {
 		t.Fatalf("the stale leg must stay listed as a plain row: %s", body)
 	}
+}
+
+// AC2: the card route's twin: the settle stands when the journal write fails.
+func TestLegResolve_TapRowJournalFailureStillSettles_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	if _, err := e.dp.Db.Exec(`CREATE TRIGGER no_resolved BEFORE INSERT ON payment_leg_journal WHEN NEW.state = 'resolved' BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.journal_failed")
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptResolvedNotCharged {
+		t.Fatalf("attempt = %s", a.State)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegWarned {
+		t.Fatalf("leg = %s, want still warned", got.State)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("tap_resolve audits = %d", n)
+	}
+	body := e.fragment(t, e.manager).Body.String()
+	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 || strings.Contains(body, "pay-attention-tap-form") {
+		t.Fatalf("the stale leg must stay listed as a plain row: %s", body)
+	}
+	e.wantGateLifted(t)
 }
 
 // AC3
@@ -1122,5 +1169,42 @@ func TestTapLegSettle_ConcurrentBothPaths_7025(t *testing.T) {
 	rec = e.resolveAttn(t, e.manager, "tap-3", "not_charged", "", dataAPITestManagerPIN)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "settled") {
 		t.Fatalf("json second = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// AC6, reverse order: the card route is in the broker call, the JSON route arrives.
+func TestTapLegSettle_ConcurrentCardFirstThenJSON_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.broker.setOnCall(func(p string) {
+		if strings.HasSuffix(p, "/session_status") {
+			once.Do(func() { close(entered); <-release })
+		}
+	})
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "") }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the first settle never reached the broker")
+	}
+	second := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN)
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "in_progress") {
+		close(release)
+		t.Fatalf("concurrent JSON settle = %d, want 409 in_progress %s", second.Code, second.Body.String())
+	}
+	close(release)
+	if rec := <-first; rec.Code != 200 {
+		t.Fatalf("first settle = %d %s", rec.Code, rec.Body.String())
+	}
+	if n := countRows(t, e.dp, `SELECT COUNT(*) FROM payment_leg_journal WHERE request_id = 'tap-1' AND state = 'resolved'`); n != 1 {
+		t.Fatalf("resolved rows = %d", n)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("tap_resolve audits = %d", n)
 	}
 }

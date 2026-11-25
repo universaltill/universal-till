@@ -324,7 +324,11 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			// The money decision never waits on the journal.
 			logging.L().Errorf("tap attention resolve: journal leg %s: %v (ut-docs#7025)", key, legErr)
 		}
-		res := settleAttentionAttempt(r, d, elev, key, decision, reason, map[string]any{"source": "api", "leg_state": cur.State})
+		extra := map[string]any{"source": "api"}
+		if legErr == nil && legFound {
+			extra["leg_state"] = cur.State
+		}
+		res := settleAttentionAttempt(r, d, elev, key, decision, reason, extra)
 		if res.Status != 0 {
 			fail(res.Status, res.Code, res.MsgKey)
 			return
