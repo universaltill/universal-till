@@ -104,6 +104,11 @@ type attentionAttemptDTO struct {
 	Last4             string `json:"last4,omitempty"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
+	// LegState is the journal leg's newest state ("warned"/"reverse_failed")
+	// when the same payment also has a leg needing attention: the payment is
+	// described once, here, and that leg is left out of the list's legs
+	// (ut-docs#7025). Absent when the attempt has no such leg.
+	LegState string `json:"leg_state,omitempty"`
 }
 
 func attentionDTO(a data.PaymentAttempt) attentionAttemptDTO {
@@ -116,6 +121,117 @@ func attentionDTO(a data.PaymentAttempt) attentionAttemptDTO {
 
 func writeAttentionError(w http.ResponseWriter, status int, locale, code, key string) {
 	writeJSON(w, status, map[string]any{"data": nil, "error": map[string]string{"code": code, "message": httpx.T(locale, key)}})
+}
+
+// attentionSettle is settleAttentionAttempt's answer: Status 0 on success;
+// otherwise the HTTP status, the error code and the locale key to show.
+type attentionSettle struct {
+	State, Outcome, BrokerWord string
+	Status                     int
+	Code, MsgKey               string
+}
+
+// settleAttentionAttempt settles an attempt needing attention by the ADR-0198
+// §6.8 rules (ut-docs#6795, #7025): the broker is asked first (cancel-then-
+// assess for not_charged), not_charged is refused while it says paid, a
+// broker-less override needs a reason, the attempt is marked, audited
+// (tap_resolve, context needs_attention) and the native reader released. The
+// caller holds tapLegInFlight(key), has an elevated step-up and has checked
+// decision is not_charged or charged_refund_at_provider. extra is merged into
+// the audit payload (it never overrides the core's own keys). Both the JSON
+// resolve and the Settings card's tap row call it, so the rules have one home.
+func settleAttentionAttempt(r *http.Request, d *common.Deps, elev elevationCheck, key, decision, reason string, extra map[string]any) attentionSettle {
+	repo := data.NewPaymentAttemptRepo(d.Db)
+	a, found, err := repo.Get(r.Context(), key)
+	if err != nil {
+		logging.L().Errorf("tap attention resolve: %v", err)
+		return attentionSettle{Status: http.StatusInternalServerError, Code: "attempts_unreadable", MsgKey: "common.error.server"}
+	}
+	if !found {
+		return attentionSettle{Status: http.StatusNotFound, Code: "not_found", MsgKey: "tap.attention.gone"}
+	}
+	switch {
+	case staffLockedKeys(d)[key]:
+		return attentionSettle{Status: http.StatusConflict, Code: "in_progress", MsgKey: "tap.attention.in_progress"}
+	case a.State != data.AttemptPending && a.State != data.AttemptUnknown:
+		return attentionSettle{Status: http.StatusConflict, Code: "settled", MsgKey: "tap.attention.gone"}
+	case !a.NeedsAttention(time.Now()):
+		return attentionSettle{Status: http.StatusConflict, Code: "in_progress", MsgKey: "tap.attention.in_progress"}
+	}
+
+	// Ask the broker first; its answer decides what may be chosen. A
+	// cancel that finds the intent paid turns the verdict to paid.
+	ctx := context.WithoutCancel(r.Context())
+	f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: a.Key})
+	if decision == "not_charged" {
+		f = tapCancelThenAssess(ctx, d, f)
+	}
+	override := !f.BrokerOK || f.Verdict == tapPending
+	brand, last4 := pos.SafeCardFacts(f.Status.CardBrand, f.Status.Last4)
+
+	var mode, outcome, newState string
+	var upd data.AttemptUpdate
+	nativeOutcome := devicepay.OutcomeNotCharged
+	switch {
+	case !override && (f.Verdict == tapPaid || f.Verdict == tapMismatch) && decision == "not_charged":
+		// A wrong "not charged" double-charges: refused while the broker says paid.
+		return attentionSettle{Status: http.StatusConflict, Code: "broker_says_paid", MsgKey: "tap.resolve.broker_says_paid"}
+	case !override && f.Verdict == tapNotPaid && decision == "charged_refund_at_provider":
+		return attentionSettle{Status: http.StatusConflict, Code: "nothing_to_approve", MsgKey: "tap.resolve.nothing_to_approve"}
+	case !override && decision == "charged_refund_at_provider":
+		mode, outcome, newState = "broker", "charged_no_sale", data.AttemptApproved
+		upd = data.AttemptUpdate{PIID: f.Status.PaymentIntentID, CardBrand: brand, Last4: last4, Reason: data.AttemptReasonChargedNoSale}
+		nativeOutcome = devicepay.OutcomeCharged
+	case !override:
+		mode, outcome, newState = "broker", "not_charged", data.AttemptResolvedNotCharged
+		upd = data.AttemptUpdate{Reason: "manager_resolved"}
+	default:
+		if !tapResolveReasons[reason] {
+			return attentionSettle{Status: http.StatusUnprocessableEntity, Code: "reason_required", MsgKey: "tap.resolve.reason_required"}
+		}
+		mode = "manager_override"
+		if decision == "charged_refund_at_provider" {
+			outcome, newState = "charged_no_sale", data.AttemptApproved
+			upd = data.AttemptUpdate{PIID: f.Status.PaymentIntentID, CardBrand: brand, Last4: last4, Reason: data.AttemptReasonChargedNoSale}
+			nativeOutcome = devicepay.OutcomeCharged
+		} else {
+			outcome, newState = "not_charged", data.AttemptResolvedNotCharged
+			upd = data.AttemptUpdate{Reason: "manager_override"}
+		}
+	}
+	// Never touches d.Engine: there is no sale to finish or unlock.
+	if err := repo.Mark(ctx, key, newState, upd); err != nil {
+		if err == data.ErrAttemptSettled {
+			return attentionSettle{Status: http.StatusConflict, Code: "settled", MsgKey: "tap.attention.gone"}
+		}
+		logging.L().Errorf("tap attention resolve: mark: %v", err)
+		return attentionSettle{Status: http.StatusInternalServerError, Code: "attempts_unreadable", MsgKey: "common.error.server"}
+	}
+	p := map[string]any{
+		"decision": decision, "outcome": outcome, "mode": mode, "broker_status": f.brokerWord(),
+		"amount_minor": a.AmountMinor, "currency": a.Currency, "attempt_state": a.State,
+		"manager_id": elev.ApproverID, "reason_text": httpx.T("en", "tap.resolve.audit_reason"),
+		"context": "needs_attention",
+	}
+	if reason != "" {
+		p["reason"] = reason
+	}
+	if f.ErrCode != "" {
+		p["broker_error"] = f.ErrCode
+	}
+	if f.Status.AmountReceivedMinor != 0 {
+		p["received_minor"] = f.Status.AmountReceivedMinor
+	}
+	for k, v := range extra {
+		if _, own := p[k]; !own {
+			p[k] = v
+		}
+	}
+	settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_attempt", key, "tap_resolve", p)
+	f.Attempt, f.HaveRow = a, true
+	tellNativeResolver(ctx, r, f, nativeOutcome)
+	return attentionSettle{State: newState, Outcome: outcome, BrokerWord: f.brokerWord()}
+
 }
 
 func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
@@ -148,6 +264,22 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			writeAttentionError(w, http.StatusInternalServerError, locale, "legs_unreadable", "common.error.server")
 			return
 		}
+		// ut-docs#7025: a payment is described once. A leg whose request id is a
+		// listed attempt's key is that attempt's journal record: it moves into the
+		// attempt as leg_state instead of being listed again.
+		byKey := make(map[string]int, len(out))
+		for i, a := range out {
+			byKey[a.Key] = i
+		}
+		kept := legs[:0]
+		for _, l := range legs {
+			if i, ok := byKey[l.RequestID]; ok {
+				out[i].LegState = l.State
+				continue
+			}
+			kept = append(kept, l)
+		}
+		legs = kept
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"attempts": out, "count": len(out), "legs": legs, "legs_count": len(legs)}, "error": nil})
 	})
 
@@ -184,102 +316,29 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer tapLegInFlight.release(key)
-		repo := data.NewPaymentAttemptRepo(d.Db)
-		a, found, err := repo.Get(r.Context(), key)
-		if err != nil {
-			logging.L().Errorf("tap attention resolve: %v", err)
-			fail(http.StatusInternalServerError, "attempts_unreadable", "common.error.server")
+		// The leg guard is held; the journal leg (if any) is read under it so the
+		// settle and the journal close are one decision (ut-docs#7025).
+		legRepo := data.NewPaymentLegJournalRepo(d.Db)
+		cur, legFound, legErr := legRepo.Latest(r.Context(), key)
+		if legErr != nil {
+			// The money decision never waits on the journal.
+			logging.L().Errorf("tap attention resolve: journal leg %s: %v (ut-docs#7025)", key, legErr)
+		}
+		res := settleAttentionAttempt(r, d, elev, key, decision, reason, map[string]any{"source": "api", "leg_state": cur.State})
+		if res.Status != 0 {
+			fail(res.Status, res.Code, res.MsgKey)
 			return
 		}
-		if !found {
-			fail(http.StatusNotFound, "not_found", "tap.attention.gone")
-			return
-		}
-		switch {
-		case staffLockedKeys(d)[key]:
-			fail(http.StatusConflict, "in_progress", "tap.attention.in_progress")
-			return
-		case a.State != data.AttemptPending && a.State != data.AttemptUnknown:
-			fail(http.StatusConflict, "settled", "tap.attention.gone")
-			return
-		case !a.NeedsAttention(time.Now()):
-			fail(http.StatusConflict, "in_progress", "tap.attention.in_progress")
-			return
-		}
-
-		// Ask the broker first; its answer decides what may be chosen. A
-		// cancel that finds the intent paid turns the verdict to paid.
-		ctx := context.WithoutCancel(r.Context())
-		f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: a.Key})
-		if decision == "not_charged" {
-			f = tapCancelThenAssess(ctx, d, f)
-		}
-		override := !f.BrokerOK || f.Verdict == tapPending
-		brand, last4 := pos.SafeCardFacts(f.Status.CardBrand, f.Status.Last4)
-
-		var mode, outcome, newState string
-		var upd data.AttemptUpdate
-		nativeOutcome := devicepay.OutcomeNotCharged
-		switch {
-		case !override && (f.Verdict == tapPaid || f.Verdict == tapMismatch) && decision == "not_charged":
-			// A wrong "not charged" double-charges: refused while the broker says paid.
-			fail(http.StatusConflict, "broker_says_paid", "tap.resolve.broker_says_paid")
-			return
-		case !override && f.Verdict == tapNotPaid && decision == "charged_refund_at_provider":
-			fail(http.StatusConflict, "nothing_to_approve", "tap.resolve.nothing_to_approve")
-			return
-		case !override && decision == "charged_refund_at_provider":
-			mode, outcome, newState = "broker", "charged_no_sale", data.AttemptApproved
-			upd = data.AttemptUpdate{PIID: f.Status.PaymentIntentID, CardBrand: brand, Last4: last4, Reason: data.AttemptReasonChargedNoSale}
-			nativeOutcome = devicepay.OutcomeCharged
-		case !override:
-			mode, outcome, newState = "broker", "not_charged", data.AttemptResolvedNotCharged
-			upd = data.AttemptUpdate{Reason: "manager_resolved"}
-		default:
-			if !tapResolveReasons[reason] {
-				fail(http.StatusUnprocessableEntity, "reason_required", "tap.resolve.reason_required")
-				return
-			}
-			mode = "manager_override"
-			if decision == "charged_refund_at_provider" {
-				outcome, newState = "charged_no_sale", data.AttemptApproved
-				upd = data.AttemptUpdate{PIID: f.Status.PaymentIntentID, CardBrand: brand, Last4: last4, Reason: data.AttemptReasonChargedNoSale}
-				nativeOutcome = devicepay.OutcomeCharged
+		legResolved := false
+		if legErr == nil && legFound && (cur.State == data.LegWarned || cur.State == data.LegReverseFailed) {
+			if err := appendLegResolved(context.WithoutCancel(r.Context()), legRepo, cur); err != nil {
+				logging.L().Errorf("tap attention resolve: attempt %s settled but its journal leg is still listed: %v (ut-docs#7025)", key, err)
 			} else {
-				outcome, newState = "not_charged", data.AttemptResolvedNotCharged
-				upd = data.AttemptUpdate{Reason: "manager_override"}
+				legResolved = true
 			}
 		}
-		// Never touches d.Engine: there is no sale to finish or unlock.
-		if err := repo.Mark(ctx, key, newState, upd); err != nil {
-			if err == data.ErrAttemptSettled {
-				fail(http.StatusConflict, "settled", "tap.attention.gone")
-				return
-			}
-			logging.L().Errorf("tap attention resolve: mark: %v", err)
-			fail(http.StatusInternalServerError, "attempts_unreadable", "common.error.server")
-			return
-		}
-		p := map[string]any{
-			"decision": decision, "outcome": outcome, "mode": mode, "broker_status": f.brokerWord(),
-			"amount_minor": a.AmountMinor, "currency": a.Currency, "attempt_state": a.State,
-			"manager_id": elev.ApproverID, "reason_text": httpx.T("en", "tap.resolve.audit_reason"),
-			"context": "needs_attention",
-		}
-		if reason != "" {
-			p["reason"] = reason
-		}
-		if f.ErrCode != "" {
-			p["broker_error"] = f.ErrCode
-		}
-		if f.Status.AmountReceivedMinor != 0 {
-			p["received_minor"] = f.Status.AmountReceivedMinor
-		}
-		settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_attempt", key, "tap_resolve", p)
-		f.Attempt, f.HaveRow = a, true
-		tellNativeResolver(ctx, r, f, nativeOutcome)
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-			"key": key, "state": newState, "outcome": outcome, "broker_status": f.brokerWord(),
+			"key": key, "state": res.State, "outcome": res.Outcome, "broker_status": res.BrokerWord, "leg_resolved": legResolved,
 		}, "error": nil})
 	})
 }

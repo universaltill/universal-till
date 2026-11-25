@@ -37,6 +37,7 @@ var unboundedRoutes = []struct{ pattern, why string }{
 	{"POST /api/catalog/export-save", "writes the whole catalogue to disk"},
 	{"POST /api/update/apply", "downloads, verifies and applies a self-update, then restarts"},
 	{"POST /api/setup/update-apply", "same as /api/update/apply, from the setup wizard"},
+	{"POST /api/pay/legs/resolve", "a tap row asks the payment broker (status, cancel, status: up to about 45 s) before it settles (ut-docs#7025)"},
 	{"/api/pos/tender", "payment gate waits on a card terminal; plugins.paymentGateTimeout is 30 s (wasm_runtime.go)"},
 	{"POST /api/refund", "payment gate waits on a card terminal / fiscal device"},
 	{"POST /api/self-order/checkout", "payment gate waits on a card terminal / fiscal device"},

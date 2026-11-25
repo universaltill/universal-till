@@ -691,3 +691,436 @@ func TestLegRefTail_RuneSafe(t *testing.T) {
 		t.Errorf("four runes = %q, want empty", got)
 	}
 }
+
+// --- ut-docs#7025: one row per tap payment in doubt; either settle closes both ---
+
+// tapOrphan seeds what a restart leaves for a tap payment in doubt: an attempt
+// unknown/till_restarted and a journal chain asked -> unknown -> warned under
+// the same request id.
+func (e *legEnv) tapOrphan(t *testing.T, id string) {
+	t.Helper()
+	e.orphan(t, id, "stripe")
+	e.seed(t, id, "tapstripe", data.LegAsked, data.LegUnknown, data.LegWarned)
+}
+
+// resolveTap posts the card's tap-row form: a decision, an optional reason and note.
+func (e *legEnv) resolveTap(t *testing.T, u auth.User, id, decision, reason, pin, note string) *httptest.ResponseRecorder {
+	t.Helper()
+	f := url.Values{"request_id": {id}, "note": {note}}
+	if decision != "" {
+		f.Set("decision", decision)
+	}
+	if reason != "" {
+		f.Set("reason", reason)
+	}
+	if pin != "" {
+		f.Set("override_pin", pin)
+	}
+	return e.do(t, u, http.MethodPost, "/api/pay/legs/resolve", f)
+}
+
+type legAttnJSON struct {
+	Data struct {
+		Attempts  []map[string]any `json:"attempts"`
+		Count     int              `json:"count"`
+		Legs      []map[string]any `json:"legs"`
+		LegsCount int              `json:"legs_count"`
+	} `json:"data"`
+}
+
+func (e *legEnv) listJSON(t *testing.T) legAttnJSON {
+	t.Helper()
+	rec := e.do(t, e.manager, http.MethodGet, "/api/pay/attempts/attention", nil)
+	var out legAttnJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != 200 {
+		t.Fatalf("list = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	return out
+}
+
+func (e *legEnv) wantGateLifted(t *testing.T) {
+	t.Helper()
+	before := e.bindingCount()
+	e.tender(t)
+	if e.bindingCount() != before+1 {
+		t.Fatal("the tap gate did not admit a new tap on the provider")
+	}
+}
+
+func (e *legEnv) wantNothingChanged(t *testing.T, id string) {
+	t.Helper()
+	if a := e.attemptByKey(t, id); a.State != data.AttemptUnknown {
+		t.Fatalf("attempt changed: %s", a.State)
+	}
+	if got := e.last(t, id); got.State != data.LegWarned {
+		t.Fatalf("journal changed: %s", got.State)
+	}
+	if n := len(e.audit(t, "tap_resolve")) + len(e.audit(t, "payment_leg_resolve")); n != 0 {
+		t.Fatalf("a refused answer was audited (%d rows)", n)
+	}
+}
+
+// AC1
+func TestLegAttention_TapLegListedOnce_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	frag := e.fragment(t, e.manager)
+	body := frag.Body.String()
+	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 {
+		t.Fatalf("rows = %d, want 1: %s", n, body)
+	}
+	for _, want := range []string{`data-testid="pay-attention-tap-form"`, `data-testid="pay-attention-not-charged"`, `data-testid="pay-attention-charged"`, `name="decision"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tap row lacks %s: %s", want, body)
+		}
+	}
+	if strings.Contains(bodyText(frag), enText(t, "pay.attention.resolve")) {
+		t.Errorf("a tap row has no decision-less Mark as handled: %s", body)
+	}
+	l := e.listJSON(t)
+	if l.Data.Count != 1 || len(l.Data.Attempts) != 1 || l.Data.Attempts[0]["leg_state"] != data.LegWarned {
+		t.Fatalf("attempts = %+v", l.Data)
+	}
+	if l.Data.LegsCount != 0 || len(l.Data.Legs) != 0 {
+		t.Fatalf("the payment is described twice: legs = %+v", l.Data.Legs)
+	}
+}
+
+// AC1
+func TestTapAttentionList_UnmatchedLegAndAttemptBothListed_7025(t *testing.T) {
+	e := legRig(t)
+	e.seed(t, "card-1", "cardpay", data.LegAsked, data.LegUnknown, data.LegWarned)
+	e.orphan(t, "orphan-x", "stripe")
+	l := e.listJSON(t)
+	if l.Data.Count != 1 || l.Data.LegsCount != 1 || len(l.Data.Legs) != 1 || len(l.Data.Attempts) != 1 {
+		t.Fatalf("lists = %+v", l.Data)
+	}
+	if _, ok := l.Data.Attempts[0]["leg_state"]; ok {
+		t.Fatalf("an attempt with no journal leg carries leg_state: %+v", l.Data.Attempts[0])
+	}
+	body := e.fragment(t, e.manager).Body.String()
+	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 || strings.Contains(body, "pay-attention-tap-form") {
+		t.Fatalf("the plain leg must stay a plain row: %s", body)
+	}
+}
+
+// AC2
+func TestTapAttentionResolve_ClosesWarnedLeg_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	rec := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"leg_resolved":true`) {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptResolvedNotCharged {
+		t.Fatalf("attempt = %s", a.State)
+	}
+	if c := e.chain(t, "tap-1"); strings.Join(c, ",") != "asked,unknown,warned,resolved" {
+		t.Fatalf("chain = %v", c)
+	}
+	if strings.TrimSpace(e.fragment(t, e.manager).Body.String()) != "" {
+		t.Fatal("the settled payment is still on the card")
+	}
+	e.wantGateLifted(t)
+}
+
+// AC2: the money decision stands when the journal cannot be written.
+func TestTapAttentionResolve_JournalFailureStillSettles_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	if _, err := e.dp.Db.Exec(`CREATE TRIGGER no_resolved BEFORE INSERT ON payment_leg_journal WHEN NEW.state = 'resolved' BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"leg_resolved":false`) {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptResolvedNotCharged {
+		t.Fatalf("attempt = %s", a.State)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegWarned {
+		t.Fatalf("leg = %s, want still warned", got.State)
+	}
+	body := e.fragment(t, e.manager).Body.String()
+	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 || strings.Contains(body, "pay-attention-tap-form") {
+		t.Fatalf("the stale leg must stay listed as a plain row: %s", body)
+	}
+}
+
+// AC3
+func TestLegResolve_TapRowNotCharged_ClearsGate_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.tap_resolved.not_charged")
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptResolvedNotCharged {
+		t.Fatalf("attempt = %s", a.State)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+	a := e.audit(t, "tap_resolve")
+	if len(a) != 1 || a[0]["context"] != "needs_attention" || a[0]["source"] != "settings_card" || a[0]["leg_state"] != data.LegWarned {
+		t.Fatalf("tap_resolve audit = %+v", a)
+	}
+	if n := len(e.audit(t, "payment_leg_resolve")); n != 0 {
+		t.Fatalf("a second audit names the same settle: %d", n)
+	}
+	if e.broker.count("session_cancel") < 1 {
+		t.Fatal("not_charged must cancel at the broker first")
+	}
+	e.wantGateLifted(t)
+}
+
+// AC3
+func TestLegResolve_TapRowChargedRefundAtProvider_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("succeeded", 120))
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(bodyText(rec), strings.Split(enText(t, "pay.attention.tap_resolved.charged"), "%s")[0]) {
+		t.Fatalf("flash missing: %s", rec.Body.String())
+	}
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptApproved || a.Reason != data.AttemptReasonChargedNoSale {
+		t.Fatalf("attempt = %+v", a)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+	if e.sales(t) != 0 {
+		t.Fatal("a sale was invented")
+	}
+	e.wantGateLifted(t)
+	_, _, conf, err := tapAuthorize(context.Background(), e.dp, "tapstripe", "tap-1", money.FromMinor(120), "gbp", map[string]any{"method": "tapstripe", "amount": int64(120)})
+	if err == nil || conf != nil {
+		t.Fatalf("a charged_no_sale key confirmed a payment: conf=%v err=%v", conf, err)
+	}
+}
+
+// AC3: a tap row never settles without an outcome.
+func TestLegResolve_TapRowWithoutDecisionRefused_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	rec := e.resolveTap(t, e.manager, "tap-1", "", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.choose_outcome")
+	e.wantNothingChanged(t, "tap-1")
+	if !strings.Contains(rec.Body.String(), "pay-attention-tap-form") {
+		t.Fatalf("the card must show the decision buttons: %s", rec.Body.String())
+	}
+	e.wantRefusedForAttention(t, e.tender(t), 0)
+}
+
+// AC3: the PIN dialog keeps the choice.
+func TestLegResolve_PINDialogCarriesDecision_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "customer_left", "", "a note")
+	e.wantElevationPrompt(t, rec)
+	body := rec.Body.String()
+	for _, want := range []string{`name="decision" value="not_charged"`, `name="request_id" value="tap-1"`, `name="reason" value="customer_left"`, `name="note" value="a note"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("prompt lacks %s: %s", want, body)
+		}
+	}
+	if !strings.Contains(bodyText(rec), strings.Split(enText(t, "pay.attention.tap_summary.not_charged"), "%s")[2]) {
+		t.Errorf("the prompt summary is not the not-charged one: %s", body)
+	}
+	e.wantNothingChanged(t, "tap-1")
+	if e.broker.count("session_status")+e.broker.count("session_cancel") != 0 {
+		t.Fatal("broker asked before the PIN was proven")
+	}
+}
+
+// AC4
+func TestLegResolve_TapRowBrokerPaidRefusesNotCharged_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("succeeded", 120))
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.tap_says_paid")
+	e.wantNothingChanged(t, "tap-1")
+	e.wantRefusedForAttention(t, e.tender(t), 0)
+}
+
+// AC4 (UX: the card must not say "Approve it instead")
+func TestLegResolve_TapRowBrokerNotPaidRefusesCharged_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.tap_says_not_paid")
+	e.wantNothingChanged(t, "tap-1")
+}
+
+// AC4
+func TestLegResolve_TapRowBrokerUnreachableNeedsReason_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus("")
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.tap_reason_required")
+	e.wantNothingChanged(t, "tap-1")
+	rec = e.resolveTap(t, e.manager, "tap-1", "not_charged", "customer_left", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("with a reason = %d %s", rec.Code, rec.Body.String())
+	}
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptResolvedNotCharged || a.Reason != "manager_override" {
+		t.Fatalf("attempt = %+v", a)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+}
+
+// AC4: a decision or reason outside the set is refused before anything runs.
+func TestLegResolve_TapRowBadChoiceRefused_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	for _, c := range [][2]string{{"approve", ""}, {"not_charged", "mismatch_refund_later"}, {"not_charged", "nope"}} {
+		rec := e.resolveTap(t, e.manager, "tap-1", c[0], c[1], dataAPITestManagerPIN, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%v = %d %s", c, rec.Code, rec.Body.String())
+		}
+	}
+	e.wantNothingChanged(t, "tap-1")
+}
+
+// AC4: the attempt was settled elsewhere while the journal write failed.
+func TestLegResolve_AttemptSettledElsewhereWithDecision_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	if _, err := e.dp.Db.Exec(`CREATE TRIGGER no_resolved BEFORE INSERT ON payment_leg_journal WHEN NEW.state = 'resolved' BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN); rec.Code != 200 {
+		t.Fatalf("json settle = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.attempt_settled")
+	if _, err := e.dp.Db.Exec(`DROP TRIGGER no_resolved`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.resolve(t, e.manager, "tap-1", dataAPITestManagerPIN, ""); rec.Code != 200 {
+		t.Fatalf("plain resolve = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+}
+
+// AC5: a decision on a leg with no open attempt is refused; the leg stays.
+func TestLegResolve_NonTapIgnoresStrayDecision_7025(t *testing.T) {
+	e := legRig(t)
+	e.seed(t, "card-1", "cardpay", data.LegAsked, data.LegUnknown, data.LegWarned)
+	rec := e.resolveTap(t, e.manager, "card-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.attempt_settled")
+	if got := e.last(t, "card-1"); got.State != data.LegWarned {
+		t.Fatalf("leg = %s", got.State)
+	}
+}
+
+// AC6
+func TestLegResolve_TapRowCashierAndWrongPIN_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	if rec := e.resolveTap(t, e.cashier, "tap-1", "not_charged", "", dataAPITestManagerPIN, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier card = %d", rec.Code)
+	}
+	if rec := e.resolveAttn(t, e.cashier, "tap-1", "not_charged", "", dataAPITestManagerPIN); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier json = %d", rec.Code)
+	}
+	e.wantElevationPrompt(t, e.resolveTap(t, e.manager, "tap-1", "not_charged", "", "000000", ""))
+	if rec := e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", "000000"); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong pin json = %d", rec.Code)
+	}
+	e.wantNothingChanged(t, "tap-1")
+	if n := len(e.broker.log()); n != 0 {
+		t.Fatalf("broker got %d calls", n)
+	}
+}
+
+// AC6
+func TestTapLegSettle_ConcurrentBothPaths_7025(t *testing.T) {
+	e := legRig(t)
+	e.tapOrphan(t, "tap-1")
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.broker.setOnCall(func(p string) {
+		if strings.HasSuffix(p, "/session_status") {
+			once.Do(func() { close(entered); <-release })
+		}
+	})
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- e.resolveAttn(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the first settle never reached the broker")
+	}
+	second := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if second.Code != http.StatusConflict {
+		close(release)
+		t.Fatalf("concurrent card settle = %d, want 409 %s", second.Code, second.Body.String())
+	}
+	e.wantText(t, second, "pay.attention.in_progress")
+	close(release)
+	if rec := <-first; rec.Code != 200 {
+		t.Fatalf("first settle = %d %s", rec.Code, rec.Body.String())
+	}
+	if n := countRows(t, e.dp, `SELECT COUNT(*) FROM payment_leg_journal WHERE request_id = 'tap-1' AND state = 'resolved'`); n != 1 {
+		t.Fatalf("resolved rows = %d", n)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("tap_resolve audits = %d", n)
+	}
+
+	// Sequential pairs: whichever goes second is refused, never a 500.
+	e.tapOrphan(t, "tap-2")
+	if rec := e.resolveAttn(t, e.manager, "tap-2", "not_charged", "", dataAPITestManagerPIN); rec.Code != 200 {
+		t.Fatalf("json first = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.resolveTap(t, e.manager, "tap-2", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("card second = %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.not_resolvable")
+	e.tapOrphan(t, "tap-3")
+	if rec := e.resolveTap(t, e.manager, "tap-3", "not_charged", "", dataAPITestManagerPIN, ""); rec.Code != 200 {
+		t.Fatalf("card first = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.resolveAttn(t, e.manager, "tap-3", "not_charged", "", dataAPITestManagerPIN)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "settled") {
+		t.Fatalf("json second = %d %s", rec.Code, rec.Body.String())
+	}
+}

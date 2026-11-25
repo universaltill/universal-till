@@ -4872,5 +4872,20 @@
   "pay.attention.note_invalid": "The note must be one line of at most 200 characters.",
   "pay.attention.forbidden": "Only a manager can do this.",
   "pay.attention.audit_retry": "A manager tried a failed card refund again at the till",
-  "pay.attention.audit_resolve": "A manager marked a card payment as handled at the till"
+  "pay.attention.audit_resolve": "A manager marked a card payment as handled at the till",
+  "pay.attention.explain.tap": "The till restarted during this card tap, so it does not know if the customer was charged. Card taps with this payment service are paused until you record what happened.",
+  "pay.attention.tap_question": "What happened?",
+  "pay.attention.tap_reason_label": "Reason (only if the payment service can't be reached)",
+  "pay.attention.tap_not_charged": "Not charged",
+  "pay.attention.tap_charged": "Charged — refund at the provider",
+  "pay.attention.tap_summary.not_charged": "Record the %s (%s) card payment as not charged. The till asks the payment service first and refuses if it says the payment went through.",
+  "pay.attention.tap_summary.charged": "Record the %s (%s) card payment as charged with no sale. The till asks the payment service first. Refund it in your payment provider's dashboard.",
+  "pay.attention.tap_resolved.not_charged": "Recorded as not charged. Card taps can be taken again.",
+  "pay.attention.tap_resolved.charged": "Recorded as charged with no sale. Refund %s in your payment provider's dashboard. Card taps can be taken again.",
+  "pay.attention.choose_outcome": "This is a card tap. Choose Not charged or Charged — refund at the provider.",
+  "pay.attention.attempt_settled": "This card payment was already recorded. Choose Mark as handled to close it.",
+  "pay.attention.journal_failed": "Recorded, and card taps can be taken again, but this row could not be closed. Choose Mark as handled.",
+  "pay.attention.tap_says_paid": "The payment service says this payment went through. Choose Charged — refund at the provider.",
+  "pay.attention.tap_says_not_paid": "The payment service says nothing was charged. Choose Not charged.",
+  "pay.attention.tap_reason_required": "The payment service can't be reached. Choose a reason, then your answer again."
 }

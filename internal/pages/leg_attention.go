@@ -27,6 +27,13 @@ import (
 //     may already have moved, and only the provider knows.
 //   - Resolve a warned or reverse_failed leg once it is refunded or checked at
 //     the provider. Nothing is sent; the leg just leaves the list.
+//   - A tap leg whose payment_attempts row still needs attention (a restart
+//     left both records open, ut-docs#7025) is ONE row here: its Resolve asks
+//     what happened (Not charged / Charged, refund at the provider) and settles
+//     the attempt by the ADR-0198 §6.8 rules (settleAttentionAttempt: broker
+//     first, no silent "not charged", a reason without the broker), then closes
+//     the leg. A decision-less "Mark as handled" is refused for it, because it
+//     would leave the tap gate shut.
 //
 // Both need the refund permission AND a fresh manager PIN, are audited, and
 // never touch a tender outcome or block checkout.
@@ -47,7 +54,9 @@ const (
 )
 
 // legAttentionDTO is one listed leg in the JSON list. There is no sale id: a
-// leg that needs attention never became one.
+// leg that needs attention never became one. GET /api/pay/attempts/attention
+// leaves out a leg whose request id is a listed attempt's key; that payment is
+// described once, under attempts, with leg_state (ut-docs#7025).
 type legAttentionDTO struct {
 	RequestID      string `json:"request_id"`
 	Method         string `json:"method"`
@@ -102,6 +111,7 @@ type legRow struct {
 	State                  string
 	At                     time.Time
 	Retryable              bool
+	Tap                    bool // an open attempt shares the request id: settle by a decision (ut-docs#7025)
 }
 
 // legCardView is the data of payment_attention.html.
@@ -143,7 +153,44 @@ func legAmount(e data.LegEntry, locale string) string {
 	return httpx.FormatMoneyInDisplay(money.FromMinor(e.AmountMinor).Minor(), strings.ToUpper(e.Currency), locale)
 }
 
-func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.LegEntry) []legRow {
+// openAttempt reports whether key has an attempt a manager must settle by a
+// decision (ut-docs#7025). The register's staff-locked key is not filtered out:
+// the settle core refuses it with a 409.
+func openAttempt(a data.PaymentAttempt, found bool, now time.Time) bool {
+	return found && (a.State == data.AttemptPending || a.State == data.AttemptUnknown) && a.NeedsAttention(now)
+}
+
+// openAttemptKeys is the set of attempt keys needing a manager's decision. On
+// a read error it logs and returns an empty set: the card then shows plain
+// rows, and the POST re-checks under the lock (a decision-less post on a tap
+// row is still refused).
+func openAttemptKeys(ctx context.Context, d *common.Deps) map[string]bool {
+	now := time.Now()
+	rows, err := data.NewPaymentAttemptRepo(d.Db).ListNeedingAttention(ctx, now, "", 0)
+	if err != nil {
+		logging.L().Errorf("payment legs attention: open attempts: %v", err)
+		return map[string]bool{}
+	}
+	keys := make(map[string]bool, len(rows))
+	for _, a := range rows {
+		if openAttempt(a, true, now) {
+			keys[a.Key] = true
+		}
+	}
+	return keys
+}
+
+// appendLegResolved appends resolved/manager_resolved after cur. At is zeroed
+// so Append stamps now: the old row's time would let the retention sweep delete
+// a just-resolved chain.
+func appendLegResolved(ctx context.Context, repo *data.PaymentLegJournalRepo, cur data.LegEntry) error {
+	next := cur
+	next.State, next.Reason = data.LegResolved, data.LegReasonManagerResolved
+	next.At = time.Time{}
+	return repo.Append(ctx, next)
+}
+
+func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.LegEntry, open map[string]bool) []legRow {
 	labels := legMethodLabels(ctx, d, locale)
 	rows := make([]legRow, 0, len(entries))
 	for i, e := range entries {
@@ -158,6 +205,7 @@ func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.
 		rows = append(rows, legRow{
 			N: i + 1, RequestID: e.RequestID, Amount: legAmount(e, locale), Method: method, Reason: reason,
 			RefTail: legRefTail(e.TransactionRef), State: e.State, At: e.At, Retryable: e.State == data.LegReverseFailed,
+			Tap: open[e.RequestID],
 		})
 	}
 	return rows
@@ -185,7 +233,7 @@ func writeLegCard(w http.ResponseWriter, r *http.Request, d *common.Deps, status
 			logging.L().Errorf("payment legs attention list: %v", err)
 			view.Flash, view.FlashWarn = httpx.T(locale, "common.error.server"), true
 		} else {
-			view.Rows = legRows(r.Context(), d, locale, entries)
+			view.Rows = legRows(r.Context(), d, locale, entries, openAttemptKeys(r.Context(), d))
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -231,7 +279,7 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
-		httpx.RenderPartial("ui/partials/payment_attention.html", legCardView{ShowList: true, Rows: legRows(r.Context(), d, locale, entries)})(w, r)
+		httpx.RenderPartial("ui/partials/payment_attention.html", legCardView{ShowList: true, Rows: legRows(r.Context(), d, locale, entries, openAttemptKeys(r.Context(), d))})(w, r)
 	})
 
 	// prelude is the shared start of Retry and Resolve: permission, form, id,
@@ -362,17 +410,50 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 		writeLegCard(w, r, d, http.StatusOK, httpx.T(locale, "pay.attention.retry_failed"), true, true)
 	})
 
+	// legTapFlashKey maps the settle core's refusal to the card's own wording: the
+	// sale screen's copy names buttons (Approve) this card does not have.
+	legTapFlashKey := func(res attentionSettle) string {
+		switch res.Code {
+		case "broker_says_paid":
+			return "pay.attention.tap_says_paid"
+		case "nothing_to_approve":
+			return "pay.attention.tap_says_not_paid"
+		case "reason_required":
+			return "pay.attention.tap_reason_required"
+		case "settled":
+			return "pay.attention.attempt_settled"
+		case "not_found":
+			return "pay.attention.gone"
+		}
+		return res.MsgKey
+	}
+
 	mux.HandleFunc("POST /api/pay/legs/resolve", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		fail := func(status int, key string) {
 			writeLegCard(w, r, d, status, httpx.T(locale, key), true, true)
 		}
+		// A tap row posts decision (and an optional reason); a plain row posts
+		// neither (ut-docs#7025).
+		decision, reason := r.PostFormValue("decision"), r.PostFormValue("reason")
+		summaryKey := "pay.attention.resolve_summary"
+		switch decision {
+		case "not_charged":
+			summaryKey = "pay.attention.tap_summary.not_charged"
+		case "charged_refund_at_provider":
+			summaryKey = "pay.attention.tap_summary.charged"
+		}
 		var note string
-		id, elev, ok := prelude(w, r, "resolve", "pay.attention.resolve_summary", func() ([]elevationHiddenField, bool) {
+		id, elev, ok := prelude(w, r, "resolve", summaryKey, func() ([]elevationHiddenField, bool) {
 			note = strings.TrimSpace(r.Form.Get("note"))
-			return []elevationHiddenField{{Name: "note", Value: note}}, validLegNote(note)
+			return []elevationHiddenField{{Name: "note", Value: note}, {Name: "decision", Value: decision}, {Name: "reason", Value: reason}}, validLegNote(note)
 		})
 		if !ok {
+			return
+		}
+		if (decision != "" && decision != "not_charged" && decision != "charged_refund_at_provider") ||
+			(reason != "" && (!tapResolveReasons[reason] || reason == "mismatch_refund_later")) {
+			fail(http.StatusBadRequest, "tap.resolve.bad_choice")
 			return
 		}
 		if !tapLegInFlight.acquire(id) {
@@ -394,14 +475,45 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusConflict, "pay.attention.not_resolvable")
 			return
 		}
+		att, attFound, err := data.NewPaymentAttemptRepo(d.Db).Get(r.Context(), id)
+		if err != nil {
+			logging.L().Errorf("payment legs resolve: attempt %s: %v", id, err)
+			fail(http.StatusInternalServerError, "common.error.server")
+			return
+		}
+		open := openAttempt(att, attFound, time.Now())
 		ctx := context.WithoutCancel(r.Context())
+		switch {
+		case open && decision == "":
+			fail(http.StatusConflict, "pay.attention.choose_outcome")
+			return
+		case !open && decision != "":
+			fail(http.StatusConflict, "pay.attention.attempt_settled")
+			return
+		case open:
+			extra := map[string]any{"source": "settings_card", "leg_state": cur.State}
+			if note != "" {
+				extra["note"] = note
+			}
+			res := settleAttentionAttempt(r, d, elev, id, decision, reason, extra)
+			if res.Status != 0 {
+				fail(res.Status, legTapFlashKey(res))
+				return
+			}
+			if err := appendLegResolved(ctx, repo, cur); err != nil {
+				logging.L().Errorf("payment legs resolve: attempt %s settled but its journal leg is still listed: %v (ut-docs#7025)", id, err)
+				writeLegCard(w, r, d, http.StatusOK, httpx.T(locale, "pay.attention.journal_failed"), true, true)
+				return
+			}
+			flash := httpx.T(locale, "pay.attention.tap_resolved.not_charged")
+			if res.Outcome == "charged_no_sale" {
+				flash = fmt.Sprintf(httpx.T(locale, "pay.attention.tap_resolved.charged"), legAmount(cur, locale))
+			}
+			writeLegCard(w, r, d, http.StatusOK, flash, false, true)
+			return
+		}
 		// The free-text note goes to the audit only, never to the journal.
-		next := cur
-		next.State, next.Reason = data.LegResolved, data.LegReasonManagerResolved
-		// Zero At so Append stamps now: the old row's time would let the
-		// retention sweep delete a just-resolved chain.
-		next.At = time.Time{}
-		switch err := repo.Append(ctx, next); {
+		switch err := appendLegResolved(ctx, repo, cur); {
 		case errors.Is(err, data.ErrLegJournalTransition):
 			fail(http.StatusConflict, "pay.attention.not_resolvable")
 			return
