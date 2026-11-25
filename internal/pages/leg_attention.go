@@ -112,6 +112,7 @@ type legRow struct {
 	At                     time.Time
 	Retryable              bool
 	Tap                    bool // an open attempt shares the request id: settle by a decision (ut-docs#7025)
+	ChargedNoSale          bool // a charged tap with no sale (ut-docs#7028): one action, record it
 }
 
 // legCardView is the data of payment_attention.html.
@@ -124,6 +125,8 @@ type legCardView struct {
 
 func legReasonKey(reason string) string {
 	switch reason {
+	case data.LegReasonTapChargedNoSale:
+		return "" // the row's explanation carries the meaning (ut-docs#7028)
 	case data.LegReasonRestart:
 		return "pay.attention.reason.till_restarted"
 	case data.LegReasonReversalFailed:
@@ -205,10 +208,15 @@ func legRows(ctx context.Context, d *common.Deps, locale string, entries []data.
 		rows = append(rows, legRow{
 			N: i + 1, RequestID: e.RequestID, Amount: legAmount(e, locale), Method: method, Reason: reason,
 			RefTail: legRefTail(e.TransactionRef), State: e.State, At: e.At, Retryable: e.State == data.LegReverseFailed,
-			Tap: open[e.RequestID],
+			Tap: open[e.RequestID], ChargedNoSale: isChargedNoSaleLeg(e),
 		})
 	}
 	return rows
+}
+
+// isChargedNoSaleLeg: boot found this tap leg captured with no sale (ut-docs#7028).
+func isChargedNoSaleLeg(e data.LegEntry) bool {
+	return e.State == data.LegWarned && e.Reason == data.LegReasonTapChargedNoSale
 }
 
 // legSummary is the PIN dialog's description of the action: amount and method.
@@ -312,6 +320,9 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 		if !found {
 			fail(http.StatusNotFound, "pay.attention.gone")
 			return "", elev, false
+		}
+		if action == "resolve" && isChargedNoSaleLeg(cur) {
+			summaryKey = "pay.attention.charged_no_sale.summary" // core confirmed the charge: no broker wording
 		}
 		hidden := []elevationHiddenField{{Name: "request_id", Value: id}}
 		if extra != nil {
@@ -475,6 +486,10 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusConflict, "pay.attention.not_resolvable")
 			return
 		}
+		if isChargedNoSaleLeg(cur) {
+			resolveChargedNoSale(w, r, d, elev, cur, decision, note)
+			return
+		}
 		att, attFound, err := data.NewPaymentAttemptRepo(d.Db).Get(r.Context(), id)
 		if err != nil {
 			logging.L().Errorf("payment legs resolve: attempt %s: %v", id, err)
@@ -533,4 +548,65 @@ func registerLegAttention(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_leg", id, "payment_leg_resolve", p)
 		writeLegCard(w, r, d, http.StatusOK, httpx.T(locale, "pay.attention.resolved"), false, true)
 	})
+}
+
+// resolveChargedNoSale settles a warned/tap_charged_no_sale leg (ut-docs#7028,
+// ADR-0198 §6.8 "charged, refund at the provider"). Core confirmed the charge
+// before the leg was captured, so there is no broker call and no network: the
+// approved attempt (if any) is stamped charged_no_sale so its key can never
+// become a sale, the journal leg is closed, then one tap_resolve audit is
+// written. "Not charged" and a missing decision are refused. The caller holds
+// tapLegInFlight for the request id.
+func resolveChargedNoSale(w http.ResponseWriter, r *http.Request, d *common.Deps, elev elevationCheck, cur data.LegEntry, decision, note string) {
+	locale := httpx.ResolveLocale(w, r)
+	fail := func(status int, key string) {
+		writeLegCard(w, r, d, status, httpx.T(locale, key), true, true)
+	}
+	switch decision {
+	case "":
+		fail(http.StatusConflict, "pay.attention.charged_no_sale.choose")
+		return
+	case "not_charged":
+		fail(http.StatusConflict, "pay.attention.charged_no_sale.not_charged_refused")
+		return
+	}
+	id := cur.RequestID
+	ctx := context.WithoutCancel(r.Context())
+	changed, prior, err := data.NewPaymentAttemptRepo(d.Db).MarkChargedNoSale(ctx, id)
+	attemptFound := true
+	switch {
+	case errors.Is(err, data.ErrAttemptNotFound):
+		attemptFound = false // nothing to stamp: the journal leg alone closes
+	case errors.Is(err, data.ErrAttemptSettled):
+		fail(http.StatusConflict, "pay.attention.charged_no_sale.conflict")
+		return
+	case err != nil:
+		logging.L().Errorf("payment legs resolve: charged-no-sale stamp for %s: %v (ut-docs#7028)", id, err)
+		fail(http.StatusInternalServerError, "common.error.server")
+		return
+	}
+	switch err := appendLegResolved(ctx, data.NewPaymentLegJournalRepo(d.Db), cur); {
+	case errors.Is(err, data.ErrLegJournalTransition):
+		fail(http.StatusConflict, "pay.attention.not_resolvable")
+		return
+	case err != nil:
+		// The stamp is kept (the safe direction); a repeat is idempotent and audits once.
+		logging.L().Errorf("payment legs resolve: charged tap %s stamped but its journal leg is still listed: %v (ut-docs#7028)", id, err)
+		writeLegCard(w, r, d, http.StatusOK, httpx.T(locale, "pay.attention.charged_no_sale.journal_failed"), true, true)
+		return
+	}
+	p := map[string]any{
+		"decision": "charged_refund_at_provider", "outcome": "charged_no_sale", "mode": "core_confirmed", "context": "captured_no_sale",
+		"source": "settings_card", "leg_state": data.LegWarned, "amount_minor": cur.AmountMinor, "currency": cur.Currency,
+		"transaction_ref": maskedLegRef(cur.TransactionRef), "manager_id": elev.ApproverID, "stamped": changed,
+		"reason_text": httpx.T("en", "tap.resolve.audit_reason"),
+	}
+	if attemptFound {
+		p["attempt_state"], p["attempt_reason"] = prior.State, prior.Reason
+	}
+	if note != "" {
+		p["note"] = note
+	}
+	settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_attempt", id, "tap_resolve", p)
+	writeLegCard(w, r, d, http.StatusOK, fmt.Sprintf(httpx.T(locale, "pay.attention.charged_no_sale.resolved"), legAmount(cur, locale)), false, true)
 }

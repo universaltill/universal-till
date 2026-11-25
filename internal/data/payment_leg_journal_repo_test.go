@@ -382,3 +382,32 @@ func TestLegJournal_ResolveOnlyFromWarnedOrReverseFailed(t *testing.T) {
 		t.Fatal("UPDATE succeeded, want the append-only trigger to abort it")
 	}
 }
+
+// ut-docs#7028 (ADR-0136 Decision 9.2 amendment): captured -> warned exists only
+// for a charged tap with no sale.
+func TestLegJournal_CapturedToWarnedOnlyWithTapReason_7028(t *testing.T) {
+	r := NewPaymentLegJournalRepo(newLegJournalDB(t))
+	ctx := context.Background()
+	for _, id := range []string{"w1", "w2", "w3"} {
+		_ = r.Append(ctx, legEntry(id, LegAsked))
+		_ = r.Append(ctx, legEntry(id, LegCaptured))
+	}
+	for id, reason := range map[string]string{"w1": LegReasonRestart, "w2": ""} {
+		e := legEntry(id, LegWarned)
+		e.Reason = reason
+		if err := r.Append(ctx, e); !errors.Is(err, ErrLegJournalTransition) {
+			t.Fatalf("captured -> warned/%q: %v, want ErrLegJournalTransition", reason, err)
+		}
+	}
+	if err := r.Append(ctx, legEntry("w3", LegResolved)); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("captured -> resolved: %v, want refused", err)
+	}
+	e := legEntry("w3", LegWarned)
+	e.Reason = LegReasonTapChargedNoSale
+	if err := r.Append(ctx, e); err != nil {
+		t.Fatalf("captured -> warned/tap_charged_no_sale: %v", err)
+	}
+	if err := r.Append(ctx, legEntry("w3", LegResolved)); err != nil {
+		t.Fatalf("warned -> resolved: %v", err)
+	}
+}

@@ -1208,3 +1208,330 @@ func TestTapLegSettle_ConcurrentCardFirstThenJSON_7025(t *testing.T) {
 		t.Fatalf("tap_resolve audits = %d", n)
 	}
 }
+
+// --- ut-docs#7028: a captured tap leg with no sale at restart ---
+
+const chargedPIID = "pi_3NabcdEF1234"
+
+// capturedTap seeds what a restart leaves for a charged tap with no sale: an
+// approved attempt (reason "") and a journal chain asked -> captured under the
+// same request id. withAttempt=false leaves out the attempt row.
+func (e *legEnv) capturedTap(t *testing.T, id string, withAttempt bool) {
+	t.Helper()
+	if withAttempt {
+		repo := data.NewPaymentAttemptRepo(e.dp.Db)
+		if _, err := repo.Begin(context.Background(), data.PaymentAttempt{Key: id, Provider: "stripe", AmountMinor: 120, Currency: "gbp", Deadline: time.Now().Add(2 * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Mark(context.Background(), id, data.AttemptApproved, data.AttemptUpdate{PIID: chargedPIID, CardBrand: "visa", Last4: "4242"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, s := range []string{data.LegAsked, data.LegCaptured} {
+		le := data.LegEntry{RequestID: id, State: s, MethodID: "tapstripe", AmountMinor: 135, Currency: "GBP", TipMinor: 15, ReaderRef: "rdr_1", TransactionRef: chargedPIID}
+		if err := legRepo(e.dp).Append(context.Background(), le); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (e *legEnv) refundCount() int {
+	e.card.mu.Lock()
+	defer e.card.mu.Unlock()
+	e.plugin.mu.Lock()
+	defer e.plugin.mu.Unlock()
+	return len(e.card.refunds) + len(e.plugin.refunds)
+}
+
+// bootCapturedTap seeds a captured tap leg and runs the boot pass.
+func (e *legEnv) bootCapturedTap(t *testing.T, id string, withAttempt bool) LegReconcileResult {
+	t.Helper()
+	e.capturedTap(t, id, withAttempt)
+	return ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+}
+
+func (e *legEnv) wantChargedNoSaleListed(t *testing.T, id string) {
+	t.Helper()
+	got := e.last(t, id)
+	if got.State != data.LegWarned || got.Reason != data.LegReasonTapChargedNoSale {
+		t.Fatalf("leg = %s/%q, want warned/tap_charged_no_sale", got.State, got.Reason)
+	}
+}
+
+func TestLegReconcile_CapturedTapIsWarnedNotRefunded_7028(t *testing.T) {
+	e := legRig(t)
+	e.capturedTap(t, "tap-1", true)
+	attBefore := e.attemptByKey(t, "tap-1")
+	cutoff := time.Now().Add(time.Minute)
+	res := ReconcilePaymentLegs(context.Background(), e.dp, cutoff)
+	if res.TapChargedNoSale != 1 || res.TapLeftToManager != 0 || res.Reversed != 0 {
+		t.Fatalf("result = %+v, want 1 tap_charged_no_sale", res)
+	}
+	got := e.last(t, "tap-1")
+	if got.State != data.LegWarned || got.Reason != data.LegReasonTapChargedNoSale || got.AmountMinor != 135 || got.TipMinor != 15 ||
+		got.Currency != "GBP" || got.ReaderRef != "rdr_1" || got.TransactionRef != chargedPIID || got.MethodID != "tapstripe" {
+		t.Fatalf("leg = %+v", got)
+	}
+	if n := e.refundCount(); n != 0 {
+		t.Fatalf("a refund was dispatched: %d", n)
+	}
+	if attAfter := e.attemptByKey(t, "tap-1"); attAfter != attBefore {
+		t.Fatalf("attempt changed: %+v -> %+v", attBefore, attAfter)
+	}
+	// second boot: nothing
+	rows := countRows(t, e.dp, "SELECT COUNT(*) FROM payment_leg_journal")
+	if res := ReconcilePaymentLegs(context.Background(), e.dp, cutoff); res != (LegReconcileResult{}) {
+		t.Fatalf("second boot = %+v, want zero", res)
+	}
+	if n := countRows(t, e.dp, "SELECT COUNT(*) FROM payment_leg_journal"); n != rows {
+		t.Fatalf("second boot appended %d rows", n-rows)
+	}
+}
+
+func TestLegReconcile_CapturedTapWithoutAttemptRowIsWarned_7028(t *testing.T) {
+	e := legRig(t)
+	res := e.bootCapturedTap(t, "tap-1", false)
+	if res.TapChargedNoSale != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	e.wantChargedNoSaleListed(t, "tap-1")
+}
+
+func TestLegReconcile_CapturedLegBothReadsFailStaysCaptured_7028(t *testing.T) {
+	e := legRig(t)
+	e.capturedTap(t, "tap-1", true)
+	for _, tbl := range []string{"payment_attempts", "plugin_entries"} {
+		if _, err := e.dp.Db.Exec(`DROP TABLE ` + tbl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+	if res.TapLeftToManager != 1 || res.TapChargedNoSale != 0 || res.Reversed != 0 || res.ReverseFailed != 0 {
+		t.Fatalf("result = %+v, want 1 left to manager only", res)
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegCaptured {
+		t.Fatalf("leg = %s, want captured", got.State)
+	}
+	if n := e.refundCount(); n != 0 {
+		t.Fatalf("refund dispatched: %d", n)
+	}
+}
+
+func TestChargedNoSale_BootToCardToSettle_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+
+	frag := e.fragment(t, e.manager)
+	body := frag.Body.String()
+	if n := strings.Count(body, `data-testid="pay-attention-row"`); n != 1 {
+		t.Fatalf("rows = %d: %s", n, body)
+	}
+	e.wantText(t, frag, "pay.attention.state.charged_no_sale", "pay.attention.explain.charged_no_sale", "pay.attention.tap_charged")
+	if !strings.Contains(bodyText(frag), "1234") {
+		t.Errorf("reference tail missing: %s", body)
+	}
+	for _, bad := range []string{`data-testid="pay-attention-not-charged"`, `name="reason"`, `type="radio"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("card has %s: %s", bad, body)
+		}
+	}
+	if !strings.Contains(body, `name="decision" value="charged_refund_at_provider"`) {
+		t.Errorf("card lacks the single charged button: %s", body)
+	}
+	l := e.listJSON(t)
+	if l.Data.LegsCount != 1 || len(l.Data.Legs) != 1 || l.Data.Legs[0]["reason"] != data.LegReasonTapChargedNoSale || l.Data.Legs[0]["state"] != data.LegWarned || len(l.Data.Attempts) != 0 {
+		t.Fatalf("json = %+v", l.Data)
+	}
+
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "refunded in dashboard")
+	if rec.Code != 200 {
+		t.Fatalf("settle = %d %s", rec.Code, rec.Body.String())
+	}
+	wantFmt(t, rec, "pay.attention.charged_no_sale.resolved")
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+	if a := e.attemptByKey(t, "tap-1"); a.State != data.AttemptApproved || a.Reason != data.AttemptReasonChargedNoSale {
+		t.Fatalf("attempt = %+v", a)
+	}
+	audits := e.audit(t, "tap_resolve")
+	if len(audits) != 1 {
+		t.Fatalf("tap_resolve audits = %d", len(audits))
+	}
+	a := audits[0]
+	if a["decision"] != "charged_refund_at_provider" || a["outcome"] != "charged_no_sale" || a["mode"] != "core_confirmed" || a["context"] != "captured_no_sale" ||
+		a["source"] != "settings_card" || a["leg_state"] != data.LegWarned || a["attempt_state"] != data.AttemptApproved || a["note"] != "refunded in dashboard" || a["stamped"] != true {
+		t.Fatalf("audit = %+v", a)
+	}
+	if n := len(e.broker.log()); n != 0 {
+		t.Fatalf("broker called %d times", n)
+	}
+	if n := e.refundCount(); n != 0 {
+		t.Fatalf("refund dispatched: %d", n)
+	}
+	if strings.TrimSpace(e.fragment(t, e.manager).Body.String()) != "" {
+		t.Fatal("settled payment still on the card")
+	}
+	_, _, conf, err := tapAuthorize(context.Background(), e.dp, "tapstripe", "tap-1", money.FromMinor(120), "gbp", map[string]any{"method": "tapstripe", "amount": int64(120)})
+	if err == nil || conf != nil {
+		t.Fatalf("the key confirmed a payment: conf=%v err=%v", conf, err)
+	}
+}
+
+func TestChargedNoSale_NotChargedAndNoDecisionRefused_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	rec := e.resolveTap(t, e.manager, "tap-1", "not_charged", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("not_charged = %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.charged_no_sale.not_charged_refused")
+	rec = e.resolveTap(t, e.manager, "tap-1", "", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("no decision = %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.charged_no_sale.choose")
+	e.wantChargedNoSaleListed(t, "tap-1")
+	if a := e.attemptByKey(t, "tap-1"); a.Reason != "" || a.State != data.AttemptApproved {
+		t.Fatalf("attempt changed: %+v", a)
+	}
+	if n := len(e.audit(t, "tap_resolve")) + len(e.audit(t, "payment_leg_resolve")); n != 0 {
+		t.Fatalf("refusal audited: %d", n)
+	}
+}
+
+func TestChargedNoSale_CashierAndWrongPIN_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	if rec := e.resolveTap(t, e.cashier, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier = %d", rec.Code)
+	}
+	e.wantElevationPrompt(t, e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", "000000", ""))
+	e.wantElevationPrompt(t, e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", "", ""))
+	e.wantChargedNoSaleListed(t, "tap-1")
+	if a := e.attemptByKey(t, "tap-1"); a.Reason != "" {
+		t.Fatalf("attempt stamped: %+v", a)
+	}
+}
+
+func TestChargedNoSale_PINSummaryIsNotBrokerWording_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", "", "")
+	e.wantElevationPrompt(t, rec)
+	wantFmt(t, rec, "pay.attention.charged_no_sale.summary")
+	if strings.Contains(bodyText(rec), strings.Split(enText(t, "pay.attention.tap_summary.charged"), "%s")[2]) {
+		t.Errorf("the prompt carries the broker-first summary: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `name="decision" value="charged_refund_at_provider"`) {
+		t.Errorf("prompt lost the decision: %s", rec.Body.String())
+	}
+}
+
+func TestChargedNoSale_SecondResolveConflictsOneAudit_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	if rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, ""); rec.Code != 200 {
+		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second = %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.not_resolvable")
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("audits = %d", n)
+	}
+}
+
+func TestChargedNoSale_ConcurrentPostsOneAudit_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "").Code
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, c := range codes {
+		if c == 200 {
+			ok++
+		} else if c != http.StatusConflict {
+			t.Fatalf("codes = %v", codes)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("codes = %v, want exactly one 200", codes)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("audits = %d", n)
+	}
+	if n := countRows(t, e.dp, `SELECT COUNT(*) FROM payment_leg_journal WHERE request_id='tap-1' AND state='resolved'`); n != 1 {
+		t.Fatalf("resolved rows = %d", n)
+	}
+}
+
+func TestChargedNoSale_TapGateStaysOpenWhileListed_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	e.wantChargedNoSaleListed(t, "tap-1")
+	e.wantGateLifted(t)
+}
+
+func TestChargedNoSale_AttemptMissingClosesJournalOnly_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", false)
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+	audits := e.audit(t, "tap_resolve")
+	if len(audits) != 1 {
+		t.Fatalf("audits = %d", len(audits))
+	}
+	if _, ok := audits[0]["attempt_state"]; ok {
+		t.Fatalf("audit has attempt_state with no attempt: %+v", audits[0])
+	}
+	if audits[0]["stamped"] != false {
+		t.Fatalf("stamped = %v", audits[0]["stamped"])
+	}
+}
+
+func TestChargedNoSale_JournalFailureRetryAuditsOnce_7028(t *testing.T) {
+	e := legRig(t)
+	e.bootCapturedTap(t, "tap-1", true)
+	if _, err := e.dp.Db.Exec(`CREATE TRIGGER no_resolved BEFORE INSERT ON payment_leg_journal WHEN NEW.state = 'resolved' BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, "")
+	if rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantText(t, rec, "pay.attention.charged_no_sale.journal_failed")
+	if a := e.attemptByKey(t, "tap-1"); a.Reason != data.AttemptReasonChargedNoSale {
+		t.Fatalf("attempt = %+v", a)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 0 {
+		t.Fatalf("audited before the journal closed: %d", n)
+	}
+	if _, err := e.dp.Db.Exec(`DROP TRIGGER no_resolved`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.resolveTap(t, e.manager, "tap-1", "charged_refund_at_provider", "", dataAPITestManagerPIN, ""); rec.Code != 200 {
+		t.Fatalf("retry = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.last(t, "tap-1"); got.State != data.LegResolved {
+		t.Fatalf("leg = %s", got.State)
+	}
+	if n := len(e.audit(t, "tap_resolve")); n != 1 {
+		t.Fatalf("audits = %d, want 1", n)
+	}
+}

@@ -372,3 +372,46 @@ func TestListNeedingAttention_FiltersAndOrders(t *testing.T) {
 		t.Errorf("limit 1 = %v", got)
 	}
 }
+
+// ut-docs#7028: stamp an approved attempt that never became a sale.
+func TestPaymentAttempt_MarkChargedNoSale_7028(t *testing.T) {
+	r := NewPaymentAttemptRepo(newAttemptTestDB(t, ":memory:"))
+	ctx := context.Background()
+	for _, k := range []string{"a1", "a2", "p", "u", "d"} {
+		if _, err := r.Begin(ctx, baseAttempt(k)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, k := range []string{"a1", "a2"} {
+		if err := r.Mark(ctx, k, AttemptApproved, AttemptUpdate{PIID: "pi_1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a2 was approved under a manager override.
+	if _, err := r.db.Exec(`UPDATE payment_attempts SET reason='manager_override' WHERE idempotency_key='a2'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Mark(ctx, "u", AttemptUnknown, AttemptUpdate{})
+	_ = r.Mark(ctx, "d", AttemptDeclined, AttemptUpdate{})
+	for k, wantPrior := range map[string]string{"a1": "", "a2": "manager_override"} {
+		changed, prior, err := r.MarkChargedNoSale(ctx, k)
+		if err != nil || !changed || prior.Reason != wantPrior || prior.State != AttemptApproved {
+			t.Fatalf("%s: changed=%v prior=%+v err=%v", k, changed, prior, err)
+		}
+		got, _, _ := r.Get(ctx, k)
+		if got.State != AttemptApproved || got.Reason != AttemptReasonChargedNoSale || got.PIID != "pi_1" {
+			t.Fatalf("%s after stamp = %+v", k, got)
+		}
+		if changed, _, err := r.MarkChargedNoSale(ctx, k); err != nil || changed {
+			t.Fatalf("%s second call: changed=%v err=%v, want no-op", k, changed, err)
+		}
+	}
+	for _, k := range []string{"p", "u", "d"} {
+		if _, _, err := r.MarkChargedNoSale(ctx, k); !errors.Is(err, ErrAttemptSettled) {
+			t.Fatalf("%s: %v, want ErrAttemptSettled", k, err)
+		}
+	}
+	if _, _, err := r.MarkChargedNoSale(ctx, "none"); !errors.Is(err, ErrAttemptNotFound) {
+		t.Fatalf("absent: %v, want ErrAttemptNotFound", err)
+	}
+}
