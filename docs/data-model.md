@@ -109,7 +109,11 @@ sale id), `reversing`, `reversed`, `reverse_failed`, `warned`, `resolved`.
 `transaction_ref` is the provider's reference in full and `reader_ref` the
 reader (no card number, expiry or CVV is stored). After a restart, boot
 (`pages.ReconcilePaymentLegs`) returns a `captured` non-tap leg that has no
-sale, leaves a captured tap/phone leg to a manager (ADR-0198), and warns
+sale, appends `warned` with reason `tap_charged_no_sale` to a captured
+tap/phone leg (ADR-0136 Decision 9.2, ut-docs#7028: the customer was charged and
+there is no sale; never refunded or sent to the provider, no attempt change; if
+no read shows a tap and either the attempt row or the plugin list could not be
+read it stays `captured` and the next boot decides), and warns
 `asked`/`unknown`/`reversing` legs without refunding or re-sending them. Chains
 whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
@@ -136,6 +140,16 @@ without the broker), then appends `resolved`/`manager_resolved`, with one
 `choose_outcome`); a decision on a leg with no open attempt is refused (409
 `attempt_settled`); the journal write failing after the settle is logged, the
 card says so and the leg stays listed as a plain row.
+A `warned`/`tap_charged_no_sale` leg (ut-docs#7028) is one card row with one
+action: its Resolve posts `decision=charged_refund_at_provider`, with no broker
+call (core confirmed the charge before `captured`) and no network. It stamps
+the `approved` attempt's reason `charged_no_sale` (`PaymentAttemptRepo.
+MarkChargedNoSale`, state unchanged, idempotent; no attempt row = journal-only
+close), appends `resolved`/`manager_resolved`, then writes one `tap_resolve`
+audit (`outcome: charged_no_sale`, `mode: core_confirmed`, `context:
+captured_no_sale`, `source: settings_card`). `not_charged` and no decision are
+refused (409). The tap gate is not shut while it is listed. It appears once in
+the JSON under `legs` with `reason: tap_charged_no_sale`.
 **Retry** (`POST /api/pay/legs/retry`, `reverse_failed` only, fresh manager PIN,
 audited `payment_leg_retry`) appends a `reversing` row (`PaymentLegJournalRepo.
 BeginRetry`, which refuses every other state, so a second Retry while one is

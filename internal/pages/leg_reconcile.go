@@ -16,7 +16,7 @@ const legReconcileMax = 500
 
 // LegReconcileResult counts what one ReconcilePaymentLegs pass did.
 type LegReconcileResult struct {
-	Reversed, ReverseFailed, Warned, TapLeftToManager int
+	Reversed, ReverseFailed, Warned, TapLeftToManager, TapChargedNoSale int
 }
 
 // ReconcilePaymentLegs is the boot reconciliation of the payment-leg journal
@@ -26,8 +26,12 @@ type LegReconcileResult struct {
 //
 //   - captured with no sale, not a tap/phone leg: the Decision 2 reversal,
 //     with the full reference and exact captured amount from the row.
-//   - captured tap/phone leg (ADR-0198): never automatic; logged only, the
-//     charged-tap-no-sale flow is the manager's.
+//   - captured tap/phone leg (ADR-0198): never refunded or sent to the
+//     provider here. It is appended warned/tap_charged_no_sale so a manager
+//     sees it on Settings -> Payments (ADR-0136 Decision 9.2, ut-docs#7028).
+//     If the till cannot tell whether it is a tap (neither read shows a tap
+//     and either read failed) it stays captured, logged, and the next boot
+//     decides.
 //   - reversing (crashed mid-send), unknown, asked: warned and logged, and
 //     listed for a manager on Settings -> Payments (Payments needing
 //     attention; Retry for reverse_failed, Resolve; leg_attention.go). Never
@@ -56,7 +60,7 @@ func ReconcilePaymentLegs(ctx context.Context, d *common.Deps, startedAt time.Ti
 		}
 	}
 	if res != (LegReconcileResult{}) {
-		logging.L().Infof("payment legs: boot reconciliation: %d returned, %d could not be returned, %d need a human at the provider, %d tap payment(s) left to a manager (ut-docs#6653)", res.Reversed, res.ReverseFailed, res.Warned, res.TapLeftToManager)
+		logging.L().Infof("payment legs: boot reconciliation: %d returned, %d could not be returned, %d need a human at the provider, %d charged tap payment(s) with no sale listed for a manager, %d tap payment(s) left captured (ut-docs#6653, ut-docs#7028)", res.Reversed, res.ReverseFailed, res.Warned, res.TapChargedNoSale, res.TapLeftToManager)
 	}
 	return res
 }
@@ -73,11 +77,18 @@ func warnLeg(ctx context.Context, repo *data.PaymentLegJournalRepo, row data.Leg
 }
 
 func reconcileCaptured(ctx context.Context, d *common.Deps, row data.LegEntry, res *LegReconcileResult) {
-	_, isTap, err := tapEntryErr(ctx, d, row.MethodID)
-	if err != nil || isTap {
-		// Fail safe: a leg that might be a tap is never refunded automatically.
+	// A payment_attempts row under the request id is proof of a tap; otherwise
+	// the method's plugin entry decides. No tap shown and a read failed: leave
+	// it captured (never reverse on doubt).
+	_, attFound, attErr := data.NewPaymentAttemptRepo(d.Db).Get(ctx, row.RequestID)
+	_, isTap, plugErr := tapEntryErr(ctx, d, row.MethodID)
+	switch {
+	case attFound || isTap:
+		warnChargedTap(ctx, d, row, res)
+		return
+	case attErr != nil || plugErr != nil:
 		res.TapLeftToManager++
-		logging.L().Warnf("card payment captured and never became a sale — method %q, amount %d %s, authorize_request_id %s: a tap payment is returned only by a manager (ADR-0198); check it at the provider (ADR-0136 Decision 9, ut-docs#6653)", row.MethodID, row.AmountMinor, row.Currency, row.RequestID)
+		logging.L().Warnf("card payment captured and never became a sale — method %q, amount %d %s, authorize_request_id %s: the till could not tell whether it is a tap payment, so it is left as it is and not refunded; the next start decides again (ADR-0136 Decision 9, ut-docs#7028)", row.MethodID, row.AmountMinor, row.Currency, row.RequestID)
 		return
 	}
 	leg := legFromRow(row)
@@ -88,4 +99,18 @@ func reconcileCaptured(ctx context.Context, d *common.Deps, row data.LegEntry, r
 		return
 	}
 	res.Reversed++
+}
+
+// warnChargedTap appends warned/tap_charged_no_sale to a captured tap leg: the
+// customer was charged and there is no sale. Nothing is refunded or sent to
+// the provider, and the attempt row is not touched (ut-docs#7028).
+func warnChargedTap(ctx context.Context, d *common.Deps, row data.LegEntry, res *LegReconcileResult) {
+	next := row
+	next.State, next.Reason, next.At = data.LegWarned, data.LegReasonTapChargedNoSale, time.Time{}
+	if err := data.NewPaymentLegJournalRepo(d.Db).Append(ctx, next); err != nil {
+		logging.L().Warnf("payment legs: could not record the charged tap payment for authorize_request_id %s: %v; it stays captured and the next start retries (ut-docs#7028)", row.RequestID, err)
+		return
+	}
+	res.TapChargedNoSale++
+	logging.L().Warnf("tap payment charged and never became a sale — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: the customer WAS charged but there is no sale; listed under Payments needing attention; refund it at the payment provider (ADR-0136 Decision 9, ut-docs#7028)", row.MethodID, row.AmountMinor, row.Currency, row.RequestID, maskedLegRef(row.TransactionRef))
 }

@@ -1558,6 +1558,13 @@
   "pay.attention.choose_outcome": {"description": "Refusal: the manager tried to mark a card tap as handled without saying whether it was charged.", "review": "standard"},
   "pay.attention.attempt_settled": {"description": "Refusal: the card tap was already settled elsewhere; the row can now only be marked as handled.", "review": "standard"},
   "pay.attention.journal_failed": {"description": "Warning: the outcome was saved but the list entry was not; the manager closes the row by hand.", "review": "standard"},
+  "pay.attention.state.charged_no_sale": {"description": "Status chip on a listed card tap where the customer was charged but the till restarted before the sale was saved.", "review": "standard", "max_length": 24},
+  "pay.attention.explain.charged_no_sale": {"description": "Explain line on a listed card tap that was charged with no sale; tells the manager to refund at the provider and that new taps are not paused.", "review": "standard"},
+  "pay.attention.charged_no_sale.summary": {"description": "Manager PIN dialog text before recording a charged tap with no sale as handled; the first placeholder is the amount, the second the payment method.", "review": "standard", "placeholders": ["amount with currency", "payment method name"]},
+  "pay.attention.charged_no_sale.resolved": {"description": "Confirmation after a manager recorded a charged tap with no sale; the placeholder is the amount with currency.", "review": "standard", "placeholders": ["amount with currency"]},
+  "pay.attention.charged_no_sale.not_charged_refused": {"description": "Refusal when a manager tries to record a confirmed charged tap as not charged.", "review": "standard"},
+  "pay.attention.charged_no_sale.choose": {"description": "Refusal when the charged-no-sale row was submitted without its single choice.", "review": "standard"},
+  "pay.attention.charged_no_sale.journal_failed": {"description": "Warning: the charged-no-sale outcome was saved but the list entry was not closed; the manager chooses the button again.", "review": "standard"},
   "pay.attention.tap_says_paid": {"description": "Refusal on the card: Not charged was chosen but the payment service reports the payment as paid.", "review": "standard"},
   "pay.attention.tap_says_not_paid": {"description": "Refusal on the card: Charged was chosen but the payment service reports no payment.", "review": "standard"},
   "pay.attention.tap_reason_required": {"description": "Refusal on the card: the payment service could not confirm the payment (unreachable or still processing), so a reason is required to record the outcome.", "review": "standard"}

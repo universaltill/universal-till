@@ -238,6 +238,40 @@ WHERE idempotency_key = ? AND state IN (` + strings.TrimSuffix(strings.Repeat("?
 	return ErrAttemptSettled
 }
 
+// MarkChargedNoSale stamps an approved attempt that never became a sale with
+// reason charged_no_sale (ut-docs#7028, ADR-0198 §6.8) so its key can never
+// confirm a payment. The state stays approved. prior is the row before the
+// stamp. Already stamped: changed=false, nil. Absent: ErrAttemptNotFound;
+// any other state: ErrAttemptSettled.
+func (r *PaymentAttemptRepo) MarkChargedNoSale(ctx context.Context, key string) (changed bool, prior PaymentAttempt, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, PaymentAttempt{}, fmt.Errorf("mark charged no sale: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	prior, err = scanAttempt(tx.QueryRowContext(ctx, `SELECT `+attemptCols+` FROM payment_attempts WHERE idempotency_key = ?`, key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, PaymentAttempt{}, ErrAttemptNotFound
+	}
+	if err != nil {
+		return false, PaymentAttempt{}, fmt.Errorf("mark charged no sale: %w", err)
+	}
+	if prior.State != AttemptApproved {
+		return false, prior, ErrAttemptSettled
+	}
+	if prior.Reason == AttemptReasonChargedNoSale {
+		return false, prior, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_attempts SET reason = ?, updated_at = ? WHERE idempotency_key = ? AND state = ? AND reason <> ?`,
+		AttemptReasonChargedNoSale, ts(time.Now()), key, AttemptApproved, AttemptReasonChargedNoSale); err != nil {
+		return false, prior, fmt.Errorf("mark charged no sale: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, prior, fmt.Errorf("mark charged no sale: %w", err)
+	}
+	return true, prior, nil
+}
+
 // PruneSettled deletes settled attempts last touched before now minus
 // AttemptRetention; pending and unknown are never deleted.
 func (r *PaymentAttemptRepo) PruneSettled(ctx context.Context, now time.Time) (int64, error) {

@@ -34,6 +34,9 @@ const (
 
 	// LegReasonRestart is the reason boot writes on a leg it warns about.
 	LegReasonRestart = "till_restarted"
+	// LegReasonTapChargedNoSale: boot found a captured tap/phone leg with no
+	// sale; the customer was charged (ADR-0136 Decision 9.2, ut-docs#7028).
+	LegReasonTapChargedNoSale = "tap_charged_no_sale"
 	// ut-docs#6653 slice 3: why a leg is reverse_failed or resolved.
 	LegReasonMainTillOnly    = "main_till_only"
 	LegReasonReversalFailed  = "reversal_failed"
@@ -69,7 +72,7 @@ var legFrom = map[string][]string{
 	LegReversing:     {LegCaptured, LegReverseFailed},
 	LegReversed:      {LegReversing},
 	LegReverseFailed: {LegReversing},
-	LegWarned:        {LegUnknown, LegAsked, LegReversing},
+	LegWarned:        {LegUnknown, LegAsked, LegReversing, LegCaptured},
 	LegResolved:      {LegWarned, LegReverseFailed},
 }
 
@@ -146,6 +149,14 @@ func (r *PaymentLegJournalRepo) Append(ctx context.Context, e LegEntry) error {
 	}
 	if !slices.Contains(legFrom[e.State], cur.State) {
 		return fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, e.State)
+	}
+	// captured -> warned exists only for a charged tap with no sale (ut-docs#7028).
+	if cur.State == LegCaptured && e.State == LegWarned && e.Reason != LegReasonTapChargedNoSale {
+		return fmt.Errorf("%w: %q -> %q needs reason %q", ErrLegJournalTransition, cur.State, e.State, LegReasonTapChargedNoSale)
+	}
+	// ...and the tap reason is written on no other move.
+	if e.Reason == LegReasonTapChargedNoSale && !(cur.State == LegCaptured && e.State == LegWarned) {
+		return fmt.Errorf("%w: reason %q is only for %q -> %q (not %q -> %q)", ErrLegJournalTransition, e.Reason, LegCaptured, LegWarned, cur.State, e.State)
 	}
 	e.Ask = max(cur.Ask, 1)
 	if e.State == LegAsked {
