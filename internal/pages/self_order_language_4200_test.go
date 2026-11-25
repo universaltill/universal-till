@@ -104,26 +104,6 @@ func TestSelfOrder_LanguagePicker_RefusesUnknownCode(t *testing.T) {
 	}
 }
 
-// A guest on their own phone (table QR) keeps their pick when the idle
-// reset brings them back to /self-order?table=<id>.
-func TestSelfOrder_LanguagePicker_TableLandingKeepsPick(t *testing.T) {
-	dp, _ := setupSelfOrderShopDeps(t)
-	tableID := createSelfOrderTable(t, dp, "T7", 100)
-	mux := http.NewServeMux()
-	registerSelfOrder(mux, dp)
-	g := newSelfOrderGuest(t, mux)
-
-	g.get("/self-order?table=" + tableID)
-	g.get("/self-order/language?code=tr")
-	rec := g.get("/self-order?table=" + tableID)
-	if got := g.selfOrderLang(); got != "tr" {
-		t.Fatalf("table landing dropped the pick: %q", got)
-	}
-	if !strings.Contains(rec.Body.String(), `<html lang="tr"`) {
-		t.Fatalf("table landing not in the picked language: %.200s", rec.Body.String())
-	}
-}
-
 // One installed language: nothing to pick, so no picker.
 func TestSelfOrder_LanguagePicker_HiddenWithOneLanguage(t *testing.T) {
 	dp, _ := setupSelfOrderShopDeps(t)

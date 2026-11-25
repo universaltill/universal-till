@@ -64,17 +64,40 @@ func TestLANCallerIsRefusedStaffSurfaces(t *testing.T) {
 
 // Till-to-till sync (ADR-0011/0033/0114) and the guest pages that have not
 // moved to the cloud yet (ADR-0157 §4) stay reachable from the LAN.
-func TestLANCallerReachesSyncHealthAndGuestPages(t *testing.T) {
+func TestLANCallerReachesSyncHealthTrackingAndAssets(t *testing.T) {
 	g := newGuard(t, nil)
 	for _, p := range []string{
 		"/api/sync/ping", "/api/sync/pair-request", "/api/sync/link", "/api/sync/orders/r-1/status",
 		"/healthz",
-		"/self-order", "/self-order/cart", "/api/self-order/basket", "/o/abc123", "/o/abc123/status",
+		"/o/abc123", "/o/abc123/status",
 		"/public/app.css", "/themes/monarch/theme.css", "/plugin-icons/x.png",
 		"/plugin-fonts/bundle-fonts.css", "/plugin-fonts/com.universaltill.language-th/2.0.0/NotoSansThai.woff2",
 	} {
 		if got := serve(t, g, lanPeer, p); got != http.StatusTeapot {
 			t.Errorf("LAN %s: got %d, want passed through", p, got)
+		}
+	}
+}
+
+// ut-docs#4338 (ADR-0159 §2): table ordering moved to the cloud, so a LAN
+// peer no longer reaches the self-order kiosk.
+func TestLANCallerRefusedSelfOrder(t *testing.T) {
+	g := newGuard(t, nil)
+	for _, p := range []string{"/self-order", "/self-order/cart", "/api/self-order/basket"} {
+		if got := serve(t, g, lanPeer, p); got != http.StatusForbidden {
+			t.Errorf("LAN %s: got %d, want 403", p, got)
+		}
+	}
+}
+
+// The till's own screen (loopback / own interface) still reaches the kiosk.
+func TestLocalCallerReachesSelfOrder(t *testing.T) {
+	g := newGuard(t, nil, "192.168.1.136")
+	for _, peer := range []string{"127.0.0.1:5000", "192.168.1.136:5000"} {
+		for _, p := range []string{"/self-order", "/api/self-order/basket"} {
+			if got := serve(t, g, peer, p); got != http.StatusTeapot {
+				t.Errorf("%s %s: got %d, want passed through", peer, p, got)
+			}
 		}
 	}
 }

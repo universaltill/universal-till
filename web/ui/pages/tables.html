@@ -215,10 +215,10 @@
                 {{ if .Enabled }}{{ T "tables.deactivate" }}{{ else }}{{ T "tables.activate" }}{{ end }}
               </button>
             </form>
-            {{/* Self-order QR (ut-docs#815): only offered for an enabled
-                 table — a disabled one is exactly the case /self-order's
-                 own table-param validation refuses, so a QR for it would
-                 just print a code that silently falls back to no table. */}}
+            {{/* Table QR (ut-docs#815, #4338): only offered for an enabled
+                 table — the cloud's /t/<token> page refuses a disabled
+                 one (it is left out of the guest_tables report), so a QR
+                 for it would print a code that cannot take orders. */}}
             {{ if .Enabled }}
             <button type="button" class="btn secondary" data-testid="table-qr-open"
                     hx-get="/api/tables/{{ .ID }}/qr" hx-target="#table-qr-body" hx-swap="innerHTML"

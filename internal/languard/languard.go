@@ -87,8 +87,10 @@ func newWithOwn(next http.Handler, allow []*net.IPNet, own func() []net.IP) http
 //   - /api/sync/*: till-to-till sync; each handler authenticates its caller
 //     (per-till bearer) or is unauthenticated by design and rate-limited.
 //   - /healthz.
-//   - the anonymous guest pages and the static files they load, until they
-//     move to the cloud (ADR-0157 §4).
+//   - order tracking (/o/*) and the static files it loads, until they move to
+//     the cloud (ADR-0157 §4, #4238). Table ordering already has: the QR opens
+//     the cloud page, so /self-order* is the till's own screen only
+//     (ADR-0159 §2, ut-docs#4338).
 //
 // A path that is not already clean ("/api/sync/../auth/login",
 // "/healthz/") is refused outright: the mux would only redirect it, and
@@ -98,12 +100,12 @@ func lanPath(p string) bool {
 	if path.Clean("/"+p) != p {
 		return false
 	}
-	if p == "/healthz" || p == "/self-order" {
+	if p == "/healthz" {
 		return true
 	}
 	for _, prefix := range []string{
 		"/api/sync/",
-		"/self-order/", "/api/self-order/", "/o/",
+		"/o/",
 		"/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/",
 	} {
 		if strings.HasPrefix(p, prefix) {

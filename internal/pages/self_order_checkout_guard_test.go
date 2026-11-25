@@ -131,34 +131,6 @@ func TestSelfOrderCheckout_ConcurrentSameBasketIsRefused(t *testing.T) {
 	}
 }
 
-// The in-flight guard is per basket: a table-QR guest checking out while
-// the walk-up kiosk's checkout is still in flight is not blocked.
-func TestSelfOrderCheckout_InFlightGuardIsPerBasket(t *testing.T) {
-	h := newCounterHeldHarness(t)
-	primary := newBlockingPrimary(t)
-	prev := heldSaleProxyClient
-	heldSaleProxyClient = &http.Client{Timeout: 10 * time.Second}
-	t.Cleanup(func() { heldSaleProxyClient = prev })
-	setReplicaSettings(t, h.dp.Settings, primary.srv.URL, "tok")
-	h.fillWalkUpBasket()
-
-	first := make(chan *httptest.ResponseRecorder, 1)
-	go func() { first <- h.post("/api/self-order/checkout", "") }()
-	select {
-	case <-primary.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("walk-up checkout never reached the main till")
-	}
-	rec, _ := h.tableOrder() // fatals unless the table checkout returns 200
-	close(primary.release)
-	if !strings.Contains(rec.Body.String(), "C-") {
-		t.Fatalf("table checkout confirmation carries no C-number: %s", rec.Body.String())
-	}
-	if rec := <-first; rec.Code != http.StatusOK {
-		t.Fatalf("walk-up checkout = %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
 // One source may POST checkout at most 20 times a minute; past that it gets
 // 429 before any work -- even with a full basket nothing is written. Another
 // source is unaffected.

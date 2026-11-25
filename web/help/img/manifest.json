@@ -81,7 +81,7 @@
       "tr": "c61225d2aac91d349f1c1434d7cc08122e29528b50ea8eda5c96cf5130aab4bf"
     },
     "display": {
-      "en": "12db6c8b282002a7fe8f74324662733ff389c82de5ddf6f85f18f035f1c007c1",
+      "en": "f081c5cec1f5c4b799381535211737cbeaec71b8054012a83a38eafed416fc39",
       "fa": "ef1e520d4e2494e7c88abb6f416df6c900f026243c2090d43a030f388b96c89c",
       "ar": "2dbfe8fc7883699c5a123da99a41b3a01e6423645b311081f1635395acfcee84",
       "tr": "c20220a5fe885de6f3158093143bca2b2ed2a7187085d91c3a6660d2985b3035"
@@ -123,7 +123,7 @@
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
     },
     "multitill": {
-      "en": "d7a3835fa6ee60b9b165b77efa1dd7786ef95daaa996b02fd7568a7cde0090f7",
+      "en": "6c3e94bec7ec55676c34341b4c52ee255e4aef7fcee34db2eac67baba43a5ce6",
       "fa": "268fe26a9cef33ac32276707b3a7b8cc848dedb14e945162d0da7d59c43047a8",
       "ar": "57c2dc97d3fb535c17c0f23900f5a398ba10b0f54b9dc66c7a2f8a9dafa6689c",
       "tr": "b6c50a109b42607b1afd80944976ba0ad0f1898b3403d38d31313113983ec51c"
@@ -183,7 +183,7 @@
       "tr": "86848964271c4b93b410f710458692be5a659bb2f709281800f32fb7a1bea21b"
     },
     "self-order": {
-      "en": "30f682dd1e22bbdd10ae56616d97ae030ae2e81cf39a8cd28c68104485b436c9",
+      "en": "ebc01c69ac2a004ea779fee6c01c98ddcbe0960f09378e19c915d4fce7d54b2c",
       "fa": "0f2d93e7c6fe041856ca69fc768c87d0d0f4b3fb237b61ebf52cffd0cf7ec70c",
       "ar": "71ef07b31cde41520cfd0d30ec68735013d3f00ab302414bad4396e835af6d18",
       "tr": "f843876b5ca0c604d8172354629f0929f808a56304a1f9d86d24a7e5fad1c301"
@@ -195,7 +195,7 @@
       "tr": "b12548cb86a39eb7b2e8cc05d0c1949a3600edb91918f8beb7f3bcc5361e491e"
     },
     "tables": {
-      "en": "b60c728140a658f9445d5f62bea73593493e717320b0faef3869e6fd8e11e68e",
+      "en": "55452808a14ff80b355509a24aee9783cbc22521cfa4d214cdbbecff6ce0e97e",
       "fa": "92efca9021beda1d92438c606c85977684727316a27d9fed4cc46ca38ac786b5",
       "ar": "dca318b7244ce7c53503dc3c048a0b002068950107ca1ce5663ff64f0b4c4906",
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
@@ -673,7 +673,7 @@
       "sha256": "ab74239dfa7ac36c41b5a146fdca4abc01f1b1e920c5da23ee5fc4d18321e20d"
     },
     "internal/pages/self_order_page.go": {
-      "sha256": "1ce6a6a761eade4e1b592cc2013a468fcb13f5797c9b7e0a95ca3375b7f6dcd7"
+      "sha256": "e5e7650545044acfd3ab11665eb8798c28b38e18c4ac203b35093dfa521f24b5"
     },
     "internal/pages/self_order_session_sweep.go": {
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
@@ -745,7 +745,7 @@
       "sha256": "e3f9d5af9b41565c4a2503cc33c02e04ee118e11790ba26e452c7e8bec1b49e8"
     },
     "internal/pages/tables_page.go": {
-      "sha256": "d33cfe5dd047c189b3ff08a4307a88fa55d91993e9af0d2388a083ce57ec3577"
+      "sha256": "0bbc314b54ab75420153d4d10bf768996e2d660163a5cd863d6c44472ceb7b33"
     },
     "internal/pages/tables_sync_proxy.go": {
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
@@ -1756,7 +1756,7 @@
       "sha256": "abab4028880d4238df12278174ad7e785a020704d75bf54ab071b2055a27f6fa"
     },
     "web/ui/pages/self_order.html": {
-      "sha256": "c13ab2cbfa5795626ebb8ecb5834644ad12af2cb5c53a590a41ce32d13dfc8ec"
+      "sha256": "eec7b99b58a4a654f7aad7928e602d62f7473b6c808260068f0a8985fc1dcfea"
     },
     "web/ui/pages/self_order_shop.html": {
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
@@ -1774,7 +1774,7 @@
       "sha256": "ae22fc94c92a11497fe68952504339b1f12be36b927477ea12c07504a9ebf32e"
     },
     "web/ui/pages/tables.html": {
-      "sha256": "2d5e5ce20cf01d8272af05195d1c9009059da489248b47b64bab0f14443523e1"
+      "sha256": "be82321ec43120668be1b86c83a46e82b5a957329115139166820eebc11f35e6"
     },
     "web/ui/pages/tap_settings.html": {
       "sha256": "cd9590cd237c6a8e8c8e28f13fd447183da45d0f314e7e713871c1f3e4802c56"
@@ -2125,7 +2125,7 @@
       "sha256": "1850cd6734aec8233d7b3cd8599b4c98773f0c6d9ae8a2e12623911eab0029da"
     },
     "web/ui/partials/table_qr.html": {
-      "sha256": "d2f400ec49b29f271136fb7c915fe3ff84d5d719424d5af56477116ffeb5f159"
+      "sha256": "1815fc3484ec8ed421df0236d0362ca8ed9377b2d4e8dee2921a2dd20d17cf45"
     },
     "web/ui/partials/tables_state.html": {
       "sha256": "d68c1fd35bbceb976cac247c8d31903c0cdd944d19c0793bc049372f7cee5012"

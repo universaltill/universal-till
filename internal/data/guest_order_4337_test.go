@@ -213,3 +213,67 @@ func TestHeldSales_SwapPayload(t *testing.T) {
 		t.Fatal("a missing row must never be swapped (or recreated)")
 	}
 }
+
+// ut-docs#4338: the Tables page QR asks for one enabled table's token.
+func TestEnsureTableGuestToken_ReturnsCreateTablesToken(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	id, _ := repo.CreateTable(ctx, "T1", "", 2, "rect", 100, 100)
+	var stored string
+	_ = dbo.DB.QueryRow(`SELECT guest_token FROM tables WHERE id = ?`, id).Scan(&stored)
+	got, err := repo.EnsureTableGuestToken(ctx, id)
+	if err != nil || got != stored || !guestTokenShape.MatchString(got) {
+		t.Fatalf("EnsureTableGuestToken = %q, %v; want stored %q", got, err, stored)
+	}
+}
+
+func TestEnsureTableGuestToken_MintsOnceForUntokenedTable(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	id, _ := repo.CreateTable(ctx, "T1", "", 2, "rect", 100, 100)
+	if _, err := dbo.DB.Exec(`UPDATE tables SET guest_token = NULL WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	a, err := repo.EnsureTableGuestToken(ctx, id)
+	if err != nil || !guestTokenShape.MatchString(a) {
+		t.Fatalf("first call = %q, %v", a, err)
+	}
+	b, _ := repo.EnsureTableGuestToken(ctx, id)
+	if a != b {
+		t.Fatalf("second call re-minted: %q vs %q", a, b)
+	}
+	var stored string
+	_ = dbo.DB.QueryRow(`SELECT guest_token FROM tables WHERE id = ?`, id).Scan(&stored)
+	if stored != a {
+		t.Fatalf("minted token not persisted: stored %q, returned %q", stored, a)
+	}
+}
+
+func TestEnsureTableGuestToken_DisabledTableReturnsEmptyAndMintsNothing(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	id, _ := repo.CreateTable(ctx, "T1", "", 2, "rect", 100, 100)
+	if err := repo.SetTableEnabled(ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbo.DB.Exec(`UPDATE tables SET guest_token = NULL WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.EnsureTableGuestToken(ctx, id)
+	if err != nil || got != "" {
+		t.Fatalf("disabled = %q, %v; want empty", got, err)
+	}
+	var n int
+	_ = dbo.DB.QueryRow(`SELECT COUNT(*) FROM tables WHERE id = ? AND guest_token IS NOT NULL`, id).Scan(&n)
+	if n != 0 {
+		t.Fatal("a disabled table was given a token")
+	}
+}
+
+func TestEnsureTableGuestToken_UnknownReturnsEmpty(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	got, err := repo.EnsureTableGuestToken(context.Background(), "nope")
+	if err != nil || got != "" {
+		t.Fatalf("unknown = %q, %v; want empty", got, err)
+	}
+}

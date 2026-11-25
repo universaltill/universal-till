@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -819,6 +820,30 @@ ORDER BY area_zone, label, id LIMIT ?`, limit)
 		return nil, fmt.Errorf("guest tables: iterate: %w", err)
 	}
 	return out, nil
+}
+
+// EnsureTableGuestToken returns an ENABLED table's guest token, minting one
+// first through the same guarded write GuestTables uses (`AND guest_token IS
+// NULL`), so a concurrent mint never replaces an issued token. "" (nil error)
+// when the table is unknown or disabled. Main till only (callers check).
+// updated_at is not bumped, same as GuestTables (ut-docs#4338).
+func (r *POSRepo) EnsureTableGuestToken(ctx context.Context, id string) (string, error) {
+	token, err := NewTableGuestToken()
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE tables SET guest_token = ? WHERE id = ? AND enabled = 1 AND guest_token IS NULL`, token, id); err != nil {
+		return "", fmt.Errorf("ensure table guest token: mint: %w", err)
+	}
+	var got string
+	err = r.db.QueryRowContext(ctx, `SELECT COALESCE(guest_token, '') FROM tables WHERE id = ? AND enabled = 1`, id).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("ensure table guest token: read: %w", err)
+	}
+	return got, nil
 }
 
 // TableByGuestToken looks a table up by its guest token, enabled or not

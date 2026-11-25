@@ -86,39 +86,3 @@ func TestSelfOrder_BasketEditsRefusedWhileCheckoutRuns_6926(t *testing.T) {
 		t.Fatalf("after EndTender want 2 lines, got %d", n)
 	}
 }
-
-// AC2: one table session's running checkout does not block another's basket.
-func TestSelfOrder_BasketEditRefusalIsPerBasket_6926(t *testing.T) {
-	dp, d := setupSelfOrderShopDeps(t)
-	tableA := createSelfOrderTable(t, dp, "T1", 100)
-	tableB := createSelfOrderTable(t, dp, "T2", 200)
-	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
-	seedStock(t, d, "itm-coffee", 10)
-
-	mux := http.NewServeMux()
-	registerSelfOrder(mux, dp)
-	registerSelfOrderShop(mux, dp)
-
-	a := newSelfOrderGuest(t, mux)
-	a.get("/self-order?table=" + tableA)
-	b := newSelfOrderGuest(t, mux)
-	b.get("/self-order?table=" + tableB)
-
-	if !a.engine(dp).TryBeginTender() {
-		t.Fatal("TryBeginTender refused")
-	}
-	defer a.engine(dp).EndTender()
-
-	if rec := a.post("/api/self-order/scan", "code=5000001"); rec.Code != http.StatusConflict {
-		t.Fatalf("A while paying: want 409, got %d", rec.Code)
-	}
-	if n := len(a.engine(dp).Lines()); n != 0 {
-		t.Fatalf("A's basket changed: %d lines", n)
-	}
-	if rec := b.post("/api/self-order/scan", "code=5000001"); rec.Code != http.StatusOK {
-		t.Fatalf("B must stay editable: %d %s", rec.Code, rec.Body.String())
-	}
-	if n := len(b.engine(dp).Lines()); n != 1 {
-		t.Fatalf("B's basket: %d lines, want 1", n)
-	}
-}
