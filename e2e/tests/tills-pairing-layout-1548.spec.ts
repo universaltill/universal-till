@@ -50,7 +50,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
         // Fail loudly rather than silently measuring the empty state again
         // if the partial, its poll, or the seed endpoint ever regresses.
         await expect(page.locator('.pairing-table')).toHaveCount(1);
-        await expect(page.locator('input[name="manager_pin"]')).toHaveCount(1);
+        await expect(page.locator('.pairing-table input[name="manager_pin"]')).toHaveCount(1);
 
         const overflow = await page.evaluate(() => ({
           scrollWidth: document.documentElement.scrollWidth,
