@@ -2202,6 +2202,7 @@
   "refund.error.outcome_unknown": "The payment provider did not confirm this refund, so it may already have been sent to the customer. Nothing was recorded. Tap Refund again on this screen to settle it, and do not refund by another method or reload the page.",
   "refund.error.refunded_not_recorded": "The money was refunded to the customer, but the till could not record this return. Do not refund it again. A manager must check it under Settings → Payments → Payments needing attention.",
   "refund.error.already_sent": "This refund was already sent back to the customer. Do not refund it again. Check the receipt's returns; if none is listed, a manager must check it under Settings → Payments → Payments needing attention.",
+  "refund.error.in_progress": "This refund is already being sent. Do not tap Refund again. Wait for it to finish, then check the receipt's returns.",
   "refund.error.journal_unavailable": "This till could not record the refund safely, so it was not sent. Nothing was refunded. Try again, or use another method.",
   "refund.error.partial": "Part of this refund was already sent back to the customer's card, but the rest failed. Nothing was recorded. Tap Refund again on this screen to finish it, and do not refund by another method or reload the page.",
   "refund.error.provider_declined": "The payment provider declined this refund — try again or choose another method",

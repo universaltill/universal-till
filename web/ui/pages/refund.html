@@ -17,7 +17,8 @@
 
 <div class="card" style="max-width:46rem">
   <p class="muted">{{ T "refund.help" }}</p>
-  <form id="refund-form" hx-post="/api/refund" hx-swap="none">
+  {{/* ut-docs#7045: Refund is disabled while its POST runs (double tap); hx-disinherit keeps the qty/total preview requests inside the form from inheriting it. */}}
+  <form id="refund-form" hx-post="/api/refund" hx-swap="none" hx-disabled-elt="#refund-submit" hx-disinherit="hx-disabled-elt">
     <input type="hidden" name="receipt" value="{{ .Sale.ReceiptNo }}">
     <!-- ut-docs#2415: a fresh id per page render, folded by POST /api/refund
          into its payment.<key>.refund idempotency key so a re-tap of Refund
@@ -87,7 +88,7 @@
               hx-target="this" hx-swap="innerHTML">{{ money 0 }}</strong>
     </div>
 
-    <button class="btn primary" type="submit" style="margin-top:.6rem">{{ T "refund.submit" }}</button>
+    <button id="refund-submit" class="btn primary" type="submit" style="margin-top:.6rem">{{ T "refund.submit" }}</button>
     <div id="refund-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
   </form>
 </div>

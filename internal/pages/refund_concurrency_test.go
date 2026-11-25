@@ -37,10 +37,19 @@ func (r *refCardRig) gateRefundHook(t *testing.T) *hookGate {
 }
 
 func (r *refCardRig) postRefundAsync(ctx context.Context, receipt string, qty int) <-chan *httptest.ResponseRecorder {
+	return r.postRefundAttemptAsync(ctx, receipt, qty, "")
+}
+
+// postRefundAttemptAsync is postRefundAsync with the refund screen's per-render
+// refund_attempt_id (omitted when empty), ut-docs#7045.
+func (r *refCardRig) postRefundAttemptAsync(ctx context.Context, receipt string, qty int, attemptID string) <-chan *httptest.ResponseRecorder {
 	out := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/api/refund",
-			strings.NewReader(fmt.Sprintf("receipt=%s&qty_0=%d&method=demopay", receipt, qty))).WithContext(ctx)
+		form := fmt.Sprintf("receipt=%s&qty_0=%d&method=demopay", receipt, qty)
+		if attemptID != "" {
+			form += "&refund_attempt_id=" + attemptID
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader(form)).WithContext(ctx)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		r.mux.ServeHTTP(rec, req)

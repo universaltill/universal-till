@@ -69,3 +69,9 @@ func (l *keyedLocks) drop(key string, e *keyedLockEntry) {
 		delete(l.m, key)
 	}
 }
+
+// refundAttemptInFlight holds (original sale id, refund_attempt_id) pairs whose
+// POST /api/refund is running (ut-docs#7045): a double tap of one Refund form
+// is refused at once instead of parking behind refundSaleLocks and then
+// fitting as a second refund. Own key space, never tapLegInFlight's.
+var refundAttemptInFlight = newKeyedInFlight()

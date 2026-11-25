@@ -135,7 +135,9 @@ inside the return sale's `CompleteSale` transaction. If the return does not
 commit after the provider refunded, `/api/refund` appends `warned` with reason
 `refund_no_return` at once, and boot does the same for a `captured` refund leg;
 a refund leg is never reversed, re-sent or re-recorded. A key already `captured`, `warned`
-or `resolved` is refused before the provider is asked. Cash and hookless
+or `resolved` is refused before the provider is asked. A second `/api/refund` for the same
+sale and `refund_attempt_id` while the first runs is refused with 409
+`refund.error.in_progress` (in-memory, ut-docs#7045). Cash and hookless
 refunds write nothing. No migration: `refund_no_return` is a reason on the
 existing `captured -> warned` move.
 

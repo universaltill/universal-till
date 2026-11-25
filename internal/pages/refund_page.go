@@ -575,6 +575,25 @@ func refundCharges(detail data.SaleDetail, guard refundGuardState, num, den int6
 
 // registerRefund mounts the refund screen + API (docs: refunds.md, G27/G28).
 // The refund gate reads d.AuthSvc via checkOrElevate (ut-docs#3134).
+// refundAttemptIDFromForm is the client's per-render refund token, or "" when
+// missing, oversized or in the reversal id space (ut-docs#2415, #6601).
+//
+// Bound the client-supplied token: it's unauthenticated form input
+// used verbatim as (part of) the device-facing request_id, and a
+// genuine one is always a UUID (36 chars). An oversized/malformed
+// value can't do more than lose this attempt's retry-safety (the
+// guard-state fold already confines any collision to
+// same-sale/same-line/same-amount), but there's no reason to let
+// arbitrary-length operator input reach the bridge/device's own
+// `seen` map at all.
+func refundAttemptIDFromForm(form url.Values) string {
+	id := strings.TrimSpace(form.Get("refund_attempt_id"))
+	if len(id) > 128 || strings.HasPrefix(id, reversalRequestIDPrefix) {
+		return "" // too long, or in the reversal id space (ut-docs#6601)
+	}
+	return id
+}
+
 func registerRefund(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 	authOff := auth.Disabled(os.Getenv("UT_AUTH"))
@@ -783,6 +802,22 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		refundAttemptID := refundAttemptIDFromForm(r.Form)
+		// ut-docs#7045: one run per refund attempt. A second submit of the same form
+		// while the first is still running is refused here, before it waits for the
+		// sale lock below: once the first commits, the second's leg key changes
+		// (returnedQtyByLine folds in) and a partial refund would fit and be sent
+		// twice. No attempt id (old form, bad token) -> sale lock only, as before.
+		if refundAttemptID != "" {
+			inFlightKey := detail.ID + "\x00" + refundAttemptID
+			if !refundAttemptInFlight.acquire(inFlightKey) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.in_progress", "refund",
+					fmt.Errorf("refund attempt %s on sale %s already running", refundAttemptID, detail.ID))
+				return
+			}
+			defer refundAttemptInFlight.release(inFlightKey)
+		}
+
 		// ut-docs#6742: one refund per original sale at a time on this till.
 		// Everything below (guard state, leg caps, provider call, the
 		// recorded return and its leg rows) is a read-then-write; without
@@ -931,18 +966,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// so the same key; any refund that has since committed shifts the
 		// snapshot and mints a fresh key, forcing the device to print its
 		// own receipt instead of replaying a stale one.
-		refundAttemptID := strings.TrimSpace(r.Form.Get("refund_attempt_id"))
-		// Bound the client-supplied token: it's unauthenticated form input
-		// used verbatim as (part of) the device-facing request_id, and a
-		// genuine one is always a UUID (36 chars). An oversized/malformed
-		// value can't do more than lose this attempt's retry-safety (the
-		// guard-state fold above already confines any collision to
-		// same-sale/same-line/same-amount), but there's no reason to let
-		// arbitrary-length operator input reach the bridge/device's own
-		// `seen` map at all.
-		if len(refundAttemptID) > 128 || strings.HasPrefix(refundAttemptID, reversalRequestIDPrefix) {
-			refundAttemptID = "" // too long, or in the reversal id space (ut-docs#6601)
-		}
 		refundPayload := map[string]any{
 			"method":           method,
 			"amount":           refundTotal.Minor(),
