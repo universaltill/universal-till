@@ -816,6 +816,9 @@ var PerTillSettingPrefixes = []string{
 	"restore.",
 	// ut-docs#6538: whether THIS main till takes phone card reader pairing.
 	"card_readers.phone_pairing",
+	// ut-docs#6538 phase 2: the phone of its main THIS additional till used
+	// last (its own picker default).
+	"card_readers.relay_last_ref",
 	// ut-docs#6955: whether THIS desktop till lets other devices on its network in.
 	"lan.access",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,

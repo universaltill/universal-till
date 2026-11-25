@@ -71,10 +71,17 @@ type ClientOptions struct {
 	// ut-docs#2945). Coalesced: frames arriving while it runs make one
 	// more call with the latest payload. The receiver decides whether to
 	// act — the frame only names a version.
-	OnFleet     func(ctx context.Context, f FleetPayload)
-	OnLost      func(ctx context.Context, cause string) // an established link died without a bye
-	OnRevoked   func(ctx context.Context)               // the main till revoked this till; dialling stops (once per refusal episode)
-	WhileLinked func(ctx context.Context)               // every RecheckEvery while linked
+	OnFleet func(ctx context.Context, f FleetPayload)
+	// OnRelayResult / OnRelayLost: the main till's one-way frames about a
+	// collect this till relayed to a phone reader (ut-docs#6538 phase 2).
+	// They run on the link's reader goroutine: they must not block or touch
+	// the database. ok is false when the result frame failed the strict
+	// decode (r then carries whatever key could be read).
+	OnRelayResult func(p *Peer, r ReaderResult, ok bool)
+	OnRelayLost   func(p *Peer, l ReaderRelayLost)
+	OnLost        func(ctx context.Context, cause string) // an established link died without a bye
+	OnRevoked     func(ctx context.Context)               // the main till revoked this till; dialling stops (once per refusal episode)
+	WhileLinked   func(ctx context.Context)               // every RecheckEvery while linked
 }
 
 // DefaultClientOptions returns ADR-0114's client timings.
@@ -311,6 +318,15 @@ func NewClient(opts ClientOptions) *Client {
 // Linked reports whether a link is up (the main till's hello arrived and
 // the link has not dropped since).
 func (c *Client) Linked() bool { return c.linked.Load() }
+
+// Link is the open link to the main till while Linked, else nil. The relay
+// uses it to send reader.list / reader.relay requests (ut-docs#6538).
+func (c *Client) Link() *Peer {
+	if !c.linked.Load() {
+		return nil
+	}
+	return c.cur.Load()
+}
 
 // LinkChanged is signalled (coalesced, capacity 1) whenever Linked flips —
 // the pull loop re-reads its polling floor on it. One consumer.
@@ -709,9 +725,28 @@ func (c *Client) handler(string) RequestHandler { return nil }
 
 func (c *Client) gotHello(*Peer, Hello, json.RawMessage) { poke(c.helloIn) }
 
-func (c *Client) oneWay(string) bool { return false }
+func (c *Client) oneWay(typ string) bool {
+	return typ == TypeReaderRelayResult || typ == TypeReaderRelayLost
+}
 
-func (c *Client) gotMessage(_ *Peer, env Envelope) {
+func (c *Client) gotMessage(p *Peer, env Envelope) {
+	switch env.Type {
+	case TypeReaderRelayResult:
+		if c.opts.OnRelayResult == nil {
+			return
+		}
+		if r, err := DecodeReaderResult(env.Payload); err == nil {
+			c.opts.OnRelayResult(p, r, true)
+		} else {
+			c.opts.OnRelayResult(p, ReaderResult{IdempotencyKey: readerResultKey(env.Payload)}, false)
+		}
+		return
+	case TypeReaderRelayLost:
+		if l, err := DecodeReaderRelayLost(env.Payload); err == nil && c.opts.OnRelayLost != nil {
+			c.opts.OnRelayLost(p, l)
+		}
+		return
+	}
 	if env.Type == TypeCloudCheckin {
 		// Nothing in the payload is acted on: the check-in it triggers is
 		// this till's own, authenticated, and fetches its own state.

@@ -128,6 +128,18 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		// copy up from its cursor (ut-docs#5074).
 		d.RequestSalesMirrorPull()
 	}
+	// ut-docs#6538 phase 2: the main's verdict / loss for a sale this till
+	// relayed to a phone reader. Both are non-blocking hand-offs.
+	opts.OnRelayResult = func(p *fleetlink.Peer, r fleetlink.ReaderResult, ok bool) {
+		if rc := d.RelayReaders; rc != nil && p != nil {
+			rc.OnResult(p, r, ok)
+		}
+	}
+	opts.OnRelayLost = func(p *fleetlink.Peer, l fleetlink.ReaderRelayLost) {
+		if rc := d.RelayReaders; rc != nil && p != nil {
+			rc.OnLost(p, l)
+		}
+	}
 	opts.OnSync = func(_ context.Context, scopes []fleetlink.Scope) {
 		// One full pull covers every scope the HTTP pull carries (admin,
 		// plugins and stock ride the same tick); held sales, tables and

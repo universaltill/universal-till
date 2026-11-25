@@ -97,6 +97,12 @@ type Hello struct {
 	// no such field, and decodes with this simply empty (Go's
 	// encoding/json). Display-only on my. — never used for auth.
 	CloudDeviceID string `json:"cloud_device_id,omitempty"`
+	// ReaderRelay is, on the main till's hello, true while it relays an
+	// additional till's sale to a paired phone reader (ut-docs#6538 phase 2,
+	// ADR-0198 amendment 2026-11-25). Advertised only while
+	// card_readers.phone_pairing is on; an older main has none, so an
+	// additional till offers no relayed reader then (fail closed).
+	ReaderRelay bool `json:"reader_relay,omitempty"`
 }
 
 // cloudDeviceIDPattern bounds the charset a hello's cloud_device_id may use.

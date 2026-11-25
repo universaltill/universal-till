@@ -204,7 +204,10 @@ type rig struct {
 	readers  map[string]Reader // by id
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { return newRigCfg(t, nil) }
+
+// newRigCfg is newRig with a hook to adjust the Service's Config.
+func newRigCfg(t *testing.T, adjust func(r *rig, c *Config)) *rig {
 	t.Helper()
 	cfg := fleetlink.DefaultConfig()
 	cfg.PingInterval = 50 * time.Millisecond
@@ -213,7 +216,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{t: t, broker: newFakeBroker(), readers: map[string]Reader{},
 		attempts: &fakeAttempts{m: map[string]data.PaymentAttempt{}}}
 	r.hub = fleetlink.NewHub(fleetlink.HubOptions{Config: cfg})
-	r.svc = New(Config{
+	cfgSvc := Config{
 		Link: r.hub,
 		ByRef: func(_ context.Context, ref string) (Reader, bool) {
 			r.mu.Lock()
@@ -236,7 +239,11 @@ func newRig(t *testing.T) *rig {
 		TokensPerMinute: 3,
 		Margin:          time.Second,
 		AckTimeout:      time.Second,
-	})
+	}
+	if adjust != nil {
+		adjust(r, &cfgSvc)
+	}
+	r.svc = New(cfgSvc)
 	r.hub.SetReaderSink(r.svc)
 	r.hub.HandleReader(fleetlink.TypeReaderToken, r.svc.TokenHandler)
 	t.Cleanup(r.hub.Close)
@@ -869,4 +876,43 @@ func TestProgressNamesTheReaderAndPhase(t *testing.T) {
 	}
 	ph.send(t, fleetlink.TypeReaderResult, "", fleetlink.ReaderResult{IdempotencyKey: key, Status: fleetlink.ResultCancelled})
 	await(t, res)
+}
+
+// G1 (review 2026-11-25): a phone that acks accepted:false started nothing, so
+// the unused PaymentIntent is cancelled and the till gets start_failed/busy.
+func TestPhoneAckNotAcceptedCancelsThePaymentIntent(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	ctx, cancel := ctxFor(5 * time.Second)
+	defer cancel()
+	res := r.collect(ctx, "rd_aa", req(key, 500))
+	f := ph.recv(t)
+	ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: false})
+	got := await(t, res)
+	if got.Status != devicepay.StatusDeclined || got.DeclineCode != "start_failed" || got.Reason != devicepay.ReasonReaderBusy {
+		t.Fatalf("accepted:false ack = %+v, want declined start_failed/reader_busy", got)
+	}
+	if r.broker.count("session_cancel") != 1 {
+		t.Fatal("the unused PaymentIntent was not cancelled")
+	}
+}
+
+// G2 (review 2026-11-25): no ack in time means the phone may have started, so the
+// answer is pending/link_lost (never declined) and the PaymentIntent is NOT cancelled.
+func TestAckTimeoutIsPendingNeverDeclinedAndKeepsThePaymentIntent(t *testing.T) {
+	r := newRigCfg(t, func(_ *rig, c *Config) { c.AckTimeout = 150 * time.Millisecond })
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	ctx, cancel := ctxFor(5 * time.Second)
+	defer cancel()
+	res := r.collect(ctx, "rd_aa", req(key, 500))
+	_ = ph.recv(t) // the phone got the collect frame and never answers
+	got := await(t, res)
+	if got.Status != devicepay.StatusPending || got.Reason != devicepay.ReasonLinkLost {
+		t.Fatalf("ack timeout = %+v, want pending/link_lost", got)
+	}
+	if r.broker.count("session_cancel") != 0 {
+		t.Fatal("a possibly-started PaymentIntent was cancelled on an ack timeout")
+	}
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
+	"github.com/universaltill/universal-till/internal/readerlink"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -587,6 +588,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// accepts requests; the revoke handler and every NudgeLink change point
 	// read dp.Link at request time.
 	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	// ut-docs#6538 phase 2: an additional till's relay to its main's phones.
+	// Built before wireReaderLink, which binds it; it reads dp.LinkClient (set
+	// below) when it is used, and offers nothing without a pinned link.
+	dp.RelayReaders = readerlink.NewRelayClient(func() readerlink.RelayConn {
+		if dp.LinkClient == nil {
+			return nil
+		}
+		if p := dp.LinkClient.Link(); p != nil {
+			return p
+		}
+		return nil
+	}, nil)
 	wireReaderLink(dp) // ut-docs#6538 R1b: paired phone card readers ride the same hub (dark behind card_readers.phone_pairing)
 	// Always built: a till becomes a main till without restarting (a replica
 	// refuses the pending-link route before it is used).

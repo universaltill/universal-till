@@ -168,6 +168,7 @@
   {{/* ut-docs#6538: phone card readers pair to the main till only. Each
        fragment renders its own card (a flag-off answer is 204: no empty card). */}}
   {{ if not .SyncPrimary }}
+  <div hx-get="/ui/tills/reader-settings" hx-trigger="load" hx-swap="outerHTML"></div>
   <div hx-get="/ui/tills/reader-requests" hx-trigger="load" hx-swap="outerHTML"></div>
   <div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
   {{ end }}

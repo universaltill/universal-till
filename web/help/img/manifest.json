@@ -33,10 +33,10 @@
       "tr": "2f6fbc07f6741833179091fbfb5933d9720760612edd5e0b723fde0d96fa5f86"
     },
     "card-readers": {
-      "en": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
-      "fa": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
-      "ar": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
-      "tr": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd"
+      "en": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
+      "fa": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
+      "ar": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
+      "tr": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831"
     },
     "catalog": {
       "en": "658965007f6585cb187a3a56a535cadbdad187c876a952a294310ddb4861b73c",
@@ -123,7 +123,7 @@
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
     },
     "multitill": {
-      "en": "6c3e94bec7ec55676c34341b4c52ee255e4aef7fcee34db2eac67baba43a5ce6",
+      "en": "3e594ecb2c1d5f7cacf84a762ed89c2998260d12a2cd61214986f97e9edc475c",
       "fa": "268fe26a9cef33ac32276707b3a7b8cc848dedb14e945162d0da7d59c43047a8",
       "ar": "57c2dc97d3fb535c17c0f23900f5a398ba10b0f54b9dc66c7a2f8a9dafa6689c",
       "tr": "b6c50a109b42607b1afd80944976ba0ad0f1898b3403d38d31313113983ec51c"
@@ -201,10 +201,10 @@
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
     },
     "tap-to-pay": {
-      "en": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
-      "fa": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
-      "ar": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0",
-      "tr": "5f2dc9a566ef314801a749e0d9a5b6c693eecd908ba03034a877fcf755d4fce0"
+      "en": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
+      "fa": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
+      "ar": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
+      "tr": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08"
     },
     "tax-codes": {
       "en": "a9aea0cf38a7176e7bfc8ce99928988247a9bbe4a02695501d27d73da6c0b321",
@@ -304,10 +304,10 @@
       "sha256": "a0931b7243bc31f483adb06acb473165e55cfd79a9efc803d0f8d0f0ee957bdf"
     },
     "internal/pages/card_reader_tender.go": {
-      "sha256": "23f844f3f11026666ded10abe3f3460f7183a42da0c167d12339e70510792416"
+      "sha256": "02f485b976079924d1a11103237196583c60259023b1719b3e44ce47a6ceddbc"
     },
     "internal/pages/card_readers_page.go": {
-      "sha256": "5def973af69fad9589808fe15192dd6a6aedca39d522555f0bcf9d85af8e4099"
+      "sha256": "f331e86646a31632a0228cfce5a19eb46f78859995fd0e2ce49f259478f42d10"
     },
     "internal/pages/catalog/handlers.go": {
       "sha256": "716b360b442a5577c5514eb39aff310954f1157e9ed60e99053097dc4f3334a5"
@@ -382,7 +382,7 @@
       "sha256": "53a7fd7d2129d96db8d453e69462de1cbfbe9ecf6c39c33b6899b1fc47046f6a"
     },
     "internal/pages/common/deps.go": {
-      "sha256": "6f5a2d14e210fe67776c4bf80b05baceef8ff62a8e60d8db01536f8c605cd98b"
+      "sha256": "e2801d318004a5cb9fcea93abc9e645b704721140a30511e926988c56061e5e5"
     },
     "internal/pages/common/errors.go": {
       "sha256": "14dd81a543422807ab6c8ed53b5d3fddad0a94a08a0368901b34f745dfb01f86"
@@ -433,7 +433,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "d7172bb9e05b5c8f9e6b24cdf87511e49e62d370887b287954086cdebb942bd6"
+      "sha256": "ae9b6f8824dfae72b925733ce093d9b141fe4b70a8b2d6587f4676339bfdca28"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -514,7 +514,7 @@
       "sha256": "3bf89b328b8d6b2a4429605b0c59c4718a2ea6bc05e206a7f853ec856780519c"
     },
     "internal/pages/init.go": {
-      "sha256": "649c30096544b5041818a12e086692102840ff7b696b7d5276fce92d37972c49"
+      "sha256": "26b61f60b5659c6d3093775cda042df74d59ad31b920e5974e44a13d3c41ca9d"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -639,6 +639,9 @@
     "internal/pages/promotions_page.go": {
       "sha256": "7526d4d57a0652b0e92eeb90b603ceb1355a74d10f012ffcca8b463684468c0f"
     },
+    "internal/pages/reader_relay.go": {
+      "sha256": "74277298b9970d1c4fbeb66860344845791a651410c7ce219c71618965235166"
+    },
     "internal/pages/receipt_designer.go": {
       "sha256": "ccc77e85e8fe77a281cf8cb79702ada3b9be86fb5a42172f4048fd4c25189451"
     },
@@ -727,7 +730,7 @@
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
     },
     "internal/pages/sync_link_client.go": {
-      "sha256": "95af4a07a62601226c5113ec9de5b1ad21fd252850787f5904634ea3d9135630"
+      "sha256": "2e93566fdf04e064650a5bc61eaf43ae6bf103ade02478a6d4898a7ab2986aed"
     },
     "internal/pages/sync_push_halving.go": {
       "sha256": "0d8424c13d6a573ee5081b7ab6f65a6f4c7ff70933044858c4a62bf0d4b634ce"
@@ -754,7 +757,7 @@
       "sha256": "0e33aee588d0ee2386e9558e04ec71b180bfbce5e9ce8d22499a2903567c012f"
     },
     "internal/pages/tap_offering.go": {
-      "sha256": "d9503d212b4647918ca738e637b373110de2bb3fb183178102f151b35ce03350"
+      "sha256": "19b5a0259062df28bcb526059a3b5d90742ec31ee2cd9f152d2ccf52abbcf982"
     },
     "internal/pages/tap_settings_page.go": {
       "sha256": "9106b0c0c7fbb29c530a1711deb70815eaab1440153c1d87fb7df2a1daa9aaed"
@@ -1783,7 +1786,7 @@
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
     },
     "web/ui/pages/tills.html": {
-      "sha256": "205b98ae57a293e85cb09bd79d1fedb89cc24979abcd0463ee0d417350ccc3e5"
+      "sha256": "93b3b63de5bd24ccc652622352fc00060b17e627ee62d919603d938a1a2643f6"
     },
     "web/ui/pages/translations.html": {
       "sha256": "669732ceb602e1b75cb8d829b7c8bb10c998da311be19b93319fd6efec319d79"
@@ -2153,6 +2156,9 @@
     },
     "web/ui/partials/tills_reader_requests.html": {
       "sha256": "c398d248a1677f6e3eaacce30d4078ac0f781d07e1861b6de2286fbc647ff8cd"
+    },
+    "web/ui/partials/tills_reader_settings.html": {
+      "sha256": "501789ea6cf1a885d5653a5be1bf25a483fea0a64380e2d006acd3a4c65d6368"
     },
     "web/ui/partials/tills_roster.html": {
       "sha256": "5312e95fd87b936fa5fc951a7702c4ca15fcc771bcffd04d09346bd8c9a8be34"

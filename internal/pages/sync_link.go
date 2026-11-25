@@ -80,6 +80,12 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 				pin := c.Pin()
 				h.TLSPin, h.NextPin = &pin, c.NextPin()
 			}
+			// ut-docs#6538 phase 2: an additional till may send a sale to a
+			// paired phone through this main, only while phone pairing is on;
+			// an older main advertises nothing, so no relayed reader is offered.
+			if d.ReaderPay != nil && d.ReaderPay.RelayOffered(ctx) {
+				h.ReaderRelay = true
+			}
 			return h
 		},
 		// The key served next during a rotation, for the reader hello

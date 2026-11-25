@@ -42,7 +42,7 @@ An additional till takes card taps on its own iPhone, set up the same four steps
 
 - **It needs the internet to take a tap.** With no internet the till keeps selling: take cash or another payment instead. Tap to Pay on iPhone comes back by itself when the connection does.
 - **Refunds are done on the main till.** To refund a card tap, open the sale on the main till and refund it there. An additional till will tell you so and will not send a refund.
-- **Card readers stay on the main till.** Using a spare phone as a card reader is for the main till only (see [Card readers](/help/card-readers)).
+- **Phone card readers belong to the main till.** A spare phone is paired to the main till as a card reader; an additional till can send a sale to it through the main till (see [Card readers](/help/card-readers)).
 - **Set up an older additional till again if asked.** A till set up a long time ago may say it needs to be set up again before it can take Tap to Pay. Ask the shop owner to set it up again; nothing was charged and other payments still work.
 
 ## What can go wrong

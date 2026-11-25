@@ -2403,3 +2403,15 @@ func TestRestoreDropsBackupCopyReminder(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6538 phase 2: whether THIS till takes phone readers, and which
+// relayed phone THIS till used last, are the till's own. An admin dump never
+// carries them and an admin pull never overwrites them, or one till's picker
+// default (and, worse, the phone-pairing switch) would follow another's.
+func TestPhoneReaderSettingsAreNeverSynced(t *testing.T) {
+	for _, k := range []string{"card_readers.phone_pairing", "card_readers.relay_last_ref"} {
+		if !perTillSetting(k) {
+			t.Errorf("%s is not per-till (PerTillSettingPrefixes): the admin sync would carry it", k)
+		}
+	}
+}
