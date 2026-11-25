@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ut-docs#6915 (API 24-30 full-backup-content): same exclusions as
      data_extraction_rules.xml, so a restored install lacks secrets/install-id
-     and is detected as restored (internal/enroll/restored.go). -->
+     and is detected as restored (internal/enroll/restored.go). ut-docs#6918:
+     keys/ (off-site backup key) and fiscal/ (signing-device credential) are
+     excluded too; each is set up or linked again on a new phone. -->
 <full-backup-content>
     <exclude domain="file" path="secrets" />
     <exclude domain="file" path="tls" />
+    <exclude domain="file" path="keys" />
+    <exclude domain="file" path="fiscal" />
 </full-backup-content>
