@@ -16,6 +16,7 @@ struct UniversalTillApp: App {
                 .onAppear {
                     till.boot()
                     TapToPayRegistration.activate()
+                    ReaderController.shared?.activate()
                 }
         }
         .onChange(of: scenePhase) { phase in
@@ -26,8 +27,11 @@ struct UniversalTillApp: App {
             if phase == .active {
                 till.resume()
                 TapToPayRegistration.activate()
+                // Phone card-reader mode (ut-docs#6538): nil unless UT_READER_MODE is on.
+                ReaderController.shared?.activate()
             } else if phase == .background {
                 TapToPayRegistration.deactivate()
+                ReaderController.shared?.deactivate()
             }
         }
     }

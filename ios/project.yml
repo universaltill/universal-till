@@ -64,6 +64,12 @@ targets:
         UT_TAP_TO_PAY_INFO: $(UT_TAP_TO_PAY)
         # YES = Stripe's simulated Tap to Pay reader (no card, no entitlement).
         UT_TAP_TO_PAY_SIMULATED: "NO"
+        # Phone card-reader mode (ut-docs#6538, ADR-0198 §6) — default OFF, Debug
+        # dev-signed builds only, and it needs Tap to Pay switched on as well (same
+        # entitlement). Pinned like UT_TAP_TO_PAY by
+        # scripts/ci/guard-ios-tap-to-pay-default-off.sh.
+        UT_READER_MODE: "NO"
+        UT_READER_MODE_INFO: $(UT_READER_MODE)
         # CODE_SIGN_ENTITLEMENTS picks one of these by the flag's value.
         # Not XcodeGen's `entitlements:` key: that sets it for every
         # configuration, Release included.
@@ -89,6 +95,8 @@ targets:
           # Moves to Release only in #6460.
           UT_TAP_TO_PAY: "NO"
           UT_TAP_TO_PAY_INFO: "NO"
+          UT_READER_MODE: "NO"
+          UT_READER_MODE_INFO: "NO"
           CODE_SIGN_ENTITLEMENTS: ""
     info:
       path: UniversalTill/Info.plist
@@ -144,6 +152,8 @@ targets:
         # The build's Tap to Pay switch, read by TapToPayFeature ("YES"/"NO").
         UTTapToPayEnabled: $(UT_TAP_TO_PAY_INFO)
         UTTapToPaySimulated: $(UT_TAP_TO_PAY_SIMULATED)
+        # The build's phone-reader switch, read by ReaderFeature ("YES"/"NO").
+        UTReaderModeEnabled: $(UT_READER_MODE_INFO)
         # Export compliance, answered once here so App Store Connect doesn't
         # hold every TestFlight build on the questionnaire (ut-docs#3069).
         # The till uses only standard, published algorithms from Go's
@@ -162,6 +172,13 @@ targets:
     sources:
       - path: UniversalTillTests
       - path: UniversalTill/TapToPay/Core
+      # Reader mode (ut-docs#6538): pure Swift, no Stripe, no Mobile.
+      - path: UniversalTill/Reader/Core
+      # The reader frame goldens the Go and Kotlin tests share (Go owns them;
+      # read-only here), bundled as testdata/reader_*.json.
+      - path: ../internal/fleetlink/testdata
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.pos.taptopaytests

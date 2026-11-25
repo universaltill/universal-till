@@ -37,6 +37,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.pos
         UT_TAP_TO_PAY: "NO" # default OFF
         UT_TAP_TO_PAY_INFO: $(UT_TAP_TO_PAY)
+        UT_READER_MODE: "NO"
+        UT_READER_MODE_INFO: $(UT_READER_MODE)
         UT_TTP_ENTITLEMENTS_YES: UniversalTill/UniversalTill.dev.entitlements
         UT_TTP_ENTITLEMENTS_NO: ""
       configs:
@@ -45,10 +47,13 @@ targets:
         Release:
           UT_TAP_TO_PAY: "NO"
           UT_TAP_TO_PAY_INFO: "NO"
+          UT_READER_MODE: "NO"
+          UT_READER_MODE_INFO: "NO"
           CODE_SIGN_ENTITLEMENTS: ""
     info:
       properties:
         UTTapToPayEnabled: $(UT_TAP_TO_PAY_INFO)
+        UTReaderModeEnabled: $(UT_READER_MODE_INFO)
   UniversalTillTapToPayTests:
     type: bundle.unit-test
     settings:
@@ -156,6 +161,24 @@ fixture; edit "${FIX}/ios/UniversalTill/UniversalTill.dev.entitlements" '</dict>
 	<true/>
 </dict>'
 assert_fails "an extra key in the dev entitlements"
+
+# 4b. Phone card-reader mode (UT_READER_MODE, ut-docs#6538) is pinned the same way.
+fixture; edit "${YML}" '        UT_READER_MODE: "NO"
+        UT_READER_MODE_INFO: $(UT_READER_MODE)' '        UT_READER_MODE: "YES"
+        UT_READER_MODE_INFO: $(UT_READER_MODE)'
+assert_fails "base UT_READER_MODE: \"YES\""
+fixture; edit "${YML}" '          UT_READER_MODE: "NO"
+          UT_READER_MODE_INFO: "NO"
+' ''
+assert_fails "Release without UT_READER_MODE pinned off"
+fixture; edit "${YML}" '          UT_READER_MODE_INFO: "NO"' '          UT_READER_MODE_INFO: "YES"'
+assert_fails "Release UT_READER_MODE_INFO: \"YES\""
+fixture; edit "${YML}" 'UTReaderModeEnabled: $(UT_READER_MODE_INFO)' 'UTReaderModeEnabled: $(UT_READER_MODE)'
+assert_fails "UTReaderModeEnabled read from the raw flag"
+fixture; printf '      - run: xcodebuild build UT_READER_MODE=YES\n' >> "${FIX}/.github/workflows/ios-ci.yml"
+assert_fails "workflow passes UT_READER_MODE=YES"
+fixture; printf '      - run: xcodebuild build UT_READER_MODE=NO\n' >> "${FIX}/.github/workflows/ios-ci.yml"
+assert_passes "workflow passes UT_READER_MODE=NO"
 
 # 5. The real tree must pass.
 if bash "${GUARD}" >"${OUT}" 2>&1; then

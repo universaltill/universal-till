@@ -250,7 +250,7 @@ panel yet):
 | C | Flag-on Debug build (portal steps done) | Xcode signs it without a provisioning error, and `codesign` shows `com.apple.developer.proximity-reader.payment.acceptance` = true. The app launches and the till works normally. There are no prompts and no banner, because nothing calls Setup yet and prewarm waits for a completed Setup. |
 | D | Flag-on build: background, then foreground, five times | No crash, no prompt, and the till stays usable. |
 | E | Flag-on build on an iPad | Launches normally and shows nothing about Tap to Pay. |
-| F | Unit tests (above) | All tests pass (46 today). |
+| F | Unit tests (above) | All tests pass (169 today). |
 | G | Release build with `UT_TAP_TO_PAY=YES` on the command line, unsigned | `UTTapToPayEnabled` in the built `Info.plist` is `NO`, and `-showBuildSettings` shows an empty `CODE_SIGN_ENTITLEMENTS`. |
 
 **After #6455 (host fn), #6456 (plugin), #6454/#3055 (cloud broker) and
@@ -293,6 +293,36 @@ work in a sandbox, https://docs.stripe.com/terminal/references/testing).
 15. VoiceOver and Dynamic Type XXL on the chip and the banner.
 16. Refund a tap sale from the till: the refund appears on the connected
     account.
+
+## Phone card-reader mode (development, ut-docs#6538)
+
+The iPhone can also be a **card reader for the shop's main till** (ADR-0198 §6): the
+main creates the PaymentIntent, sends the collect over the pinned LAN link, this
+phone taps and answers; the main confirms with the payment service. It is a
+Swift port of Android's `reader/` package (`UniversalTill/Reader/`, pure parts in
+`Reader/Core/`, tested against the shared goldens `internal/fleetlink/testdata/reader_*.json`).
+
+- **Default OFF.** `UT_READER_MODE` (project.yml) is `NO`; a Debug dev-signed
+  device build turns it on with `UT_READER_MODE=YES` **and** `UT_TAP_TO_PAY=YES`
+  (same development-only entitlement). Release pins it to `NO`
+  (`scripts/ci/guard-ios-tap-to-pay-default-off.sh` checks it). With it off there
+  is no reader entry, no Keychain item, no socket and no reader Bonjour browse.
+- **One collect lock.** The phone's own tender and a reader collect share the
+  Tap to Pay coordinator's single `current` attempt: whichever starts second is
+  refused (`busy`), never queued. The Stripe SDK has one token provider
+  (`DelegatingTokenProvider`): the till's own credential through the cloud while the
+  till's own tender runs, the main's `reader.token` while reader mode owns the reader.
+- **Credential** (bearer, pin, address, reader id): Keychain, this device only,
+  while unlocked, never synced. No card data, no shop data, no client secret is stored or logged.
+- **Foreground only.** iOS suspends the socket in the background and there is no
+  push wake: a locked phone is unreachable and the main says so.
+- Pairing needs the main's `phone_pairing` setting on and a TLS-pinned LAN link;
+  the pin is checked in the TLS server-trust challenge before any request is
+  written (P-256 only, anything else is refused).
+- Tests: the same `UniversalTillTapToPayTests` scheme (host-less, no Stripe, no Go framework).
+  `go run ios/scripts/gen-pin-vector.go` regenerates `UniversalTillTests/Fixtures/pin_vector.json`.
+- Not verifiable without the iPhone: a real tap from a `reader.collect`, Apple's sheet
+  making the app inactive, Local Network discovery, the socket on a locked screen.
 
 ## What doesn't port (and what isn't built yet)
 

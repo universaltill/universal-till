@@ -46,8 +46,21 @@ struct ContentView: View {
                     TapToPayStatusBanner(model: TapToPayBridge.shared.status)
                 }
             }
+            .modifier(ReaderLayerIfEnabled())
             // No actions: iOS supplies its own localised OK button.
             .alert(Text("external_link_failed"), isPresented: $linkFailed) {}
+        }
+    }
+}
+
+/// Phone card-reader mode (ut-docs#6538): present only when the build's
+/// UT_READER_MODE flag is on, otherwise the till view is untouched.
+private struct ReaderLayerIfEnabled: ViewModifier {
+    func body(content: Content) -> some View {
+        if let controller = ReaderController.shared {
+            content.modifier(ReaderLayer(model: controller.model, controller: controller))
+        } else {
+            content
         }
     }
 }
