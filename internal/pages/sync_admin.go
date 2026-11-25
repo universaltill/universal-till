@@ -1111,11 +1111,16 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	// malformed row with no PluginID is not one), built first because the
 	// prune below and the problem resolution at the end both read it.
 	inPrimary := make(map[string]bool, len(rows))
+	// The plugin ids those listings carry: a stale record for an old listing
+	// of a plugin the primary now lists under a new one must not uninstall it
+	// (ut-docs#7012).
+	inPrimaryPlugin := make(map[string]bool, len(rows))
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue
 		}
 		inPrimary[row.ListingID] = true
+		inPrimaryPlugin[row.PluginID] = true
 	}
 	// Uninstalls: a listing this till holds as active that the primary no
 	// longer has. Runs BEFORE the installs (ut-docs#7006): a main that swapped
@@ -1139,6 +1144,16 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	pendingUninstall := make(map[string]bool)
 	for listingID, rec := range records {
 		if inPrimary[listingID] || rec.State != plugins.InstallStateActive || rec.PluginID == "" {
+			continue
+		}
+		// ut-docs#7012: the primary re-listed this plugin under a new listing
+		// id. Removing by PluginID would drop its settings and storage. The
+		// install loop below is a no-op for L2 at the same version (L2 gets
+		// no record until the version changes) and an in-place upgrade
+		// otherwise. The stale record is left alone (no per-listing delete
+		// exists; ClearForPlugin would also drop L2's record) and pruned
+		// once the primary drops the plugin entirely.
+		if inPrimaryPlugin[rec.PluginID] {
 			continue
 		}
 		pendingUninstall[listingID] = true
