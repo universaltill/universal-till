@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1436,4 +1437,400 @@ func mustLoadTSEState(t *testing.T, d *common.Deps) *tseProvisioningState {
 		t.Fatalf("load TSE state: %v (%v)", err, st)
 	}
 	return st
+}
+
+// --- ut-docs#7050: restored till whose TSE credential did not travel ---
+
+func seedRestoredTill(t *testing.T, d *common.Deps) {
+	t.Helper()
+	for k, v := range map[string]string{
+		tseCredentialHeldKey:                    "true",
+		fiscal.SigningDeviceConfiguredKey("DE"): "true",
+	} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func tseSettingVal(t *testing.T, d *common.Deps, key string) string {
+	t.Helper()
+	v, _, err := d.Settings.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func credMissingIdentityForm() url.Values {
+	return url.Values{
+		"tse_identity_form": {"1"},
+		"tse_legal_name":    {"Ecke Laden GmbH"},
+		"tse_owner_name":    {"Erika Muster"},
+		"tse_tax_number":    {"12/345/67890"},
+		"tse_address":       {"Hauptstr. 1, 10115 Berlin"},
+	}
+}
+
+func TestApplyFiscalTSEReady_SetsCredentialHeldMarker(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	if _, err := applyFiscalTSEReady(t.Context(), d); err != nil {
+		t.Fatalf("applyFiscalTSEReady: %v", err)
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker = %q, want true", v)
+	}
+	if v := tseSettingVal(t, d, fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
+		t.Fatalf("configured.de = %q", v)
+	}
+}
+
+func TestApplyFiscalTSEReady_IdempotentPathSetsMarker(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyFiscalTSEReady(t.Context(), d); err != nil {
+		t.Fatalf("applyFiscalTSEReady: %v", err)
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker = %q, want true", v)
+	}
+}
+
+func TestReconcileTSECredentialMarker_BackfillsWhenCredentialReadable(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker = %q, want true", v)
+	}
+	reconcileTSECredentialMarker(t.Context(), d) // idempotent
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker after second run = %q", v)
+	}
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
+		t.Fatalf("backfill wrote a provisioning state: %+v", st)
+	}
+}
+
+func TestReconcileTSECredentialMarker_NoFileNoMarker(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	// Manual own device: configured, no marker, no credential file.
+	if err := d.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "" {
+		t.Fatalf("marker = %q, want unset", v)
+	}
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
+		t.Fatalf("state written for a manual own device: %+v", st)
+	}
+}
+
+func TestReconcileTSECredentialMarker_ReplicaWritesNothing(t *testing.T) {
+	t.Run("credential readable", func(t *testing.T) {
+		d := newTSEReadyDeps(t)
+		initTestPaths(t)
+		if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://main-till.local:8080"); err != nil {
+			t.Fatal(err)
+		}
+		if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+			t.Fatal(err)
+		}
+		reconcileTSECredentialMarker(t.Context(), d)
+		if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "" {
+			t.Fatalf("replica wrote marker %q", v)
+		}
+	})
+	t.Run("credential missing", func(t *testing.T) {
+		d := newTSEReadyDeps(t)
+		initTestPaths(t)
+		seedRestoredTill(t, d)
+		if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://main-till.local:8080"); err != nil {
+			t.Fatal(err)
+		}
+		reconcileTSECredentialMarker(t.Context(), d)
+		if v := tseStateRaw(t, d); v != "" {
+			t.Fatalf("replica wrote state %q", v)
+		}
+	})
+}
+
+func TestReconcileTSECredentialMarker_RestoredInstallFlagsCredentialMissing(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	gateBefore, err := fiscal.EvaluateGate(t.Context(), d.Settings, "DE", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reconcileTSECredentialMarker(t.Context(), d)
+
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusCredentialMissing || st.Country != "DE" {
+		t.Fatalf("state = %+v, want credential_missing/DE", st)
+	}
+	if v := tseSettingVal(t, d, fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
+		t.Fatalf("configured.de = %q, want still true", v)
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker = %q, want untouched true", v)
+	}
+	entries, err := data.NewPOSRepo(d.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && strings.Contains(e.DataJSON, tseStatusCredentialMissing) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("credential_missing not audited: %+v", entries)
+	}
+	gateAfter, err := fiscal.EvaluateGate(t.Context(), d.Settings, "DE", time.Now().UTC())
+	if err != nil || gateAfter.Decision != gateBefore.Decision {
+		t.Fatalf("gate changed: before=%v after=%v err=%v", gateBefore.Decision, gateAfter.Decision, err)
+	}
+}
+
+func TestReconcileTSECredentialMarker_CorruptFileTreatedAsMissing(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	store := fiscal.NewSigningDeviceCredentialStore()
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st == nil || st.Status != tseStatusCredentialMissing {
+		t.Fatalf("state = %+v, want credential_missing", st)
+	}
+}
+
+func TestReconcileTSECredentialMarker_NeverOverwritesExistingRecord(t *testing.T) {
+	for _, status := range []string{tseStatusPendingKickoff, tseStatusAwaitingReady, tseStatusKickoffRejected, tseStatusCredentialFailed} {
+		t.Run(status, func(t *testing.T) {
+			d := newTSEReadyDeps(t)
+			initTestPaths(t)
+			seedRestoredTill(t, d)
+			if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{Status: status, Country: "DE"}); err != nil {
+				t.Fatal(err)
+			}
+			before := tseStateRaw(t, d)
+			reconcileTSECredentialMarker(t.Context(), d)
+			if after := tseStateRaw(t, d); after != before {
+				t.Fatalf("record overwritten: %q -> %q", before, after)
+			}
+		})
+	}
+}
+
+func TestSettingsTSEBlock_CredentialMissingShowsIdentityFormNoDismiss(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialMissing, Country: "DE", ErrorCode: "credential_missing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page := getSettingsAs(t, mux, mgrUser)
+	for _, want := range []string{
+		html.EscapeString(httpx.T("en", "settings.tse.credential_missing")),
+		`data-testid="tse-identity-form"`, `data-testid="tse-provisioning-retry"`,
+		`name="tse_legal_name"`, `name="tse_owner_name"`, `name="tse_tax_number"`, `name="tse_address"`,
+		`name="tse_identity_form"`, `data-testid="tse-provisioning-dismiss-blocked"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("settings lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `data-testid="tse-provisioning-dismiss"`) {
+		t.Fatal("dismiss rendered for a hard-gated market")
+	}
+	if strings.Contains(page, "autofocus") && strings.Contains(page, `data-testid="tse-identity-form"`) &&
+		strings.Contains(page[strings.Index(page, `data-testid="tse-identity-form"`):], `autofocus`) {
+		// autofocus is only allowed on the 422 alert
+		t.Fatal("initial render must not autofocus")
+	}
+}
+
+func TestRetryTSEProvisioning_CredentialMissingWithIdentityKicksOff(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	seedRestoredTill(t, d)
+	reconcileTSECredentialMarker(t.Context(), d)
+
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", credMissingIdentityForm(), &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusAwaitingReady || st.Identity.LegalName != "Ecke Laden GmbH" || st.Identity.TaxNumber != "12/345/67890" {
+		t.Fatalf("state = %+v, want awaiting_ready with the entered identity", st)
+	}
+	if cloud.provisionCount() != 1 {
+		t.Fatalf("kickoffs = %d, want 1", cloud.provisionCount())
+	}
+	if _, err := applyFiscalTSEReady(t.Context(), d); err != nil {
+		t.Fatalf("applyFiscalTSEReady: %v", err)
+	}
+	store := fiscal.NewSigningDeviceCredentialStore()
+	fi, err := os.Stat(store.Path())
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("credential file: %v mode=%v", err, fi)
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("marker = %q", v)
+	}
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
+		t.Fatalf("state not cleared: %+v", st)
+	}
+}
+
+func TestRetryTSEProvisioning_IdentityFormInvalidIs422(t *testing.T) {
+	long := strings.Repeat("x", maxTSEIdentityFieldLen+1)
+	cases := []struct {
+		name    string
+		mutate  func(url.Values)
+		wantKey string
+	}{
+		{"all blank", func(v url.Values) {
+			for _, k := range []string{"tse_legal_name", "tse_owner_name", "tse_tax_number", "tse_address"} {
+				v.Set(k, "")
+			}
+		}, "setup.error.tse_identity_incomplete"},
+		{"partial", func(v url.Values) { v.Set("tse_address", "") }, "setup.error.tse_identity_incomplete"},
+		{"bad tax number", func(v url.Values) { v.Set("tse_tax_number", "nope") }, "setup.error.tse_tax_number"},
+		{"too long", func(v url.Values) { v.Set("tse_legal_name", long) }, "setup.error.tse_identity_too_long"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			initTestPaths(t)
+			cloud := newFakeTSECloud(t)
+			configureTSECloud(d, cloud.server.URL)
+			if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+				Status: tseStatusCredentialMissing, Country: "DE", ErrorCode: "credential_missing",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before := tseStateRaw(t, d)
+			form := credMissingIdentityForm()
+			tc.mutate(form)
+			rec := postForm(mux, "/api/settings/retry-tse-provisioning", form, &mgrUser)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("code=%d, want 422; body=%s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, html.EscapeString(httpx.T("en", tc.wantKey))) {
+				t.Fatalf("body lacks error text for %s", tc.wantKey)
+			}
+			if !strings.Contains(body, `role="alert"`) || !strings.Contains(body, `data-testid="tse-identity-form"`) {
+				t.Fatal("422 body must re-render the form with an alert")
+			}
+			if tc.name == "bad tax number" && !strings.Contains(body, `value="nope"`) {
+				t.Fatal("entered value not re-shown")
+			}
+			if tc.name == "bad tax number" && !strings.Contains(body, `aria-invalid="true"`) {
+				t.Fatal("offending field not aria-invalid")
+			}
+			if tseStateRaw(t, d) != before {
+				t.Fatal("state changed by a refused retry")
+			}
+			if cloud.provisionCount() != 0 {
+				t.Fatal("cloud was called")
+			}
+		})
+	}
+}
+
+func TestRetryTSEProvisioning_CredentialMissingOfflineLeavesPending(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	configureTSECloud(d, unreachableURL())
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialMissing, Country: "DE", ErrorCode: "credential_missing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", credMissingIdentityForm(), &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, want 200", rec.Code)
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusPendingKickoff || st.Identity.LegalName != "Ecke Laden GmbH" {
+		t.Fatalf("state = %+v, want pending_kickoff with identity kept", st)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="tse-identity-form"`) {
+		t.Fatal("form must disappear once the identity is stored")
+	}
+}
+
+func TestRetryTSEProvisioning_ManualOwnDeviceStill409(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	if err := d.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", credMissingIdentityForm(), &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code=%d, want 409", rec.Code)
+	}
+	if cloud.provisionCount() != 0 {
+		t.Fatal("cloud was called")
+	}
+}
+
+func TestSettingsTSEBlock_CredentialFailedWithIdentityKeepsOneClickRetry(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialFailed, Country: "DE", ErrorCode: "credential_unavailable",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page := getSettingsAs(t, mux, mgrUser)
+	if !strings.Contains(page, `data-testid="tse-provisioning-retry"`) {
+		t.Fatal("one-click retry missing")
+	}
+	if strings.Contains(page, `data-testid="tse-identity-form"`) {
+		t.Fatal("identity form shown although the identity is stored")
+	}
+}
+
+func TestSettingsTSEBlock_CredentialMissingOnReplicaIsHintOnly(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	seedTSEStateOnReplica(t, d, tseProvisioningState{Status: tseStatusCredentialMissing, Country: "DE"})
+	page := getSettingsAs(t, mux, mgrUser)
+	if !strings.Contains(page, `data-testid="tse-provisioning-main-till-only"`) {
+		t.Fatal("replica hint missing")
+	}
+	for _, id := range []string{"tse-identity-form", "tse-provisioning-retry", "tse-provisioning-dismiss"} {
+		if strings.Contains(page, `data-testid="`+id+`"`) {
+			t.Fatalf("replica renders %s", id)
+		}
+	}
 }

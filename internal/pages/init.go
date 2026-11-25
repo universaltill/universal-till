@@ -674,6 +674,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	backfillRegionalLocaleFromCountry(ctx, dp)                                                                   // ut-docs#5751: unconfirmed same-language locale takes the country's region (en-US -> en-GB); before #1892's backfill and the base-plugin retry
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                      // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	reconcileTSECredentialMarker(ctx, dp)                                                                        // ut-docs#7050: backfill the held-credential marker, then flag a restored main till whose TSE credential did not travel (no network; never blocks boot)
 	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
 	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) }) // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser

@@ -15,7 +15,7 @@
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
     },
     "backups": {
-      "en": "903880a90ffbeabe00d3cf96c7fe428d3e4537dc9431da44e8758691857d1311",
+      "en": "6d77525dd09e444649530378a285e0a6bdbf540d5470b775ca7ba416b1952230",
       "fa": "e7f97547132b048cf7571ad358e3f858ecfe8aa318034d5f4948454845ac5179",
       "ar": "7cd5ffa7d3e8a2196726e32600cd6d470471171e7faabaa132ae11705305e5e6",
       "tr": "d6db65e698101cd6ba11733efeb0111d3838765c1e224d557fbf81fa80d0536b"
@@ -514,7 +514,7 @@
       "sha256": "3bf89b328b8d6b2a4429605b0c59c4718a2ea6bc05e206a7f853ec856780519c"
     },
     "internal/pages/init.go": {
-      "sha256": "649c30096544b5041818a12e086692102840ff7b696b7d5276fce92d37972c49"
+      "sha256": "c45ef082e7d207e9c76510916220cb4925bf0e8481dea4c1ecd71b82e66666f7"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -679,7 +679,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "b8f8a61ef6115781078ac966aa1d9c9ee241783868c4ba09d41d75e55bf395eb"
+      "sha256": "f069b03e246a5f46ecfafc63d59796b3dbbdfb04f652f15aacefdb3c941e5763"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -703,7 +703,7 @@
       "sha256": "e51ea773adb2cda7afd8b02090230d6906e4a96c5f07b435347f22bd2c10851f"
     },
     "internal/pages/setup_tse.go": {
-      "sha256": "c939a2cb9b204d4757067336341c16956cfb7a6c6033518b2cb5666c9a94ce3e"
+      "sha256": "e07c32e951deb1efb9e50705b564a9f562f4024267943412686f62cb189c7298"
     },
     "internal/pages/setup_update_check.go": {
       "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"
@@ -2170,7 +2170,7 @@
       "sha256": "4d62033dde7378384fd80bb690f9f40fbadaac27e07eff77735841f55659beb7"
     },
     "web/ui/partials/tse_provisioning_block.html": {
-      "sha256": "d0a0196b19a9d178dd3add3ed44e08bda9f6a769d1ed525c76cc35cf84b4851f"
+      "sha256": "b564f057c80bee046d42c7071306cf771935bdab4d0820a1f03b1133db990dea"
     },
     "web/ui/partials/update_incoming_notes.html": {
       "sha256": "07220a13730f05877b72f452599a0d78a1c1dd00c7b352fd8e205938951dc3c2"

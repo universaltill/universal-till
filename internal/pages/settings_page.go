@@ -200,15 +200,28 @@ func settingsActorID(r *http.Request) string {
 // state renders an empty 200 body, the same "swap the block away" contract
 // the dismiss endpoint already has.
 func renderTSEProvisioningBlock(w http.ResponseWriter, r *http.Request, st *tseProvisioningState) {
+	renderTSEProvisioningBlockStatus(w, r, st, http.StatusOK, "", tseBusinessIdentity{})
+}
+
+// renderTSEProvisioningBlockStatus is renderTSEProvisioningBlock with an
+// optional non-200 status and the identity form's error key + entered values
+// (ut-docs#7050: the 422 re-render keeps what the manager typed).
+func renderTSEProvisioningBlockStatus(w http.ResponseWriter, r *http.Request, st *tseProvisioningState, status int, errKey string, entered tseBusinessIdentity) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := tseProvisioningViewFor(st)
 	if view == nil {
 		return
 	}
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
 	httpx.RenderPartial("ui/partials/tse_provisioning_block.html", map[string]any{
-		"tseProvisioning": view,
-		"tseRetryable":    tseProvisioningRetryable(st),
-		"tseCanDismiss":   !tseProvisioningDismissBlocked(st),
+		"tseProvisioning":  view,
+		"tseRetryable":     tseProvisioningRetryable(st),
+		"tseCanDismiss":    !tseProvisioningDismissBlocked(st),
+		"tseNeedsIdentity": tseNeedsIdentity(st),
+		"tseIdentityErr":   errKey,
+		"tseIdentity":      entered,
 	})(w, r)
 }
 
@@ -1017,6 +1030,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"languageSwitchPending":  all[common.KeyLocaleSwitchPending] != "", // ut-docs#4477, with installableLangs
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
+			"tseNeedsIdentity":       tseNeedsIdentity(tseState),
+			"tseIdentity":            tseBusinessIdentity{},
+			"tseIdentityErr":         "",
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
 			"tseFollowsMain":         tseRequireMainTill(r.Context(), d) != nil,
 			"missingFiscalSigner":    missingSigner,
@@ -3144,7 +3160,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
-		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r))
+		var entered *tseBusinessIdentity
+		if r.PostFormValue("tse_identity_form") == "1" {
+			cur, _ := loadTSEProvisioningState(r.Context(), d)
+			country := tseProvisionCountry
+			if cur != nil && cur.Country != "" {
+				country = cur.Country
+			}
+			id, errKey := parseTSEIdentityForm(country, r.PostFormValue)
+			if errKey == "" && !id.isComplete() {
+				errKey = "setup.error.tse_identity_incomplete" // all-blank is "skip" in the wizard, not here
+			}
+			if errKey != "" {
+				renderTSEProvisioningBlockStatus(w, r, cur, http.StatusUnprocessableEntity, errKey, id)
+				return
+			}
+			entered = &id
+		}
+		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r), entered)
 		if errors.Is(err, errNoTSERetry) {
 			locale := httpx.ResolveLocale(w, r)
 			httpx.RefuseText(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
