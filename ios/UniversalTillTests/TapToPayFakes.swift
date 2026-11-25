@@ -94,6 +94,13 @@ final class FakeReader: PaymentReader {
         return cancelable
     }
 
+    var disconnectCalls = 0
+    func disconnect(completion: @escaping () -> Void) {
+        disconnectCalls += 1
+        connected = false
+        completion()
+    }
+
     func finishCollect(_ r: Result<ReaderIntent, ReaderError>) {
         let c = pendingCollect
         pendingCollect = nil

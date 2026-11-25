@@ -76,6 +76,8 @@ protocol PaymentReader: AnyObject {
                  progress: @escaping (Int) -> Void, completion: @escaping (ReaderError?) -> Void)
     func retrieveIntent(clientSecret: String, completion: @escaping (Result<ReaderIntent, ReaderError>) -> Void)
     func collect(_ intent: ReaderIntent, completion: @escaping (Result<ReaderIntent, ReaderError>) -> Void) -> ReaderCancelable
+    /// Drops the connected reader; `completion` once it is gone (also when none was connected).
+    func disconnect(completion: @escaping () -> Void)
     /// Cannot be cancelled once started.
     func confirm(_ intent: ReaderIntent, completion: @escaping (ConfirmOutcome) -> Void)
 }
