@@ -159,6 +159,8 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				"versionUnknown":   versionUnknown,
 				"docsRoute":        docsRouteByPlugin[row.ID],
 				"revoked":          false,
+				// ut-docs#7017: broken code plugin the channel will never reinstall.
+				"codeRefused": row.InstallState == data.PluginStateBroken && !isBundled && plugins.CodeRuntimeRefused(row.Runtime),
 			}
 			if n, ok := revoked[row.ID]; ok {
 				item["revoked"] = true

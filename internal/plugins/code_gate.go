@@ -40,6 +40,12 @@ func RefuseCodeRuntime(runtime string) error {
 	return fmt.Errorf("%w (runtime %q)", ErrCodePluginRefused, runtime)
 }
 
+// CodeRuntimeRefused reports whether RefuseCodeRuntime would refuse runtime on
+// this build (ut-docs#7017: the plugin list explains a broken code plugin that
+// the channel will never reinstall). An empty runtime fails closed like the
+// gate itself: only "none" passes on a channel that forbids code.
+func CodeRuntimeRefused(runtime string) bool { return RefuseCodeRuntime(runtime) != nil }
+
 // RefuseCodeCanonicalType is the pre-network gate by catalog type: only the
 // asset-only types pass on a channel that forbids code. An unknown or empty
 // type fails closed.

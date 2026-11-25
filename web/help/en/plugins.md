@@ -138,7 +138,7 @@ On the iPhone and iPad app, plugins that run code can't be downloaded or importe
 
 The UK VAT plugin is switched on for you when the shop's country is the United Kingdom, because UK tax is not optional. If you switch it off yourself, the till keeps it off.
 
-A plugin that runs code and reached the iPhone or iPad app another way, for example from a restored backup, shows as **Broken** for a moment: the app replaces it with its own built-in version of the same plugin, keeping your settings and whether it was on. Any other plugin that runs code from another source never runs there. Items whose tax comes from a broken tax plugin can't be sold on that device until it is replaced.
+A plugin that runs code and reached the iPhone or iPad app another way, for example from a restored backup, shows as **Broken** for a moment: the app replaces it with its own built-in version of the same plugin, keeping your settings and whether it was on. Any other plugin that runs code from another source never runs there. Items whose tax comes from a broken tax plugin can't be sold on that device until it is replaced. A broken plugin that runs code on the iPhone or iPad app shows a note that the app can't run it and won't reinstall it; remove it with **Uninstall**.
 
 On an iPad that follows a main till (see [Several tills](#several-tills)), a built-in plugin's card shows **Set by the main till**: the main till's on or off choice reaches the iPad within about half a minute, and Enable and Disable are not offered there.
 
