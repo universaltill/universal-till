@@ -541,7 +541,7 @@
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
     "internal/pages/leg_reconcile.go": {
-      "sha256": "4132d63a951270f0fd1c07137dff16f200dca22d5ac16b714378176816a5da70"
+      "sha256": "168b729ed67ad1bc1a30f89c6933b35100f6500fdf9b2574a07b717e3c0b169f"
     },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"
@@ -595,7 +595,7 @@
       "sha256": "9c3c1769eb5ea7ce3760cac13a50f5321d51ac6d72757f351fcf6630bf99e404"
     },
     "internal/pages/payment_leg_journal.go": {
-      "sha256": "fff7db143086afa5410e423da3202049645bac3ef59f9ca674ac15a5b2a5dba3"
+      "sha256": "8047c3fd26fc4667db78898fb38a461f6b97418ff7e019326fc6cd975b5dd50d"
     },
     "internal/pages/permission_groups.go": {
       "sha256": "b0fe8266824da41c116b2eec5334de76e712fca6bcbf3df0e3380f079d08ae07"
@@ -1960,7 +1960,7 @@
       "sha256": "c73f6d2129c150973afb6f0232efb19295811ec17de5ecf0bc6fc4ee3f31329c"
     },
     "web/ui/partials/payment_attention.html": {
-      "sha256": "c42e720353c16d65cb886fca34a723edca54df5a21dd4c747426f54db07f95d3"
+      "sha256": "da6e80284a5daff8de6cb4db727abcf6dcd81b80beff7ca363ebd01825f70a7e"
     },
     "web/ui/partials/pending_pairings.html": {
       "sha256": "84d33c4ca69d0ec124912fe8d5b0b2f83d1cd0c9fbff21be405c00105b0fb01f"

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -1070,12 +1071,51 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		refundCtx := context.WithoutCancel(r.Context())
+		// ut-docs#7041 (ADR-0136 Decision 9.8): a provider refund is a journaled
+		// leg under refund:<original sale>:<method>:<request id>. A refund with no
+		// request id gets a minted one so it is still recorded.
+		legKey := data.RefundLegKey(detail.ID, method, cmp.Or(requestID, uuid.NewString()))
+		legRepo := data.NewPaymentLegJournalRepo(d.Db)
+		if cur, ok, lerr := legRepo.Latest(refundCtx, legKey); lerr != nil {
+			common.LogAndLocalizedError(w, r, http.StatusServiceUnavailable, "refund.error.journal_unavailable", "refund", lerr)
+			return
+		} else if ok && (cur.State == data.LegWarned || cur.State == data.LegResolved || cur.State == data.LegCaptured) {
+			// The provider already refunded this exact refund: never ask it again.
+			// captured too (review, ut-docs#7041): AskLeg would let a captured key
+			// through, so a re-submit while the first is still recording, or after
+			// its warned write failed, would re-send it (9.8: never re-sent).
+			key := "refund.error.refunded_not_recorded"
+			if cur.State != data.LegWarned {
+				key = "refund.error.already_sent" // still recording, or a manager already handled it
+			}
+			common.LogAndLocalizedError(w, r, http.StatusConflict, key, "refund",
+				fmt.Errorf("refund %s was already sent back by the provider (journal %s): not asked again", legKey, cur.State))
+			return
+		}
+		legEntry := legBase(legKey, method, refundTotal, detail.Currency, "")
+		if len(originalPayments) == 1 {
+			legEntry.TransactionRef, _ = originalPayments[0]["transaction_ref"].(string)
+		}
+		tracker := newLegJournalTracker(d)
+		refundCtx = withLegJournal(refundCtx, tracker.hook(legEntry))
 		if len(originalPayments) == 1 && requestID != "" {
 			pi, _ := originalPayments[0]["transaction_ref"].(string)
-			refundCtx = tapRefundContext(refundCtx, d, method, pi, refundTotal.Minor(), detail.Currency, "refund:"+detail.ID+":"+method+":"+requestID)
+			refundCtx = tapRefundContext(refundCtx, d, method, pi, refundTotal.Minor(), detail.Currency, legKey)
 		}
 		refundResp, refundDelivered, blocked := blockingPaymentEventDispatch(refundCtx, d, method, "refund", requestID, refundPayload)
 		if blocked != nil {
+			var jerr *paymentJournalError
+			if errors.As(blocked, &jerr) {
+				// Not recorded, so not asked: nothing was refunded.
+				common.LogAndLocalizedError(w, r, http.StatusServiceUnavailable, "refund.error.journal_unavailable", "refund", blocked)
+				return
+			}
+			declineKey := refundDeclineKey(blocked)
+			if declineKey == "refund.error.outcome_unknown" || declineKey == "refund.error.partial" {
+				tracker.note(refundCtx, legEntry, data.LegUnknown)
+			} else {
+				tracker.note(refundCtx, legEntry, data.LegDeclined)
+			}
 			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
 			// text a third-party payment plugin's payment.<key>.refund hook
 			// returned -- so it must never reach the operator verbatim, same
@@ -1084,8 +1124,14 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			// (paymentDeclinedError / pos.toast.payment_declined): log the
 			// real detail server-side, show a generic localized decline
 			// message instead.
-			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, refundDeclineKey(blocked), "refund", blocked)
+			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, declineKey, "refund", blocked)
 			return
+		}
+		if refundDelivered {
+			if ref, ok := pluginReportedTransactionRef(refundResp); ok {
+				legEntry.TransactionRef = ref
+			}
+			tracker.captured(refundCtx, legEntry)
 		}
 		// ut-docs#1788: independent, core-side backstop for Turkey's
 		// fiscal-device (ÖKC) refund path — mirrors pos_api.go's
@@ -1172,6 +1218,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			// fiscalSignAskBudget on a cloud call already known to fail.
 			Offline: formFlagTruthy(r.Form.Get("offline")),
 		}
+		if refundDelivered {
+			// Closed atomically with the return (settled row inside CompleteSale's
+			// transaction); a key with no row is skipped (ut-docs#7041).
+			saleInput.LegRequestIDs = []string{legKey}
+		}
 
 		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a refund
 		// moves real money and is aufzeichnungspflichtig under KassenSichV
@@ -1218,6 +1269,14 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
+		if err != nil && refundDelivered {
+			// The provider already sent the money back: durable, listed record,
+			// and a message that says so (never the generic tender toast, which
+			// reads like nothing happened and invites a second refund).
+			warnRefundNoReturn(context.WithoutCancel(recordCtx), d, legEntry, err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.refunded_not_recorded", "refund", err)
+			return
+		}
 		if err != nil {
 			// Same underlying call pos_api.go's completeTender wraps --
 			// classifyTenderError already maps its failure modes (insufficient
@@ -1403,7 +1462,8 @@ func blockingPaymentEventDispatch(ctx context.Context, d *common.Deps, method, s
 		// before the plugin hears of it, and a leg that cannot be recorded is
 		// never asked (fail closed). Here, past the subscriber lookup, so a
 		// cash or hookless leg writes nothing.
-		if suffix == "authorize" {
+		// ut-docs#7041: a refund leg is journaled the same way.
+		if suffix == "authorize" || suffix == "refund" {
 			if err := askLegJournal(ctx, method); err != nil {
 				return nil, false, err
 			}

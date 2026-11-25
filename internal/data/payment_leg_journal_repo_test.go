@@ -505,3 +505,50 @@ func TestAppend_AttemptSettledReasonOnlyOnWarnedToResolved_7027(t *testing.T) {
 		t.Fatalf("warned -> resolved with attempt_settled: %v", err)
 	}
 }
+
+// ut-docs#7041 (ADR-0136 Decision 9.8): refund_no_return rides captured ->
+// warned only.
+func TestLegJournal_RefundNoReturnOnlyCapturedToWarned(t *testing.T) {
+	r := NewPaymentLegJournalRepo(newLegJournalDB(t))
+	ctx := context.Background()
+	_ = r.Append(ctx, legEntry("r1", LegAsked))
+	_ = r.Append(ctx, legEntry("r1", LegCaptured))
+	e := legEntry("r1", LegWarned)
+	e.Reason = LegReasonRefundNoReturn
+	if err := r.Append(ctx, e); err != nil {
+		t.Fatalf("captured -> warned/refund_no_return: %v", err)
+	}
+	// the reason is refused on any other move
+	_ = r.Append(ctx, legEntry("r2", LegAsked))
+	_ = r.Append(ctx, legEntry("r2", LegUnknown))
+	e2 := legEntry("r2", LegWarned)
+	e2.Reason = LegReasonRefundNoReturn
+	e4 := legEntry("r1", LegResolved)
+	e4.Reason = LegReasonRefundNoReturn
+	if err := r.Append(ctx, e4); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("warned -> resolved/refund_no_return: %v, want ErrLegJournalTransition", err)
+	}
+	if err := r.Append(ctx, e2); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("unknown -> warned/refund_no_return: %v, want ErrLegJournalTransition", err)
+	}
+	_ = r.Append(ctx, legEntry("r3", LegAsked))
+	_ = r.Append(ctx, legEntry("r3", LegCaptured))
+	if err := r.Append(ctx, legEntry("r3", LegWarned)); !errors.Is(err, ErrLegJournalTransition) {
+		t.Fatalf("captured -> warned with no reason: %v, want refused", err)
+	}
+}
+
+func TestRefundLegKey_RoundTrip(t *testing.T) {
+	k := RefundLegKey("s1", "demopay", "a:b")
+	if k != "refund:s1:demopay:a:b" {
+		t.Fatalf("key = %q", k)
+	}
+	if id, ok := RefundLegOriginalSale(k); !ok || id != "s1" {
+		t.Fatalf("original sale = %q,%v, want s1,true", id, ok)
+	}
+	for _, bad := range []string{"abc", "refund:", "authorize-1"} {
+		if _, ok := RefundLegOriginalSale(bad); ok {
+			t.Fatalf("%q reported as a refund key", bad)
+		}
+	}
+}
