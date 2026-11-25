@@ -130,17 +130,6 @@ func touchRelayLastUsed(ctx context.Context, d *common.Deps, rowID string) {
 	}
 }
 
-// relayedRowByID finds a relayed row for a "relay:<ref>" id (nil when the
-// directory no longer has it).
-func relayedRowByID(ctx context.Context, d *common.Deps, id, method string) (data.CardReader, bool) {
-	for _, c := range relayedReaders(ctx, d, method) {
-		if c.ID == id {
-			return c, true
-		}
-	}
-	return data.CardReader{}, false
-}
-
 // phoneState is a phone reader's presence as this till knows it (its own hub,
 // or the relay through its main): core knows it, the plugin cannot. ok is false
 // for a row that is not a phone reader or when there is no collector.

@@ -201,7 +201,10 @@ func (s *Service) RelayHandler(ctx context.Context, tillID string, raw json.RawM
 		}
 	}
 	s.setPhase(c, PhaseOnPhone)
-	go s.relayWatch(c, rd.ID, ackLost, audit)
+	go func() {
+		defer logging.RecoverAndLog("readerlink.relayWatchStart")
+		s.relayWatch(c, rd.ID, ackLost, audit)
+	}()
 	return fleetlink.ReaderCollectAck{Accepted: true}, nil
 }
 
