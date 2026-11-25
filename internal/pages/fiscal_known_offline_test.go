@@ -92,7 +92,7 @@ func TestFiscalKnownOffline_UnreachableBackendIsNotAsked(t *testing.T) {
 	n := askSigner(t, dp, "net:"+signerHost)
 	primeUnreachable(t, dp, signerHost)
 	in := pos.SaleInput{Currency: "EUR"}
-	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if res.Outcome != fiscalSignSkippedOffline || n.Load() != 0 {
 		t.Fatalf("outcome %v, invocations %d; want skipped-offline and 0", res.Outcome, n.Load())
 	}
@@ -109,13 +109,13 @@ func TestFiscalKnownOffline_UnknownOrStaleProbeStillAsks(t *testing.T) {
 	clk := useSignerReach(dp)
 	n := askSigner(t, dp, "net:"+signerHost)
 	// Unknown: no probe has completed yet.
-	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}); res.Outcome == fiscalSignSkippedOffline {
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}, "", false); res.Outcome == fiscalSignSkippedOffline {
 		t.Fatal("unknown probe state must dispatch")
 	}
 	primeUnreachable(t, dp, signerHost)
 	clk.off.Add(int64(time.Minute)) // stale now
 	before := n.Load()
-	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}); res.Outcome == fiscalSignSkippedOffline || n.Load() != before+1 {
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}, "", false); res.Outcome == fiscalSignSkippedOffline || n.Load() != before+1 {
 		t.Fatalf("stale probe must dispatch, outcome %v invocations %d->%d", res.Outcome, before, n.Load())
 	}
 }
@@ -123,7 +123,7 @@ func TestFiscalKnownOffline_UnknownOrStaleProbeStillAsks(t *testing.T) {
 func TestFiscalKnownOffline_DeclaredOfflineAsksNetworkFreeSigner(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	n := askSigner(t, dp, "")
-	res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR", Offline: true})
+	res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR", Offline: true}, "", false)
 	if res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
 		t.Fatalf("network-free signer must sign offline, outcome %v invocations %d", res.Outcome, n.Load())
 	}
@@ -132,7 +132,7 @@ func TestFiscalKnownOffline_DeclaredOfflineAsksNetworkFreeSigner(t *testing.T) {
 func TestFiscalKnownOffline_DeclaredOfflineSkipsNetworkSigner(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	n := askSigner(t, dp, "net:*")
-	res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR", Offline: true})
+	res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR", Offline: true}, "", false)
 	if res.Outcome != fiscalSignSkippedOffline || n.Load() != 0 || res.Reason != fiscalKnownOfflineReason {
 		t.Fatalf("outcome %v invocations %d reason %q; want skipped with the declared reason", res.Outcome, n.Load(), res.Reason)
 	}
@@ -144,7 +144,7 @@ func TestFiscalKnownOffline_UnprobeableSignerIsAlwaysAsked(t *testing.T) {
 		useSignerReach(dp)
 		n := askSigner(t, dp, perm)
 		primeUnreachable(t, dp, signerHost) // irrelevant to this signer
-		if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}); res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
+		if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}, "", false); res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
 			t.Fatalf("%s: outcome %v invocations %d; want asked", perm, res.Outcome, n.Load())
 		}
 	}
@@ -153,7 +153,7 @@ func TestFiscalKnownOffline_UnprobeableSignerIsAlwaysAsked(t *testing.T) {
 func TestFiscalKnownOffline_NilSignerReachAsks(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	n := askSigner(t, dp, "net:"+signerHost)
-	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}); res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &pos.SaleInput{Currency: "EUR"}, "", false); res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
 		t.Fatalf("no Set configured: outcome %v invocations %d; want asked", res.Outcome, n.Load())
 	}
 }
@@ -243,7 +243,7 @@ func TestFiscalKnownOffline_CloudReachableStillAsks(t *testing.T) {
 	n := askSigner(t, dp, "net:"+signerHost)
 	primeUnreachable(t, dp, signerHost)
 	in := pos.SaleInput{Currency: "EUR"}
-	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if res.Outcome == fiscalSignSkippedOffline || n.Load() != 1 {
 		t.Fatalf("outcome %v, invocations %d; want the signer asked once", res.Outcome, n.Load())
 	}

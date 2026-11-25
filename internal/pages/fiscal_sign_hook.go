@@ -347,6 +347,10 @@ const (
 	// under its own audit action and wording (declareUnsignedFiscalSale,
 	// saleFiscalSigningGapKind), never as a connectivity outage.
 	fiscalSignCannotSign
+	// fiscalSignJournalFailed (ut-docs#7021): the till could not journal the
+	// ask beforehand, so nothing was asked and the caller refuses the tender
+	// (ADR-0044 D1 amendment).
+	fiscalSignJournalFailed
 )
 
 // isFailure reports whether the outcome is a signing failure of any kind.
@@ -786,7 +790,7 @@ func fiscalOrderIDFor(ctx context.Context, bus *plugins.EventBus, repo *data.POS
 // in is mutated: when a signer is installed, in.SaleID is minted here (if
 // empty) so the ask payload and the eventually-persisted sale share an id —
 // CompleteSale honors a pre-set SaleID.
-func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInput) fiscalSignResult {
+func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInput, actorID string, journalRequired bool) fiscalSignResult {
 	bus := plugins.SharedBus(d.Db)
 	if !bus.HasSubscribers(fiscalSignAskEvent) {
 		return fiscalSignResult{Outcome: fiscalSignNoSigner}
@@ -845,6 +849,15 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 	// forbids a belated re-sign). WithoutCancel keeps the ctx values (session,
 	// locale); askFiscalSign still applies fiscalSignAskBudget, so checkout
 	// stays bounded (ADR-0003).
+	// ut-docs#7021: journal the ask before it is sent, so a signature never
+	// outlives its sale without a durable trace. A till that cannot write the
+	// row asks nothing when the caller can still refuse (journalRequired).
+	if err := beginFiscalSignJournal(ctx, d, in, payload, actorID); err != nil {
+		if journalRequired {
+			return fiscalSignResult{Outcome: fiscalSignJournalFailed, Reason: err.Error()}
+		}
+		logging.L().Warnf("fiscal signing: could not journal the ask for sale %s: %v; asking anyway (ut-docs#7021)", in.SaleID, err)
+	}
 	res := askFiscalSign(ctx, bus, payload)
 	res.Asked = true
 	return res

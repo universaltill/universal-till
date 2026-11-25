@@ -40,7 +40,7 @@ func askWithResponse(t *testing.T, response string) fiscalSignResult {
 		Currency: "EUR",
 		Lines:    []pos.SaleLineInput{{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(100), TaxRateBasisPoints: 2000}},
 	}
-	return dispatchFiscalSignAsk(context.Background(), dp, &in)
+	return dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 }
 
 func TestFiscalSignAsk_ReceiptObjectParsedWithinBounds(t *testing.T) {

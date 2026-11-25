@@ -31,6 +31,7 @@ func startPaymentLegReconcile(ctx context.Context, wg *sync.WaitGroup, d *common
 		defer wg.Done()
 		passCtx, cancel := context.WithTimeout(ctx, legReconcileCap)
 		defer cancel()
+		pages.ReconcileFiscalSignJournal(passCtx, d, startedAt) // ut-docs#7021: fast, local
 		pages.ReconcilePaymentLegs(passCtx, d, startedAt)
 	}()
 }

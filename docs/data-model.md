@@ -119,6 +119,19 @@ whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
 roster.
 
+**`fiscal_sign_journal`** (migration 117; ut-docs#7021, ADR-0044 D1 amendment)
+is core's till-local record of every `fiscal.sign.ask` the till sent, keyed by
+the pre-minted sale id. A row is written (`asked`) before the ask; a refused
+write means nothing is asked. A committed sale deletes its row. If
+`CompleteSale` fails after the signer answered, the row becomes
+`signed_no_sale` and keeps the answer (`outcome`, `evidence_json`,
+`receipt_json`), the sanitized `reason`, the amount and actor; an audit row
+`fiscal_signed_no_sale` and a keyed Problems item name it. At boot
+(`pages.ReconcileFiscalSignJournal`) an `asked` row with no sale becomes
+`warned` and every open row raises its Problems item again. Never re-signed
+(ADR-0056). Till-local: no LAN journal, snapshot, bundle or roster; no card
+data.
+
 *Attention list, Retry and Resolve (ut-docs#6653 slice 3, Decision 9.6; no
 migration, every move is an INSERT in the 9.2 set).* A manager (permission
 `refund`) sees the legs whose newest row is `reverse_failed` or `warned`, oldest

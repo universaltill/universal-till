@@ -406,14 +406,14 @@ func TestFiscalOrderStart_OrderIDNotBorrowedFromCashierBasket(t *testing.T) {
 	}
 
 	in := pos.SaleInput{Currency: "EUR", SaleType: "return"}
-	dispatchFiscalSignAsk(context.Background(), dp, &in)
+	dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if askRaw == "" || strings.Contains(askRaw, "order_id") {
 		t.Fatalf("a sale with no carried origin must omit order_id regardless of d.Engine's state, got %q", askRaw)
 	}
 
 	// And with the origin carried, it is echoed (dispatch-level check).
 	in2 := pos.SaleInput{Currency: "EUR", HeldOriginID: heldID}
-	dispatchFiscalSignAsk(context.Background(), dp, &in2)
+	dispatchFiscalSignAsk(context.Background(), dp, &in2, "", false)
 	if !strings.Contains(askRaw, `"order_id":"`+heldID+`"`) {
 		t.Fatalf("carried origin with a captured row must echo order_id, got %q", askRaw)
 	}
@@ -499,7 +499,7 @@ func TestFiscalOrderStart_CounterCheckoutDispatchesEveryOrder(t *testing.T) {
 		return json.RawMessage(`{"status":"approved"}`), nil
 	})
 	in := pos.SaleInput{Currency: "GBP", HeldOriginID: dp.Engine.HeldOrigin().ID}
-	dispatchFiscalSignAsk(context.Background(), dp, &in)
+	dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if !strings.Contains(askRaw, `"order_id":"`+counterID+`"`) {
 		t.Fatalf("tender of a recalled counter order must echo its order_id, got %q", askRaw)
 	}

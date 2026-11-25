@@ -527,7 +527,7 @@ func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 		dispatchFiscalOrderStart(context.Background(), dp, "hold-1", fiscalOrderKindHeld, false)
 		dispatchFiscalOrderCancel(context.Background(), dp, "hold-1", false)
 		dispatchFiscalSignStart(context.Background(), dp, &in)
-		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+		res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 		if res.Outcome != fiscalSignNoSigner {
 			t.Fatalf("expected fiscalSignNoSigner, got %v", res.Outcome)
 		}
@@ -546,7 +546,7 @@ func BenchmarkFiscalSignAsk_NoSubscribers(b *testing.B) {
 	in := pos.SaleInput{Currency: "EUR"}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = dispatchFiscalSignAsk(context.Background(), dp, &in)
+		_ = dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	}
 }
 
@@ -936,7 +936,7 @@ func TestFiscalSignAsk_ReturnDispatchCarriesSaleType(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, st := range []string{"sale", "return"} {
-		if res := dispatchFiscalSignAsk(ctx, dp, mk(st)); res.Outcome != fiscalSignApproved {
+		if res := dispatchFiscalSignAsk(ctx, dp, mk(st), "", false); res.Outcome != fiscalSignApproved {
 			t.Fatalf("%s: dispatch outcome = %v (%s), want approved", st, res.Outcome, res.Reason)
 		}
 	}
@@ -1173,7 +1173,7 @@ func TestFiscalSignAsk_ApprovedCarriesTSEEvidence(t *testing.T) {
 				Currency: "EUR",
 				Lines:    []pos.SaleLineInput{{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(100), TaxRateBasisPoints: 2000}},
 			}
-			res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+			res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 			if res.Outcome != fiscalSignApproved {
 				t.Fatalf("expected fiscalSignApproved, got %v (%s)", res.Outcome, res.Reason)
 			}
@@ -1437,7 +1437,7 @@ func TestFiscalSignStart_CapturesTxIDAndEchoesOnAskFinish(t *testing.T) {
 	// fires in the common case").
 	dp.WaitForAsyncWork()
 
-	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if res.Outcome != fiscalSignApproved {
 		t.Fatalf("expected fiscalSignApproved, got %v (%s)", res.Outcome, res.Reason)
 	}
@@ -1473,7 +1473,7 @@ func TestFiscalSignStart_UnacknowledgedAnswerLeavesAskFieldsOmitted(t *testing.T
 	in := pos.SaleInput{Currency: "EUR"}
 	dispatchFiscalSignStart(context.Background(), dp, &in)
 	dp.WaitForAsyncWork()
-	dispatchFiscalSignAsk(context.Background(), dp, &in)
+	dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 
 	if captured.StartedTxID != "" || captured.StartedTxRevision != 0 {
 		t.Fatalf("expected no echoed identifier for a non-acknowledged start answer, got %+v", captured)
@@ -1503,7 +1503,7 @@ func TestFiscalSignStart_MintsSaleIDWhenAskHasNoSubscriber(t *testing.T) {
 	}
 	dp.WaitForAsyncWork()
 
-	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false)
 	if res.Outcome != fiscalSignNoSigner {
 		t.Fatalf("expected fiscalSignNoSigner (no ask subscriber installed), got %v", res.Outcome)
 	}
@@ -1643,7 +1643,7 @@ func TestFiscalSignPayload_ChargePartPerRate(t *testing.T) {
 func TestDispatchFiscalSignAsk_AskedOnlyWhenDispatched(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	in := pos.SaleInput{Currency: "EUR"}
-	if res := dispatchFiscalSignAsk(context.Background(), dp, &in); res.Asked {
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &in, "", false); res.Asked {
 		t.Fatalf("no signer installed: Asked must be false, got %+v", res)
 	}
 
@@ -1653,7 +1653,7 @@ func TestDispatchFiscalSignAsk_AskedOnlyWhenDispatched(t *testing.T) {
 		cancel()
 		return json.RawMessage(`{"status":"approved"}`), nil
 	})
-	res := dispatchFiscalSignAsk(ctx, dp, &in)
+	res := dispatchFiscalSignAsk(ctx, dp, &in, "", false)
 	if !res.Asked || res.Outcome != fiscalSignApproved {
 		t.Fatalf("answered ask: want Asked && approved even though the parent ctx was cancelled mid-ask, got %+v", res)
 	}
@@ -1670,7 +1670,7 @@ func TestDispatchFiscalSignAsk_KnownOfflineNotAsked(t *testing.T) {
 	})
 	grantSignerPerm(t, dp, "com.test.fiscal-sign-6910-offline", "net:*")
 	off := pos.SaleInput{Currency: "EUR", Offline: true}
-	if res := dispatchFiscalSignAsk(context.Background(), dp, &off); res.Asked || res.Outcome != fiscalSignSkippedOffline {
+	if res := dispatchFiscalSignAsk(context.Background(), dp, &off, "", false); res.Asked || res.Outcome != fiscalSignSkippedOffline {
 		t.Fatalf("known-offline: want Asked=false and SkippedOffline, got %+v", res)
 	}
 	if calls.Load() != 0 {

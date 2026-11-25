@@ -1198,7 +1198,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 				fmt.Errorf("refund refused: client disconnected before fiscal signing: %w", err))
 			return
 		}
-		signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+		signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput, actorID, !refundDelivered)
 		if signRes.Asked {
 			recordCtx = context.WithoutCancel(recordCtx) // a signer may have signed: record it (ADR-0044 D1)
 		}
@@ -1217,8 +1217,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#7021: the till could not journal the ask, so nothing was
+		// asked and no money has moved (a provider refund asks anyway).
+		if signRes.Outcome == fiscalSignJournalFailed {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund",
+				fmt.Errorf("refund refused: fiscal sign journal unavailable: %s", signRes.Reason))
+			return
+		}
+
 		saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 		if err != nil {
+			recordFiscalSignedNoSale(context.WithoutCancel(recordCtx), d, saleInput, signRes, actorID, err) // ut-docs#7021
 			// Same underlying call pos_api.go's completeTender wraps --
 			// classifyTenderError already maps its failure modes (insufficient
 			// stock, underpayment, generic) to a localized key; reuse it
@@ -1230,6 +1239,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// The return is committed: nothing after this may be lost to a gone
 		// client, cash included (ut-docs#6784).
 		recordCtx = context.WithoutCancel(recordCtx)
+		if signRes.Asked {
+			closeFiscalSignJournal(recordCtx, d, saleID) // ut-docs#7021
+		}
 		// ut-docs#6649: remember what each original leg just got back, so the
 		// next refund of this sale nets it. The provider already approved and
 		// the return is committed, so a failed write is logged, never unwinds

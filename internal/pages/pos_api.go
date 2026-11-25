@@ -976,7 +976,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// and no cashier or kiosk clear/park/resume/landing can rotate the
 	// attempt; a check here would bring back the signed-but-unrecorded tender
 	// this order removes.
-	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
+	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput, actorID, true)
 	if signRes.Asked {
 		recordCtx = detached // a signer may have signed: record it (ADR-0044 D1)
 	}
@@ -1002,6 +1002,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", &fiscalCannotSignError{}
 	}
 
+	// ut-docs#7021: nothing was asked (the till could not journal the ask), so
+	// nothing is signed: refuse like cannot-sign, legs reversed by the defers.
+	if signRes.Outcome == fiscalSignJournalFailed {
+		why = "tender refused (fiscal sign journal unavailable)"
+		engine.RotateTenderAttemptIDIf(attemptID)
+		log.Printf("tender refused: fiscal sign journal unavailable (%s) — %d captured leg(s) being reversed (ut-docs#7021)", signRes.Reason, len(capturedLegs))
+		return "", fmt.Errorf("tender refused: fiscal sign journal unavailable: %s", signRes.Reason)
+	}
+
 	// ut-docs#6653: the legs' settled rows are written inside the sale's own
 	// transaction (a leg with no journal row is skipped there).
 	saleInput.LegRequestIDs = saleInput.LegRequestIDs[:0:0]
@@ -1014,8 +1023,13 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if err != nil {
 		// ut-docs#6602: no sale row; the deferred reversal sends the
 		// captured card legs back, and the voucher defer releases the
-		// reservations (ut-docs#7019).
+		// reservations (ut-docs#7019). ut-docs#7021: a signer that was asked
+		// may have signed; keep its answer as a "signed, no sale" record.
+		recordFiscalSignedNoSale(detached, d, saleInput, signRes, actorID, err)
 		return "", err
+	}
+	if signRes.Asked {
+		closeFiscalSignJournal(detached, d, saleID)
 	}
 	ownCaptured = false
 	vouchersOwned = false // the sale row owns the reservations now
