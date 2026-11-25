@@ -2074,12 +2074,16 @@ document.addEventListener('click', function(e){
   // been done" while the sale or join is still completing.
   // Keep paired with `unboundedRoutes` in internal/pages/unbounded_routes_test.go
   // (TestUnboundedRoutesMatchAppJS reads this list): a new long-running POST
-  // route goes in both.
+  // route goes in both. A tap check or resolve asks the payment broker (status, cancel,
+  // status, then the native release) before it settles (ut-docs#7029).
   var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
                             '/api/update/apply', '/api/setup/update-apply',
                             '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
                             '/api/sync/join', '/api/setup/join',
-                            '/api/pay/legs/resolve'];
+                            '/api/pay/legs/resolve',
+                            '/manager/pay/tap/resolve',
+                            '/pay/tap/check',
+                            '/api/pay/attempts/attention/resolve'];
   function utPathOf(p) {
     try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
   }
