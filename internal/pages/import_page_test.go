@@ -2289,3 +2289,41 @@ func TestImport_CommitOpeningStockLandsAtRegisterLocation(t *testing.T) {
 		t.Fatalf("expected nothing at loc_main, got %v", got)
 	}
 }
+
+// ut-docs#5917: the till's own importer already hands a repeated barcode to
+// the first row that actually imports: row 2 has no name (an unforced issue,
+// so it is skipped), and row 3 repeats its barcode. Row 3's item gets the
+// barcode, with no conflict warning. Pins the rule ADR-0168 §3a states for
+// my. imports. Invented data.
+func TestImport_RepeatedBarcodeFirstImportedRowKeepsIt(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	const csv = "Name,SKU,Barcode,Price\n" +
+		",R2,5012345678900,1.00\n" +
+		"Delta,R3,5012345678900,2.00\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'R2'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the nameless row was imported (n=%d err=%v)", n, err)
+	}
+	var sku string
+	if err := dp.Db.QueryRow(`SELECT i.sku FROM item_barcodes b JOIN items i ON i.id = b.item_id WHERE b.barcode = '5012345678900'`).Scan(&sku); err != nil {
+		t.Fatalf("the repeated barcode is on no item: %v", err)
+	}
+	if sku != "R3" {
+		t.Fatalf("barcode on %q, want R3", sku)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Warnings: 0") || !strings.Contains(got, "<td>created</td>") {
+		t.Fatalf("row 3 should be created with no warning: %s", got)
+	}
+}
