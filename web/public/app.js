@@ -2078,7 +2078,8 @@ document.addEventListener('click', function(e){
   var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
                             '/api/update/apply', '/api/setup/update-apply',
                             '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
-                            '/api/sync/join', '/api/setup/join'];
+                            '/api/sync/join', '/api/setup/join',
+                            '/api/pay/legs/resolve'];
   function utPathOf(p) {
     try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
   }

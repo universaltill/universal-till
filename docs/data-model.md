@@ -123,7 +123,19 @@ first, in the Settings -> Payments card "Payments needing attention"
 when the list is empty) and in `GET /api/pay/attempts/attention`, which gains
 `legs` and `legs_count` beside the unchanged `attempts`/`count` (`request_id`,
 `method`, `amount_minor`, `currency`, `state`, `reason`, masked
-`transaction_ref`, `at`; a leg has no sale id).
+`transaction_ref`, `at`; a leg has no sale id). A payment is described once
+(ut-docs#7025): a leg whose `request_id` is a listed attempt's key is left out
+of `legs` (and of `legs_count`) and appears under `attempts` with an additive
+`leg_state` (`warned`/`reverse_failed`). A tap leg whose attempt needs attention
+is one card row too: its Resolve posts a `decision` (+ optional `reason`) and
+settles the attempt by the same core as `.../attention/resolve`
+(`settleAttentionAttempt`: broker first, no silent "not charged", a reason
+without the broker), then appends `resolved`/`manager_resolved`, with one
+`tap_resolve` audit (`source: settings_card`, `leg_state`) and no
+`payment_leg_resolve`. A decision-less Resolve of such a row is refused (409
+`choose_outcome`); a decision on a leg with no open attempt is refused (409
+`attempt_settled`); the journal write failing after the settle is logged, the
+card says so and the leg stays listed as a plain row.
 **Retry** (`POST /api/pay/legs/retry`, `reverse_failed` only, fresh manager PIN,
 audited `payment_leg_retry`) appends a `reversing` row (`PaymentLegJournalRepo.
 BeginRetry`, which refuses every other state, so a second Retry while one is
@@ -171,7 +183,10 @@ except a retry of the register's own locked leg. A manager (permission
 `refund`) lists them with `GET /api/pay/attempts/attention` and settles one by
 key with `POST /api/pay/attempts/attention/resolve` (`decision`
 `not_charged` | `charged_refund_at_provider`, fresh PIN, broker asked first,
-audited as `tap_resolve` with `context: needs_attention`); the cashier
+audited as `tap_resolve` with `context: needs_attention`; success also appends
+`resolved` to the key's `warned`/`reverse_failed` journal leg and the answer
+gains `leg_resolved`, a journal failure being logged and leaving the leg listed
+without undoing the settle, ut-docs#7025); the cashier
 register's live locked leg is excluded and not resolvable there (its sale
 screen owns it), while a self-order kiosk's or table-QR basket's locked leg is
 listed and resolvable (it gates the cashier and has no staff panel). No migration: `reason` is

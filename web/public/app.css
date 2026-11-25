@@ -8537,3 +8537,12 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .pay-attn-msg:focus { outline: none; }
 .pay-attn-flash { margin-block: .4rem; font-weight: 600; }
 @media (min-width: 34rem) { .pay-attn-actions { flex: 0 0 15rem; } }
+/* ut-docs#7025: a tap row asks what happened. Both outcome buttons are
+   secondary and equal weight (opposite money decisions) with a gap so a slip
+   cannot land on the neighbour; every radio row is a full touch target. */
+.pay-attn-reasons { border: 0; padding: 0; margin: 0; min-inline-size: 0; display: flex; flex-direction: column; }
+.pay-attn-reasons legend { padding: 0; margin-block-end: .25rem; }
+.pay-attn-reason { display: flex; align-items: center; gap: .6rem; min-block-size: 46px; }
+.pay-attn-reason input { flex: none; margin: 0; }
+.pay-attn-choices { display: flex; flex-direction: column; gap: .6rem; }
+.pay-attn-q { margin: 0; font-weight: 600; }

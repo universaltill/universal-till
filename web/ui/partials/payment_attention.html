@@ -10,6 +10,13 @@
 
      Data: Rows (oldest first), ShowList (false for a refused session), Flash,
      FlashWarn. A reverse_failed row carries Retry; both states carry Resolve.
+     A .Tap row (ut-docs#7025: a card tap in doubt whose payment_attempts row
+     still needs a manager) is ONE row for the payment: instead of Mark as
+     handled it asks what happened (reason, note, Not charged / Charged), posts
+     to the same /api/pay/legs/resolve, and settles the attempt and the leg
+     together. Both outcome buttons are secondary: neither is the default. A
+     disabled first submit button makes Enter in the note a no-op, so a stray
+     Enter can never pick "Not charged".
      The PIN dialog (elevation_prompt.html) is the confirmation, so there is no
      hx-confirm: its summary names the amount, the method and the double-refund
      warning. */}}
@@ -26,7 +33,7 @@
         <p class="pay-attn-head"><strong class="pay-attn-amount">{{ .Amount }}</strong>
           <span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ if .Retryable }}{{ T "pay.attention.state.reverse_failed" }}{{ else }}{{ T "pay.attention.state.warned" }}{{ end }}</span></p>
         <p class="muted">{{ .Method }} &middot; {{ shortdatetime .At }}</p>
-        <p>{{ if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
+        <p>{{ if .Tap }}{{ T "pay.attention.explain.tap" }}{{ else if .Retryable }}{{ T "pay.attention.explain.reverse_failed" }}{{ else }}{{ T "pay.attention.explain.warned" }}{{ end }}</p>
         {{ if .Reason }}<p class="muted">{{ .Reason }}</p>{{ end }}
         {{ if .RefTail }}<p class="muted">{{ printf (T "pay.attention.reference") .RefTail }}</p>{{ end }}
         {{ if .Retryable }}<p id="pay-attn-check-{{ .N }}" class="tap-warning pay-attn-check">{{ T "pay.attention.check_first" }}</p>{{ end }}
@@ -38,6 +45,26 @@
           <button type="submit" class="btn btn-touch secondary pay-attn-btn" aria-describedby="pay-attn-check-{{ .N }}">{{ T "pay.attention.retry" }}</button>
         </form>
         {{ end }}
+        {{ if .Tap }}
+        <form class="pay-attn-resolve" data-testid="pay-attention-tap-form" hx-post="/api/pay/legs/resolve" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[name=decision]">
+          <button type="submit" class="pay-attn-implicit" disabled hidden tabindex="-1" aria-hidden="true"></button>
+          <input type="hidden" name="request_id" value="{{ .RequestID }}">
+          <fieldset class="pay-attn-reasons" data-testid="pay-attention-reasons">
+            <legend>{{ T "pay.attention.tap_reason_label" }}</legend>
+            <label class="pay-attn-reason"><input type="radio" name="reason" value="customer_left"> {{ T "tap.resolve.reason.customer_left" }}</label>
+            <label class="pay-attn-reason"><input type="radio" name="reason" value="card_shown_charged"> {{ T "tap.resolve.reason.card_shown_charged" }}</label>
+            <label class="pay-attn-reason"><input type="radio" name="reason" value="card_not_charged"> {{ T "tap.resolve.reason.card_not_charged" }}</label>
+          </fieldset>
+          <label class="pay-attn-note">{{ T "pay.attention.note" }}
+            <input type="text" name="note" maxlength="200" autocomplete="off" enterkeyhint="done">
+          </label>
+          <div class="pay-attn-choices" role="group" aria-labelledby="pay-attn-q-{{ .N }}">
+            <p id="pay-attn-q-{{ .N }}" class="pay-attn-q">{{ T "pay.attention.tap_question" }}</p>
+            <button type="submit" name="decision" value="not_charged" class="btn btn-touch secondary pay-attn-btn" data-testid="pay-attention-not-charged">{{ T "pay.attention.tap_not_charged" }}</button>
+            <button type="submit" name="decision" value="charged_refund_at_provider" class="btn btn-touch secondary pay-attn-btn" data-testid="pay-attention-charged">{{ T "pay.attention.tap_charged" }}</button>
+          </div>
+        </form>
+        {{ else }}
         <form class="pay-attn-resolve" hx-post="/api/pay/legs/resolve" hx-target="#pay-attention-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
           <input type="hidden" name="request_id" value="{{ .RequestID }}">
           <label class="pay-attn-note">{{ T "pay.attention.note" }}
@@ -45,6 +72,7 @@
           </label>
           <button type="submit" class="btn btn-touch pay-attn-btn">{{ T "pay.attention.resolve" }}</button>
         </form>
+        {{ end }}
       </div>
     </li>
     {{ end }}
