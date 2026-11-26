@@ -66,6 +66,9 @@ assert_fails "an unknown syscall number appears" "syscall_999"
 clean_log; sed -i.bak 's/^OK 200$/14 write(1,0x7170dc0,7)OK 200/' "${LOG}"; echo ' = 7' >> "${LOG}"
 assert_passes "OK 200 glued after the strace write() line"
 
+clean_log; sed -i.bak 's/^OK 200$/15 futex(0x4bb2a4,FUTEX_WAKE,1) = 0OK 200/' "${LOG}"
+assert_passes "OK 200 glued after another thread's syscall return value"
+
 clean_log; sed -i.bak 's/^OK 200$/14 write(1,0x7170dc0,9)NOT OK 200/' "${LOG}"
 assert_fails "OK 200 only inside other text" "OK 200"
 

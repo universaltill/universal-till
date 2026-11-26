@@ -102,6 +102,10 @@ type SaleLineSnapshot struct {
 }
 
 type SaleJournalEntry struct {
+	// ID is the sale's id and SaleType 'sale'|'return' (ut-docs#7064): the
+	// journal joins refund status/links by id and words a return row as one.
+	ID        string
+	SaleType  string
 	ReceiptNo string
 	// DisplayNo is the sale's order number ('' for a sale from before order
 	// numbers); ReceiptNo stays the identity (ut-docs#6663).
@@ -8290,7 +8294,7 @@ func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([
 	}
 	query := `
 SELECT s.receipt_no, s.total, s.tender_type, s.sync_status, s.created_at, s.till_id, COALESCE(t.name, '') AS till_name,
-       COALESCE(s.display_no, '')
+       COALESCE(s.display_no, ''), s.id, s.sale_type
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
 WHERE 1=1
@@ -8320,7 +8324,7 @@ WHERE 1=1
 	var out []SaleJournalEntry
 	for rows.Next() {
 		var entry SaleJournalEntry
-		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName, &entry.DisplayNo); err != nil {
+		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName, &entry.DisplayNo, &entry.ID, &entry.SaleType); err != nil {
 			return nil, false, fmt.Errorf("scan sales journal: %w", err)
 		}
 		out = append(out, entry)

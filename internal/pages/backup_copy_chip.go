@@ -105,6 +105,14 @@ func offsiteFailingLong(ctx context.Context, d *common.Deps, now time.Time) bool
 	if d.Settings == nil || !reportRetentionCloudAllowed(ctx, d, now) {
 		return false
 	}
+	// Only a main till with an open gate (not an additional or replaced
+	// one), and never while a refusal (a dead credential included) is stored.
+	if d.Db == nil || d.Cfg == nil || offsitebackup.Shared(d.Cfg, d.Db).Gate(ctx) != offsitebackup.GateOpen {
+		return false
+	}
+	if r, _, _ := d.Settings.Get(ctx, data.OffsiteRefusedReasonKey); strings.TrimSpace(r) != "" {
+		return false
+	}
 	v, ok, _ := d.Settings.Get(ctx, data.OffsiteFailingSinceKey)
 	if !ok {
 		return false
