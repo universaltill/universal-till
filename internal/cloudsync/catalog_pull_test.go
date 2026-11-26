@@ -34,6 +34,9 @@ type catalogFeed struct {
 	reports [][]byte
 	// reportStatus, when set, is the apply-failures endpoint's answer.
 	reportStatus int
+	// code, when set, is the error code of a non-200 feed answer
+	// (default catalog_unavailable).
+	code string
 }
 
 func (f *catalogFeed) report(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +66,11 @@ func (f *catalogFeed) reportBodies() [][]byte {
 func (f *catalogFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls++
-	status, price := f.status, f.price
+	status, price, code := f.status, f.price, f.code
 	f.mu.Unlock()
+	if code == "" {
+		code = "catalog_unavailable"
+	}
 	if price == 0 {
 		price = 275
 	}
@@ -74,7 +80,7 @@ func (f *catalogFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if status != 0 {
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": map[string]string{"code": "catalog_unavailable"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": map[string]string{"code": code}})
 		return
 	}
 	rows := []map[string]any{}

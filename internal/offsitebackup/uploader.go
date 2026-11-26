@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -754,11 +755,19 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 		return ctx.Err()
 	}
 	var ae *APIError
-	if errors.As(err, &ae) && ae.Code == "device_revoked" && (ae.Reason == "" || finalRevokeReasons[ae.Reason]) {
+	if errors.As(err, &ae) && ae.Code == "device_revoked" && finalRevokeReasons[ae.Reason] {
 		// ADR-0199 D2: this till left the shop for good; its key file goes.
+		// Only a reason that says so (ADR-0217 T3): a device_revoked with no
+		// reason, or a healable one (store_deleted, pair_abandoned), may still
+		// come back, and a till that heals needs its shop key.
 		u.Keys.DeleteForStore(u.storeID())
 	}
 	if errors.As(err, &ae) {
+		// ADR-0217: a 401 with an envelope code is evidence for the heal
+		// engine (it probes before it acts).
+		if ae.Status == 401 {
+			credheal.Report(credheal.Signal{Source: "backup", Code: ae.Code, Reason: ae.Reason})
+		}
 		if reason, ok := credentialRefusal(ae); ok {
 			stamp := now.UTC().Format(time.RFC3339)
 			since, _, _ := u.Settings.Get(ctx, data.OffsiteFailingSinceKey)
@@ -793,6 +802,19 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 	}
 	u.fail(ctx, now, err)
 	return nil
+}
+
+// ClearCredentialRefusal ends a wait that exists only because the cloud refused
+// this till's credential (a heal gave it a new one). It leaves any other wait
+// (a key to link, the owner's approval) alone and reports whether it cleared.
+func (u *Uploader) ClearCredentialRefusal(ctx context.Context) bool {
+	v, _, _ := u.Settings.Get(ctx, data.OffsiteRefusedReasonKey)
+	if !credentialReasons[strings.TrimSpace(v)] {
+		return false
+	}
+	_ = u.Settings.Delete(ctx, data.OffsiteRefusedReasonKey)
+	_ = u.Settings.Delete(ctx, data.OffsiteNextAttemptAtKey)
+	return true
 }
 
 // finalRevokeReasons are the device_revoked reasons that cannot be undone:

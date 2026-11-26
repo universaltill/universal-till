@@ -3,6 +3,8 @@ package cloudlink
 import (
 	"context"
 	"encoding/json"
+	"github.com/universaltill/universal-till/internal/credheal"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"net/http"
 	"strconv"
 	"strings"
@@ -687,4 +689,28 @@ func TestRevokedKicksOneCheckIn(t *testing.T) {
 	if k := h.kicks.Load(); k != before+1 {
 		t.Fatalf("kicks after 4003 = %d, want exactly one more than %d", k, before)
 	}
+}
+
+// ADR-0217 T3: a refused cloud link is evidence for the heal engine (which
+// probes with a check-in before it rotates anything).
+func TestRevokedReportsToTheHealEngine(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hold := make(chan struct{})
+	defer close(hold)
+	credheal.Start(ctx, credheal.Deps{
+		Pause:      func(context.Context, time.Duration) {},
+		CanRecover: func(context.Context) (bool, string) { return true, "" },
+		Recover: func(context.Context) (enroll.RecoverOutcome, error) {
+			<-hold
+			return enroll.RecoverOutcome{Transient: true}, nil
+		},
+	}, nil)
+	h := newHarness(t, nil)
+	c := h.cloud.nextConn(t)
+	c.frame(t, "hello")
+	c.closeWith(4003, "revoked")
+	eventually(t, "the engine hears about the refused link", func() bool {
+		return credheal.Current().State == credheal.StateHealing
+	})
 }

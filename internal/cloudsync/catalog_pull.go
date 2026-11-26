@@ -55,6 +55,7 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 	if err != nil {
 		logging.L().Warnf("cloudsync: catalogue pull stopped (kept what was applied; retried on the next check-in): %v", err)
 	}
+	reportRefusal("catalog", res.StopStatus, res.Stopped) // ADR-0217: only a 401 with an envelope code counts
 	switch {
 	case res.StopStatus == http.StatusUnauthorized || res.StopStatus == http.StatusForbidden:
 		// Every tick would answer the same until the device is re-enrolled:

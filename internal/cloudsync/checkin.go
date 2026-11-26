@@ -236,8 +236,8 @@ func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool
 			// ADR-0116 D6: the 401's machine code. decodeCloudError's read
 			// is bounded exactly like drainBody's.
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, cloudErrorMaxBytes))
-			se.Code, _ = parseCloudErrorEnvelope(body)
-			se.Replaced = parseReplacedSignal(body)
+			se.applyBody(body)
+			noteRefusal(path, resp.StatusCode, se.Code, se.Reason)
 		}
 		drainBody(resp)
 		return resp.StatusCode, 0, se

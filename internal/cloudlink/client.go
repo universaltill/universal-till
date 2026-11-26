@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -643,6 +644,9 @@ func (c *Client) Run(ctx context.Context) {
 				revokedFor = t.Bearer
 				c.setState(StateRevoked, WaitReasonNone)
 				logging.L().Warnf("cloudlink: the cloud refused this till's credential; not dialling until it changes")
+				// ADR-0217: evidence for the heal engine; it probes with a
+				// check-in before it rotates anything.
+				credheal.Report(credheal.Signal{Source: "link", Code: "unauthorized"})
 				// ut-docs#5058: one check-in now, so cloudsync learns why
 				// (a replaced main till's 401 says so) and the till stops
 				// acting as main till without waiting for its next tick.

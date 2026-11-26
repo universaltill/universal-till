@@ -97,6 +97,15 @@ func init() {
 	enroll.OnStoreLeft = func(oldStoreID string) { KeyStore{}.DeleteForStore(oldStoreID) }
 }
 
+// OnHealed is the heal engine's callback (ADR-0217): the till has a new cloud
+// credential, so a wait that only the dead one caused is over and a round runs
+// now (ut-docs#7067 FU-3).
+func (s *Service) OnHealed(ctx context.Context) {
+	if s.Uploader.ClearCredentialRefusal(ctx) {
+		s.Scheduler.Trigger()
+	}
+}
+
 // Gate is the live gate state, for the Settings card.
 func (s *Service) Gate(ctx context.Context) GateState {
 	return CheckGate(ctx, s.cfg, s.Settings, time.Now())
