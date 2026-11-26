@@ -26,7 +26,7 @@ const (
 	GateOpen GateState = iota
 	// GateUnpaired: not connected to a my. shop.
 	GateUnpaired
-	// GateNotMain: an additional till (sync.primary_url set). Only the main
+	// GateNotMain: an additional till (sync.primary_url set), or one the owner replaced. Only the main
 	// till is the shop's fiscal recorder and uploads (ADR-0086, ADR-0199).
 	GateNotMain
 	// GateNotEntitled: the plan does not include cloud backup (or the cached
@@ -41,6 +41,9 @@ func CheckGate(ctx context.Context, cfg *config.Config, settings Store, now time
 	}
 	if v, _, _ := settings.Get(ctx, "sync.primary_url"); strings.TrimSpace(v) != "" {
 		return GateNotMain
+	}
+	if _, replaced := enroll.ReplacedState(ctx, settings); replaced {
+		return GateNotMain // ut-docs#5058: the till that replaced it is the main till now
 	}
 	if !entitlement.Allows(entitlement.EffectivePlan(ctx, settings, now), entitlement.CapCloudBackup) {
 		return GateNotEntitled

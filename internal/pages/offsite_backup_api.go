@@ -99,6 +99,13 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 			state = "failing"
 			view["reason"] = get(data.OffsiteLastErrorKey)
 		}
+		if reason, _ := view["reason"].(string); reason != "" {
+			key, link := cardReasonKey(reason, storeHasOwner(r.Context(), s.Settings))
+			view["reasonText"] = httpx.T(locale, key)
+			if link && canPerform(d, r, "settings") {
+				view["reasonLink"] = "/settings#registration"
+			}
+		}
 		if t, err := time.Parse(time.RFC3339, get(data.OffsiteLastSuccessAtKey)); err == nil {
 			view["lastSuccess"] = httpx.FormatDateTime(t.Local(), locale)
 			if state == "waiting" {
@@ -525,6 +532,29 @@ func offsiteErrCode(err error) string {
 	return "other"
 }
 
+// cardReasonKey is the Cloud backups card's line for a stored reason; the
+// upload's own fallback, never the restore's "nothing was changed". The bool
+// says the line is followed by a link to Settings → Till registration.
+func cardReasonKey(reason string, hasOwner bool) (string, bool) {
+	switch reason {
+	case offsitebackup.ReasonPairAgain:
+		if !hasOwner {
+			return "backup.cloud.err.register_new", true
+		}
+		return "backup.cloud.err.pair_again", true
+	case offsitebackup.ReasonTillMoved, offsitebackup.ReasonTillRemoved:
+		return offsiteErrKeys[reason], true
+	case offsitebackup.ReasonOwnerApproval:
+		return "backup.cloud.key.err.owner_approval", false
+	case "", offsitebackup.ReasonOther:
+		return "backup.cloud.err.upload_other", false
+	}
+	if k, ok := offsiteErrKeys[reason]; ok {
+		return k, false
+	}
+	return "backup.cloud.err.upload_other", false
+}
+
 // offsiteErrKeys maps an error code to its translated line.
 var offsiteErrKeys = map[string]string{
 	"disk":                     "backup.cloud.err.disk",
@@ -546,6 +576,12 @@ var offsiteErrKeys = map[string]string{
 	"busy":                     "backup.cloud.err.busy",
 	"not_found":                "backup.cloud.err.not_found",
 	"other":                    "backup.cloud.err.other",
+	"pair_again":               "backup.cloud.err.pair_again",
+	"till_replaced":            "backup.cloud.err.till_replaced",
+	"till_moved":               "backup.cloud.err.till_moved",
+	"till_removed":             "backup.cloud.err.till_removed",
+	"service_unavailable":      "backup.cloud.err.service_unavailable",
+	"owner_approval":           "backup.cloud.key.err.owner_approval",
 }
 
 // offsiteErrText is the translated line for code; unknown codes read as other.
