@@ -184,8 +184,9 @@ func TestHostFnStatusBodyComesFromTheBinding(t *testing.T) {
 	if _, err := Call(ctx, CallerHostFn, "stripe", "session_cancel", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := (*bodies)[0]; !strings.Contains(got, `"idempotency_key":"att-1"`) || !strings.Contains(got, `"payment_intent_id":"pi_7"`) {
-		t.Fatalf("status body = %q", got)
+	// Exactly one identifier: the cloud refuses both (ut-docs#6538).
+	if got := (*bodies)[0]; strings.Contains(got, `idempotency_key`) || !strings.Contains(got, `"payment_intent_id":"pi_7"`) {
+		t.Fatalf("status body = %q, want the PaymentIntent only", got)
 	}
 	if got := (*bodies)[1]; !strings.HasPrefix(got, "/v1/payments/stripe/session_cancel ") || !strings.Contains(got, `"payment_intent_id":"pi_7"`) {
 		t.Fatalf("cancel body = %q", got)
@@ -284,5 +285,34 @@ func TestHostFnCallReturnsFilteredAnswer(t *testing.T) {
 	raw, err := Call(context.Background(), CallerCore, "stripe", "session_status", []byte(`{"idempotency_key":"k"}`))
 	if err != nil || !strings.Contains(string(raw), "client_secret") {
 		t.Fatalf("core answer must be unchanged, got %s, %v", raw, err)
+	}
+}
+
+// ut-docs#6538: a tap entry's binding carries no PI, yet the plugin's retry must
+// cancel and read the earlier PaymentIntent: core resolves it from its own
+// attempt row (by the binding's key), never from the plugin's JSON.
+func TestHostFnCancelResolvesPIFromTheAttemptRow(t *testing.T) {
+	_, bodies := counting(t, `{"status":"canceled"}`)
+	withAttempt(t, AttemptView{Key: "att-1", Provider: "stripe", PIID: "pi_row", Pending: true})
+	ctx := WithBinding(context.Background(), Binding{Kind: BindAuthorize, Provider: "stripe", AttemptKey: "att-1"})
+	if _, err := Call(ctx, CallerHostFn, "stripe", "session_cancel", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*bodies)[0]; !strings.Contains(got, `"payment_intent_id":"pi_row"`) || strings.Contains(got, "idempotency_key") {
+		t.Fatalf("cancel body = %q, want the row's PaymentIntent only", got)
+	}
+	if _, err := Call(ctx, CallerHostFn, "stripe", "session_status", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*bodies)[1]; !strings.Contains(got, `"payment_intent_id":"pi_row"`) || strings.Contains(got, "idempotency_key") {
+		t.Fatalf("status body = %q, want the row's PaymentIntent only", got)
+	}
+	// The plugin cannot name a different PI, and a row of another provider is not used.
+	if _, err := Call(ctx, CallerHostFn, "stripe", "session_cancel", []byte(`{"payment_intent_id":"pi_other"}`)); !errors.Is(err, ErrForeignPI) {
+		t.Fatalf("plugin-named PI: err = %v, want ErrForeignPI", err)
+	}
+	withAttempt(t, AttemptView{Key: "att-1", Provider: "sumup", PIID: "pi_row", Pending: true})
+	if _, err := Call(ctx, CallerHostFn, "stripe", "session_cancel", []byte(`{}`)); !errors.Is(err, ErrNoDispatch) {
+		t.Fatalf("row of another provider: err = %v, want ErrNoDispatch", err)
 	}
 }

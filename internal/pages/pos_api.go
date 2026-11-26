@@ -603,6 +603,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		legEntry := legBase(requestID, p.MethodID, amount, payCurrency, p.ReaderRef)
 		resp, dispatched, tapConf, err := tapAuthorize(withLegJournal(detached, journal.hook(legEntry)), d, p.MethodID, requestID, amount, payCurrency, payload)
 		var tapStart *tapStartFailedError
+		var tapCancelled *tapCancelledError
 		var tapPending *pos.PaymentPendingError
 		var journalErr *paymentJournalError
 		if errors.As(err, &journalErr) {
@@ -618,6 +619,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "payment could not be recorded")
 			why = "tender refused (the payment journal is unavailable)"
 			return "", journalErr
+		}
+		if errors.As(err, &tapCancelled) {
+			// ut-docs#6538: the cashier cancelled and core confirmed nothing was
+			// charged. The sale stays open, nothing is locked, the request id is
+			// spent (a new tap is a new attempt); not worded as a decline.
+			journal.note(detached, legEntry, data.LegDeclined)
+			if abandonedUnder() {
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
+			}
+			stash := engine.SettleTender()
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tap payment cancelled")
+			why = "tender refused (the tap payment was cancelled)"
+			return "", tapCancelled
 		}
 		if errors.As(err, &tapStart) {
 			journal.note(detached, legEntry, data.LegDeclined)
@@ -3269,6 +3285,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			// ut-docs#6455: a tap payment that never started. Nothing was
 			// charged and the basket is not locked; never worded "declined".
+			var tapCancelled *tapCancelledError
+			if errors.As(err, &tapCancelled) {
+				log.Printf("tender: %v", err)
+				locale := httpx.ResolveLocale(w, r)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.payment_cancelled")
+				b.ToastLevel = "info"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			var tapStart *tapStartFailedError
 			if errors.As(err, &tapStart) {
 				log.Printf("tender: %v", err)
