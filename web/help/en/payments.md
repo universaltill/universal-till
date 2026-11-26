@@ -55,7 +55,7 @@ Try it before real customers: install the plugin with a test key (Stripe) or in 
 
 **Updating.** Payment plugins are not updated for you. A green **Plugin updates available** chip appears in the status bar when a newer version exists; open **Plugins**, update it on the main till, and try one small payment afterwards. If something goes wrong, **Versions** on the plugin's card rolls back to the earlier version (see [Plugins](/help/plugins)).
 
-**Refunds.** A card refund goes back through the same provider. SumUp lists a refund as a separate entry in its dashboard, and the original payment still shows as paid there.
+**Refunds.** A card refund goes back through the same provider. With a bill split over several card payments, the refund screen asks which payment the refund goes back to. SumUp lists a refund as a separate entry in its dashboard, and the original payment still shows as paid there.
 
 ## Configuring payment methods
 
