@@ -15,7 +15,7 @@
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
     },
     "backups": {
-      "en": "903880a90ffbeabe00d3cf96c7fe428d3e4537dc9431da44e8758691857d1311",
+      "en": "761a61328da11da87944ba3dfc72997755d6b7bcecefb7ec519451efe6de936d",
       "fa": "e7f97547132b048cf7571ad358e3f858ecfe8aa318034d5f4948454845ac5179",
       "ar": "7cd5ffa7d3e8a2196726e32600cd6d470471171e7faabaa132ae11705305e5e6",
       "tr": "d6db65e698101cd6ba11733efeb0111d3838765c1e224d557fbf81fa80d0536b"
@@ -568,7 +568,7 @@
       "sha256": "b9f6d7e0f2bb622c122705d4e58a975e6115d959ccd68e135e2c9c6196602a0c"
     },
     "internal/pages/offsite_backup_api.go": {
-      "sha256": "f90b5e7ab39c1ea6a4e670fdd5bbe4ed307bb88d374dfc1e7608690ed3f49bf4"
+      "sha256": "9c4a8aadb1e6dca2bbe47b42286ce833356ece28955241193bf4a49911dd597c"
     },
     "internal/pages/open_orders_counter.go": {
       "sha256": "df4d1e06e12d370d6ba2b9e40ac1a1c7a76d2dc47f1f42341d0212a0eb6d115b"
@@ -1804,7 +1804,7 @@
       "sha256": "8ad3af9304815fd798db2ea40394e8678b4961e5447f372ec017d41fc7c776f3"
     },
     "web/ui/partials/backup_cloud_card.html": {
-      "sha256": "916ccd88719907e225f5f1a64ac6586542534a0da3c75445fa4f972bca1e3a72"
+      "sha256": "f18caad05328dab4443ab6bf7985b158e7fb972caeee5a3879e6c22ac1d53a94"
     },
     "web/ui/partials/backup_copy_chip.html": {
       "sha256": "226f9e91966a968755cc7947ed573c6d697aa8feb82b8fdc20c06130a629c958"
