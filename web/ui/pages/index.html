@@ -628,6 +628,7 @@
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay"></button>
           </div>
+          <div id="pay-live" class="pos-notice info" role="status" aria-live="polite" hidden data-testid="pay-live"></div>
           <div id="card-reader-mount" class="card-reader-mount" data-testid="card-reader-mount" hidden></div>
           <label class="offline-toggle">
             <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}

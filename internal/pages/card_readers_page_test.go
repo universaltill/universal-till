@@ -690,7 +690,6 @@ func TestReaderPicker_HidesIneligibleKinds(t *testing.T) {
 	}
 	mk("Phone", "r_phone", data.CardReaderKindPhone, "")
 	mk("Sdk", "r_sdk", data.CardReaderKindSDK, data.CardReaderTransportBluetooth)
-	mk("Own", "r_ext", data.CardReaderKindExternal, "")
 	rawReader(t, dp, rp, "Weird", "r_weird", "weird", "internet")
 	rec, got := getPicker(t, mux, "")
 	if rec.Code != http.StatusOK || len(got.Data.Readers) != 2 {

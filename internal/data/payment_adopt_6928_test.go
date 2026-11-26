@@ -65,7 +65,7 @@ func TestAdoptOwnerlessPaymentMethods_Guards(t *testing.T) {
 }
 
 func TestSyncPluginPaymentMethods_BuiltinInvariantUsesSharedList(t *testing.T) {
-	want := []string{"cash", "card", "gift", "voucher"}
+	want := []string{"cash", "card", "gift", "voucher", "card_external"}
 	if len(builtinPaymentMethodIDs) != len(want) {
 		t.Fatalf("builtinPaymentMethodIDs = %v", builtinPaymentMethodIDs)
 	}
