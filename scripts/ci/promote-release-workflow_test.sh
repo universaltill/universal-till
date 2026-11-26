@@ -71,7 +71,8 @@ for v in UT_MSSTORE_TEST SIGN_EXE SOAK_CMD SILENT_CMD SIG_VERIFY_CMD INSTALLER_N
 done
 # The promote scripts never touch the Store API themselves (the identity lives in msstore-submit.yml only).
 for f in scripts/ci/promote-preflight.sh scripts/ci/promote-stores.sh scripts/ci/promote-summary.sh; do
-  ! grep -v '^ *#' "$f" | grep -qiE 'api\.store\.microsoft|azure/login|az account|--clobber|submit_for_review|track' && ok "$f has no Store API, Azure login, track or clobber" || bad "$f reaches a guarded path"
+  code="$(grep -v '^ *#' "$f" || true)"
+  ! grep -qiE 'api\.store\.microsoft|azure/login|az account|--clobber|submit_for_review|track' <<<"$code" && ok "$f has no Store API, Azure login, track or clobber" || bad "$f reaches a guarded path"
 done
 [ "$fails" = 0 ] || { echo "promote-release-workflow_test: $fails failure(s)" >&2; exit 1; }
 echo "✓ promote-release-workflow_test: all cases passed"
