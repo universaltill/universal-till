@@ -8597,5 +8597,5 @@ input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
 /* ut-docs#7057: tap targets of at least 44px on the Tills page. The "?" keeps its
    look and gains an invisible 44px hit area; the Registers link gets block padding. */
 .tills-page .help-hint { position: relative; }
-.tills-page .help-hint::after { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 44px; block-size: 44px; transform: translate(-50%, -50%); }
+.tills-page .help-hint::after { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 44px; block-size: 44px; transform: translate(-50%, -50%); } /* rtl:allow centred by a symmetric translate */
 .tills-panel a[href="/registers"] { display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: .5rem; }

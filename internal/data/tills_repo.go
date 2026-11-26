@@ -148,24 +148,12 @@ FROM tills ORDER BY enrolled_at DESC`)
 	return out, rows.Err()
 }
 
-// NameTaken reports whether an enrolled replica already uses this name,
-// case-insensitively (ut-docs#1264).
-//
-// The fold is done in Go, deliberately, not as `lower(name) = lower(?)` in
-// SQL (independent review finding): SQLite's built-in lower() only folds
-// ASCII, so the SQL form silently misses "Ünite" vs "ünite" or "Café" vs
-// "CAFÉ" — real collisions on the tr/fa/ar installs this product ships —
-// AND it would disagree with the strings.EqualFold check the enrolment
-// handler applies to the primary's own name, making the same pair of names
-// a duplicate against the primary but not against a sibling. A shop has a
-// handful of tills, so reading the column is cheap.
-func (r *TillsRepo) NameTaken(ctx context.Context, name string) (bool, error) {
-	return r.NameTakenExcept(ctx, name, "")
-}
-
-// NameTakenExcept is NameTaken skipping the row whose id is exceptID (none
+// NameTakenExcept reports whether a name is taken (case-insensitively, as
+// enrolment compares it), skipping the row whose id is exceptID (none
 // when blank): a joined till's synced roster holds its own row, which its
-// own rename must not collide with (ut-docs#3308).
+// own rename must not collide with (ut-docs#3308). The fold is done in Go
+// (strings.EqualFold), not SQL lower(), which only folds ASCII and would miss
+// "Ünite" vs "ünite" on the tr/fa/ar installs.
 func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) (bool, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM tills`)
 	if err != nil {

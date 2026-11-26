@@ -18,6 +18,13 @@ import (
 
 // ut-docs#7057: the one Tills & devices page.
 
+// resetFleetCache empties the account-list cache between tests.
+func resetFleetCache() {
+	fleetCache.mu.Lock()
+	defer fleetCache.mu.Unlock()
+	fleetCache.at, fleetCache.devices, fleetCache.ok = time.Time{}, nil, false
+}
+
 func tillsTabsMux(t *testing.T, fleet []enroll.Device, fleetErr error) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")

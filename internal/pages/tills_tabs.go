@@ -87,13 +87,6 @@ func cachedAccountFleet() ([]enroll.Device, bool) {
 	return fleetCache.devices, fleetCache.ok && !fleetCache.at.IsZero()
 }
 
-// resetFleetCache is for tests.
-func resetFleetCache() {
-	fleetCache.mu.Lock()
-	defer fleetCache.mu.Unlock()
-	fleetCache.at, fleetCache.devices, fleetCache.ok = time.Time{}, nil, false
-}
-
 // tillsOthersRows is the merged "Other tills" list and the counts the page
 // needs from it.
 type tillsOthers struct {

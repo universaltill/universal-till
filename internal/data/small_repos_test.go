@@ -444,7 +444,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	ctx := context.Background()
 
 	// No tills at all: nothing is taken.
-	taken, err := repo.NameTaken(ctx, "Till 2")
+	taken, err := repo.NameTakenExcept(ctx, "Till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// Exact match.
-	taken, err = repo.NameTaken(ctx, "Till 2")
+	taken, err = repo.NameTakenExcept(ctx, "Till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// Case-insensitive match.
-	taken, err = repo.NameTaken(ctx, "till 2")
+	taken, err = repo.NameTakenExcept(ctx, "till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// A different name is free.
-	taken, err = repo.NameTaken(ctx, "Till 3")
+	taken, err = repo.NameTakenExcept(ctx, "Till 3", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, probe := range []string{"ünite", "üNite", "café", "CAFÉ"} {
-		taken, err = repo.NameTaken(ctx, probe)
+		taken, err = repo.NameTakenExcept(ctx, probe, "")
 		if err != nil {
 			t.Fatal(err)
 		}
