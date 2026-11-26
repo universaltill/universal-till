@@ -98,6 +98,8 @@ func enrolFailureHTML(locale string, err error) string {
 		return html.EscapeString(httpx.T(locale, "settings.enrol.update_needed"))
 	case enroll.IsRateLimited(err):
 		return html.EscapeString(httpx.T(locale, "settings.enrol.rate_limited"))
+	case enroll.IsReconnectOtherShop(err):
+		return html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_other_shop"))
 	case enroll.IsStoreNotReusable(err):
 		return html.EscapeString(httpx.T(locale, "settings.till_registration.store_not_reusable"))
 	}
@@ -116,10 +118,27 @@ func reconnectResultHTML(locale string, err error) string {
 	if s := enrolFailureHTML(locale, err); s != "" {
 		return s
 	}
+	// The cloud answered with an error (5xx or an unexpected refusal): it was
+	// reached, so "could not reach" would be false (ut-docs#6424 L5).
+	var he *enroll.RegisterHTTPError
+	if enroll.IsServerError(err) || errors.As(err, &he) {
+		return html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_server_error"))
+	}
 	if errors.Is(err, enroll.ErrReconnectUnavailable) || errors.Is(err, enroll.ErrPairIdentityPinned) {
 		return html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable"))
 	}
 	return html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_failed"))
+}
+
+// reconnectRefusalKey is the text for a Reconnect / Register as a new shop
+// request refused by the server-side gate: "unavailable" only when the till
+// is a replica or env-pinned, else it is simply not locked out of an
+// ownerless shop (ut-docs#6424 D6).
+func reconnectRefusalKey(ctx context.Context, d *common.Deps) string {
+	if d == nil || d.Settings == nil || !enroll.CanReconnect(ctx, d.Settings) {
+		return "settings.till_registration.reconnect_unavailable"
+	}
+	return "settings.till_registration.reconnect_not_locked_out"
 }
 
 // registerBlockedView is the Settings > Till registration notice, nil when the
@@ -137,8 +156,7 @@ func registerBlockedView(r *http.Request, d *common.Deps, locale string) map[str
 	}
 	if registerKeyRefused(r.Context(), d) {
 		return map[string]any{
-			"help":   httpx.T(locale, "settings.till_registration.blocked_help"),
-			"notice": httpx.T(locale, "settings.till_registration.key_refused"),
+			"notice": httpx.T(locale, "settings.till_registration.key_refused_unregistered"),
 		}
 	}
 	return nil

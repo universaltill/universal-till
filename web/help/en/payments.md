@@ -5,7 +5,7 @@ section: Everyday selling
 order: 20
 public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
-keywords: [cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
+keywords: [own terminal, external terminal, cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
 
 # Payments
@@ -20,6 +20,16 @@ Cash is built in; card and other payment methods come as plugins from the store 
 4. On a card reader the customer has about 18 seconds to tap or insert. After that the till tells the reader to stop and shows **Payment declined**, so a card offered too late is refused. If the card was already being read when time ran out, the payment still goes through and the sale shows as paid. After a card decline that came after a wait, tap **Pay** again on the **same basket** first: the till checks the earlier attempt and, if it went through, completes the sale with it instead of charging again. If it is declined again straight away, the earlier attempt is still being checked — wait a minute and tap **Pay** again. If you change the basket or pick another method instead, check the reader's screen or your provider's dashboard before charging again.
    If this till cannot record a card payment safely, it will not take it. After a restart it returns any card payment that never became a sale. A card tap that was already charged, and any payment it could not settle, are listed instead under **Settings → Payments → Payments needing attention** (and in the till's log) for a manager to deal with at the payment provider.
 5. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
+
+## Card on your own terminal
+
+If a manager has added **your own terminal** (see [Card readers](/help/card-readers)), it works without a plugin and without internet:
+
+1. Tap **Pay**, then **Card** (or **Card reader**), and pick your terminal under **Which reader?**.
+2. Type the amount shown into your terminal and let the customer pay.
+3. Tap **Paid** if it was approved. You can first enter the **Auth code** and the **Last 4 card digits** from the terminal's slip; both are optional. Tap **Declined** if it was refused: nothing is recorded and the basket stays as it was.
+
+The till cannot check this payment: it records what you tell it. Each one is kept in the audit log, and it has its own line, **Card (own terminal)**, on the X and Z reports. Never type a full card number.
 
 ## Install, set up and update a card plugin (Stripe, SumUp)
 
