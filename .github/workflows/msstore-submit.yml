@@ -145,7 +145,7 @@ jobs:
           bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           bash packaging/windows/install-osslsigncode.sh
       - name: Prepare Authenticode verification (no login, no token)
-        run: packaging/windows/setup-verify.sh
+        run: bash packaging/windows/setup-verify.sh
       - name: Verify the release the Store will fetch
         id: verify
         run: |

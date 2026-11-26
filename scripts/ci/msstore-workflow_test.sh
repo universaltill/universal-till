@@ -108,5 +108,8 @@ acct="$(sed -n 's/^ *STORAGE_ACCOUNT: *//p' .github/workflows/publish-installer.
 cont="$(sed -n 's/^container="${CONTAINER:-\(.*\)}"$/\1/p' scripts/ci/publish-installer.sh)"
 [ -n "$acct" ] && [ -n "$cont" ] && [ "$base" = "https://${acct}.blob.core.windows.net/${cont}" ] && ok "INSTALLER_BASE equals publish-installer account/container" || bad "INSTALLER_BASE drifted from publish-installer ($base vs $acct/$cont)"
 grep -qF 'blob="windows/v${ver}/${asset}"' scripts/ci/publish-installer.sh && ok "blob path layout windows/vX.Y.Z/<asset> unchanged" || bad "publish-installer blob layout changed"
+# packaging scripts are not executable in git: a step must run them through bash (the v0.36.4 dry-run died with exit 126).
+direct="$(grep -nE '^ *run: +(\./)?packaging/' .github/workflows/msstore-submit.yml || true)"
+[ -z "$direct" ] && ok "no run: step executes a packaging script directly" || bad "run: step executes a non-executable script directly: $direct"
 [ "$fails" = 0 ] || { echo "msstore-workflow_test: $fails failure(s)" >&2; exit 1; }
 echo "✓ msstore-workflow_test: all cases passed"
