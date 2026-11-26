@@ -1,0 +1,108 @@
+{{/* Tab "Other tills" (ut-docs#7057): this network's tills and the account's
+     tills joined on the till id by tills.Merge, with where each row came
+     from. Nothing here deletes anything by itself: a till missing from the
+     account is only marked, and Remove is one explicit tap by a manager on
+     the main till. When the account list cannot be read nothing is marked
+     (selling and the LAN never depend on it, ADR-0003). */}}
+<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.others" }}</h2>
+{{ with .Others }}
+<div id="tills-others" data-ut-refresh="#tills-others" data-testid="tills-others">
+{{ if not .CloudOK }}
+<div class="card" data-testid="tills-account-unavailable" role="status">
+  <p>{{ T "tills.list.account_unavailable" }}</p>
+  <a class="btn secondary" href="/tills?tab=others&amp;refresh=1" hx-get="/ui/tills/tab/others?refresh=1" hx-target="#tills-tab" hx-swap="innerHTML">{{ T "tills.list.try_again" }}</a>
+</div>
+{{ else if .Disagree }}
+<div class="sync-banner" role="status" data-testid="tills-disagree">
+  <strong>{{ T "tills.list.disagree_title" }}</strong>
+  {{ if .Stale }}{{ if eq (len .Stale) 1 }}{{ T "tills.list.disagree_body_one" }}{{ else }}{{ printf (T "tills.list.disagree_body_other") (len .Stale) }}{{ end }}{{ end }}
+  {{ if .FirstStaleID }}<a href="#till-row-{{ .FirstStaleID }}">{{ T "tills.list.show_it" }}</a>{{ end }}
+</div>
+{{ end }}
+
+{{ if and (not $.SyncPrimary) .StaleLong }}
+<form hx-post="/api/sync/tills/revoke-stale" hx-swap="none" x-data="{ ask: false }" class="tills-bulk" data-testid="tills-remove-stale-all"
+      data-after-request="ok refresh-region:tills-others; fail save-error:tills-others-error">
+  <button type="button" class="btn secondary" x-show="!ask" @click="ask = true">{{ printf (T "tills.list.remove_stale_all") (len .StaleLong) }}</button>
+  <span x-show="ask" x-cloak role="group">
+    <span>{{ T "tills.list.remove_stale_all_confirm" }}{{ range .StaleLong }} <strong>{{ .Name }}</strong><input type="hidden" name="id" value="{{ .ID }}">{{ end }}</span>
+    <button type="submit" class="btn danger">{{ T "tills.list.confirm_yes" }}</button>
+    <button type="button" class="btn secondary" @click="ask = false">{{ T "tills.list.confirm_keep" }}</button>
+  </span>
+</form>
+<p id="tills-others-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{ else if and $.SyncPrimary .StaleLong }}
+<p class="muted">{{ T "tills.list.ask_manager" }}</p>
+{{ end }}
+
+{{ if gt (len .Rows) 1 }}
+<table class="table tills-merged" data-testid="tills-merged">
+  <thead><tr>
+    <th>{{ T "tills.col_name" }}</th><th>{{ T "tills.col_role" }}</th><th>{{ T "tills.list.col_status" }}</th>
+    <th>{{ T "tills.list.col_source" }}</th><th>{{ T "tills.col_seen" }}</th><th></th>
+  </tr></thead>
+  <tbody>
+  {{ range .Rows }}
+  <tr id="till-row-{{ .ID }}" data-till-id="{{ .ID }}" data-state="{{ .State }}"{{ if .IsSelf }} data-self="1"{{ end }}>
+    <td>{{ .Name }}{{ if .IsSelf }} <span class="tag">{{ T "tills.this_till_tag" }}</span>{{ end }}</td>
+    <td>{{ if eq .Role "main" }}{{ T "tills.role.main" }}{{ else if eq .Role "satellite" }}{{ T "tills.role.satellite" }}{{ else if .Role }}{{ T "tills.role.replica" }}{{ else }}—{{ end }}</td>
+    <td>
+      {{ if eq .State "local_only" }}<span class="tag warn">{{ T "tills.list.state.local_only" }}</span>
+        <br><small class="muted">{{ if .LongUnseen }}{{ T "tills.list.state.local_only.hint_old" }}{{ else }}{{ T "tills.list.state.local_only.hint_recent" }}{{ end }}</small>
+      {{ else if eq .State "cloud_only" }}<span class="tag">{{ T "tills.list.state.cloud_only" }}</span>
+        <br><small class="muted">{{ printf (T "tills.list.state.cloud_only.hint") .Name }} <a href="https://my.universaltill.com" rel="noopener" hx-boost="false">{{ T "tills.list.open_my" }}</a></small>
+      {{ else if eq .State "role_mismatch" }}<span class="tag warn">{{ T "tills.list.state.role_mismatch" }}</span>
+        <br><small class="muted">{{ $cr := T "tills.role.replica" }}{{ if eq .CloudRole "main" }}{{ $cr = T "tills.role.main" }}{{ else if eq .CloudRole "satellite" }}{{ $cr = T "tills.role.satellite" }}{{ end }}{{ $lr := T "tills.role.replica" }}{{ if eq .Role "main" }}{{ $lr = T "tills.role.main" }}{{ else if eq .Role "satellite" }}{{ $lr = T "tills.role.satellite" }}{{ end }}{{ printf (T "tills.list.state.role_mismatch.hint") $cr $lr }}</small>
+      {{ else if eq .State "replaced" }}<span class="tag warn">{{ T "tills.list.state.replaced" }}</span>
+        {{ if .ReplacedBy }}<br><small class="muted">{{ printf (T "tills.list.state.replaced.hint") .ReplacedBy }}</small>{{ end }}
+      {{ else }}<span class="tag ok">{{ T "tills.list.state.ok" }}</span>{{ end }}
+      {{ if .SameNameOtherID }}<br><small class="muted">{{ printf (T "tills.list.same_name_hint") .Name }}</small>{{ end }}
+    </td>
+    <td>{{ if and .InLocal .InCloud }}{{ T "tills.list.source.both" }}{{ else if .InCloud }}{{ T "tills.list.source.account" }}{{ else }}{{ T "tills.list.source.network" }}{{ end }}</td>
+    <td>{{ if .LastSeen }}{{ datetime .LastSeen }}{{ else }}—{{ end }}</td>
+    <td>
+      {{ if and (not $.SyncPrimary) (eq .State "local_only") }}
+      <div x-data="{ ask: false }" data-testid="till-remove-{{ .ID }}">
+        <button type="button" class="btn danger" x-show="!ask" @click="ask = true">{{ T "tills.list.remove" }}</button>
+        <span x-show="ask" x-cloak role="group">
+          <span>{{ printf (T "tills.list.remove_confirm") .Name }}</span>
+          <button class="btn danger" hx-post="/api/sync/tills/{{ .ID }}/revoke" hx-swap="none" data-after-request="ok refresh-region:tills-others; fail save-error:tills-others-error">{{ T "tills.list.confirm_yes" }}</button>
+          <button type="button" class="btn secondary" @click="ask = false">{{ T "tills.list.confirm_keep" }}</button>
+        </span>
+      </div>
+      {{ end }}
+    </td>
+  </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<div class="card empty" data-testid="tills-only-one">
+  <p>{{ T "tills.list.only_one" }}</p>
+  <a class="btn" href="/tills?tab=add" hx-get="/ui/tills/tab/add" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add">{{ T "tills.tab.add" }}</a>
+</div>
+{{ end }}
+</div>
+{{ end }}
+
+<div class="card">
+  <h3>{{ T "tills.enrolled" }}</h3>
+  <p class="muted">{{ T "tills.list.details_note" }}</p>
+  {{/* ut-docs#2742: live on a main till — the roster re-renders itself every
+       10 s (GET /ui/tills/roster swaps only this block). A replica has
+       nothing live to show, so it doesn't poll. The tick is skipped while
+       the operator's focus is inside the table. */}}
+  <div id="tills-roster" data-ut-refresh="#tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
+    {{ template "tills_roster.html" . }}
+  </div>
+</div>
+
+{{/* ADR-0198 §6.1: phones used as card readers are not tills; they stay in
+     their own table, never in the merge, with their own Remove. */}}
+<div class="tills-phones" data-testid="tills-phones">
+  <h3>{{ T "tills.phones.title" }}</h3>
+  <p class="muted">{{ T "tills.phones.help" }}</p>
+  {{ if not .SyncPrimary }}
+  <div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ else }}<p class="muted">{{ T "tills.phones.empty" }}</p>{{ end }}
+</div>

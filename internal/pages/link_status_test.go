@@ -379,7 +379,7 @@ func TestTillsRoster_ShowsEachPeerLive(t *testing.T) {
 func TestTillsPage_PollsRosterUnlessFocusedAndFormatsBothDates(t *testing.T) {
 	f := newSyncLinkFixture(t)
 	f.enrol(t, "Counter", "token-abc")
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills", nil), auth.User{ID: "u1", Role: "manager"})
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil), auth.User{ID: "u1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	f.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

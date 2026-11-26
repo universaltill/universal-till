@@ -1,0 +1,45 @@
+{{/* Tab "Settings for this page" (ut-docs#7057): what governs the tills as a
+     group. LAN access, the network key, the copy of every sale and the
+     quarantine list moved here; the kiosk, notices and shop-account cards
+     stay in Settings (shop-wide locks and elevation live there) and are
+     linked from here. */}}
+<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.settings" }}</h2>
+<section id="network" aria-labelledby="tills-set-network">
+  <h3 id="tills-set-network">{{ T "tills.settings.network" }}</h3>
+  {{/* ut-docs#6955: who on the network may reach this till (managers only; the fragment 403s otherwise). */}}
+  <div class="card"><div hx-get="/ui/settings/lan-access" hx-trigger="load" hx-swap="innerHTML"></div></div>
+  {{ template "tills_network_key.html" . }}
+  {{/* ut-docs#5074 M5: the read-only sales copy (its own partial). */}}
+  <div id="tills-sales-mirror" hx-get="/ui/tills/sales-mirror" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ if .ShowQuarantine }}
+  <div class="card" data-testid="tills-quarantine">
+    <h4>{{ T "tills.settings.quarantine" }}</h4>
+    <p class="muted">{{ T "sync.quarantine_settings_help" }}
+      {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ if eq .QuarantineCount 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}</strong>{{ end }}</p>
+    <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
+  </div>
+  {{ end }}
+  {{ if .SyncPrimary }}
+  <div class="card">
+    <h3>{{ T "tills.promote_title" }}</h3>
+    <p class="muted">{{ T "tills.promote_help" }}</p>
+    <form hx-post="/api/sync/promote" hx-target="#promote-msg" hx-swap="innerHTML"
+          hx-confirm="{{ T "tills.promote_confirm" }}" data-confirm-ok="{{ T "tills.promote_btn" }}">
+      <label>{{ T "tills.promote_confirm_label" }}
+        <input type="text" name="confirm" placeholder="PROMOTE" autocomplete="off" required></label>
+      <button class="btn" type="submit">{{ T "tills.promote_btn" }}</button>
+      <div id="promote-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+    </form>
+  </div>
+  {{ end }}
+</section>
+<section aria-labelledby="tills-set-more">
+  <h3 id="tills-set-more">{{ T "tills.settings.more" }}</h3>
+  <ul class="tills-links">
+    <li id="kiosk"><a class="btn secondary" href="/settings#settings-kiosk-idle-reset">{{ T "tills.settings.kiosk_idle" }}</a>
+        <a class="btn secondary" href="/settings#settings-kiosk-payment-mode">{{ T "tills.settings.kiosk_payment" }}</a></li>
+    <li id="notices"><a class="btn secondary" href="/settings#settings-notices">{{ T "tills.settings.notices" }}</a></li>
+    <li id="account"><a class="btn secondary" href="/settings#registration">{{ T "tills.settings.registration" }}</a>
+        <a class="btn secondary" href="/settings#subscription">{{ T "tills.settings.subscription" }}</a></li>
+  </ul>
+</section>

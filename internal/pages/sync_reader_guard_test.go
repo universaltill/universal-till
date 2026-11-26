@@ -131,6 +131,7 @@ func TestReaderBearerRefusedOnEverySyncRoute(t *testing.T) {
 	registerTillRole(g.mux, g.d)
 	registerDiscoveryAPI(g.mux, g.d)
 	registerPairingJoinAPI(g.mux, g.d)
+	registerTillsTabs(g.mux, g.d) // POST /api/sync/tills/revoke-stale (ut-docs#7057)
 
 	_, bearer := g.enrolReader(t, "Guard phone")
 	// Real session middleware in front, auth ON, exactly as served.

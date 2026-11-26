@@ -11,7 +11,11 @@
   <tbody>
     {{ range .Pending }}
     <tr>
-      <td>{{ .DeviceName }}</td>
+      <td>{{ .DeviceName }}
+        {{/* ut-docs#7057: never hidden, always explained. */}}
+        {{ if .AlreadyEnrolled }}<br><span class="tag warn" data-testid="pending-already-enrolled">{{ T "tills.pending.already_enrolled" }}</span>
+        <br><small class="muted">{{ printf (T "tills.pending.already_enrolled_hint") .VerificationCode }}</small>{{ end }}
+        {{ if .NameInUse }}<br><span class="tag warn" data-testid="pending-name-in-use">{{ T "tills.pending.name_in_use" }}</span>{{ end }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
       {{/* ut-docs#2781: the role the till asked to join as, which the
            manager can change before approving. Outside both forms like the
@@ -61,11 +65,15 @@
         <input type="password" name="manager_pin" id="pin-{{ .ID }}" inputmode="numeric" autocomplete="off"
                aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
+        {{ if .NameInUse }}
+        <span class="muted" data-testid="pending-approve-disabled"><button class="btn primary" type="button" disabled>{{ T "tills.pairing.approve_btn" }}</button> {{ T "tills.pending.name_in_use_hint" }}</span>
+        {{ else }}
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
         </form>
+        {{ end }}
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">

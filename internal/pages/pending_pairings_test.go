@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 )
 
@@ -268,8 +269,8 @@ func TestPairingNoticeUI_RendersCountAndFingerprintWhenPending(t *testing.T) {
 	if !strings.Contains(body, `data-fingerprint="`) || strings.Contains(body, `data-fingerprint=""`) {
 		t.Fatalf("expected a non-empty data-fingerprint, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/tills"`) {
-		t.Fatalf("expected a link to /tills, got: %s", body)
+	if !strings.Contains(body, `href="/tills?tab=add"`) {
+		t.Fatalf("expected a link to /tills?tab=add, got: %s", body)
 	}
 }
 
@@ -518,5 +519,55 @@ func TestPendingPairingsUI_OneManagerPINInputPerRequest(t *testing.T) {
 	if gotIncludes != 4 { // 2 requests x (approve form + deny form)
 		t.Fatalf("expected approve AND deny forms to hx-include the shared PIN input for both requests (4 total), got %d in: %s",
 			gotIncludes, body)
+	}
+}
+
+// ut-docs#7057: a request whose name is already enrolled is never hidden. It
+// is shown with an "Already enrolled here" badge (approve replaces), or, when
+// the enrolled till of that name is live right now, "Name already in use"
+// with Approve disabled.
+func TestPendingPairingsUI_AlreadyEnrolledNameIsFlaggedNotHidden(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+	tills := data.NewTillsRepo(dp.Db)
+	if _, err := tills.InsertTill(t.Context(), "Bar tablet", "h-bar"); err != nil { // never seen: stale
+		t.Fatal(err)
+	}
+	postPairRequest(t, mux, "bar TABLET", commitOf("ui-secret-7057"), "10.0.0.31:1234")
+
+	get := func() string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/tills/pending-pairings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	body := get()
+	if !strings.Contains(body, "bar TABLET") {
+		t.Fatalf("the request must still be listed: %s", body)
+	}
+	if !strings.Contains(body, `data-testid="pending-already-enrolled"`) || !strings.Contains(body, httpx.T("en", "tills.pending.already_enrolled")) {
+		t.Fatalf("want the Already enrolled here badge: %s", body)
+	}
+	if strings.Contains(body, `data-testid="pending-name-in-use"`) {
+		t.Fatalf("a stale enrolment must not read as name in use: %s", body)
+	}
+
+	// Now the enrolled till of that name is live.
+	list, _ := tills.ListTills(t.Context())
+	if err := tills.TouchLastSeen(t.Context(), list[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	body = get()
+	if !strings.Contains(body, `data-testid="pending-name-in-use"`) || !strings.Contains(body, httpx.T("en", "tills.pending.name_in_use")) {
+		t.Fatalf("want Name already in use for a live till: %s", body)
+	}
+	if !strings.Contains(body, `data-testid="pending-approve-disabled"`) {
+		t.Fatalf("Approve must be disabled with its reason shown: %s", body)
+	}
+	if strings.Contains(body, "/approve") {
+		t.Fatalf("a live-name request must not render an approve form: %s", body)
 	}
 }

@@ -1342,11 +1342,20 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 
 // Device is one till registered under this store (the fleet).
 type Device struct {
-	DeviceID  string `json:"device_id"`
+	DeviceID string `json:"device_id"`
+	// TillID is the till's own id on its shop network (the local tills.id),
+	// as the till reported it to the account. The device id is the till's
+	// marketplace identity and never equals it; the page joins the two lists
+	// on TillID. Empty when the till never reported one (ut-docs#7057).
+	TillID    string `json:"till_id,omitempty"`
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	FirstSeen string `json:"first_seen"`
 	LastSeen  string `json:"last_seen"`
+	// Role is the till's role as the account records it ("main",
+	// "additional" or "satellite"). Optional: older clouds do not send it,
+	// and then no role mismatch is ever raised (ut-docs#7057).
+	Role string `json:"role,omitempty"`
 }
 
 // Fleet fetches every till device registered under this till's store from the

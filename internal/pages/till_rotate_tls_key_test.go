@@ -79,6 +79,7 @@ func TestTillRotateTLSKey_StartsRotationAndTellsLinkedTills(t *testing.T) {
 	f := newSyncLinkFixture(t)
 	registerTillRotateTLSKey(f.mux, f.dp)
 	registerTillsRoster(f.mux, f.dp)
+	registerTillsTabs(f.mux, f.dp) // the network key now sits on the Settings tab (ut-docs#7057)
 	c := servingCert(t)
 	tillID := f.enrol(t, "Counter", "bearer-t2")
 	if _, err := f.dp.Db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('u-manager','mgr','Manager','x','manager')`); err != nil {
@@ -107,7 +108,7 @@ func TestTillRotateTLSKey_StartsRotationAndTellsLinkedTills(t *testing.T) {
 		t.Fatal("link never established")
 	}
 
-	if body := getRoster(t, f.mux, "manager").Body.String(); !strings.Contains(body, `hx-post="/api/tills/rotate-tls-key"`) ||
+	if body := getTillsTab(t, f.mux, "manager", "settings").Body.String(); !strings.Contains(body, `hx-post="/api/tills/rotate-tls-key"`) ||
 		!strings.Contains(body, `data-rotation="idle"`) {
 		t.Fatalf("roster lacks the network key action: %s", body)
 	}
@@ -161,7 +162,7 @@ func TestTillRotateTLSKey_StartsRotationAndTellsLinkedTills(t *testing.T) {
 	if got := auditRows(t, f.dp, "lan_tls_rotation_started"); len(got) != 1 {
 		t.Fatalf("second press audited again: %v", got)
 	}
-	body := getRoster(t, f.mux, "manager").Body.String()
+	body := getTillsTab(t, f.mux, "manager", "settings").Body.String()
 	if !strings.Contains(body, `data-rotation="pending"`) || strings.Contains(body, `hx-post="/api/tills/rotate-tls-key"`) {
 		t.Fatalf("roster while pending: %s", body)
 	}
