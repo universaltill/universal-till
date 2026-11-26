@@ -14,15 +14,19 @@ function code(url: string, token = TOKEN): string {
 }
 const GOOD = code('http://192.168.1.10:8080');
 
-async function stubCamera(page: import('@playwright/test').Page, opts: { reject?: string; qr?: string[] }) {
-  await page.addInitScript(({ reject, qr }) => {
+async function stubCamera(page: import('@playwright/test').Page, opts: { reject?: string; qr?: string[]; gate?: boolean }) {
+  await page.addInitScript(({ reject, qr, gate }) => {
     const w = window as any;
     w.__stops = 0;
     w.__reads = qr || [];
+    // gate: hold the stubbed QR back until the test arms it, so the overlay
+    // stays open long enough for the test to observe it (no race with the
+    // two-identical-reads auto-close).
+    w.__armed = !gate;
     w.BarcodeDetector = class {
       static async getSupportedFormats() { return ['qr_code']; }
       async detect() {
-        const v = w.__reads.length ? w.__reads[0] : null;
+        const v = w.__armed && w.__reads.length ? w.__reads[0] : null;
         return v ? [{ rawValue: v }] : [];
       }
     };
@@ -40,7 +44,7 @@ async function stubCamera(page: import('@playwright/test').Page, opts: { reject?
         },
       },
     });
-  }, { reject: opts.reject ?? '', qr: opts.qr ?? [] });
+  }, { reject: opts.reject ?? '', qr: opts.qr ?? [], gate: !!opts.gate });
 }
 
 async function openJoin(page: import('@playwright/test').Page) {
@@ -86,11 +90,12 @@ test.describe('scan the pairing QR on the join form (ut-docs#3428)', () => {
     const assertClean = watchConsole(page);
     const posts: string[] = [];
     page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/api/sync/join')) posts.push(r.url()); });
-    await stubCamera(page, { qr: [GOOD] });
+    await stubCamera(page, { qr: [GOOD], gate: true });
     await openJoin(page);
     await page.locator('#pairing-till-name').fill('');
     await page.locator('#tills-join-scan').click();
     await expect(page.locator('#tills-join-scan-overlay')).toBeVisible();
+    await page.evaluate(() => { (window as any).__armed = true; });
     await expect(page.locator('#tills-join-scan-overlay')).toBeHidden(); // closes itself after two identical reads
     const form = page.locator('form[hx-post="/api/sync/join"]');
     await expect(form.locator('input[name=code]')).toHaveValue(GOOD);

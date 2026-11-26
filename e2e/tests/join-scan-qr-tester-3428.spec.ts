@@ -21,7 +21,9 @@ async function openSetup(page: import('@playwright/test').Page, lang = 'en') {
   await page.goto('/setup?lang=' + lang);
   await page.locator('#setup-tab-code').waitFor({ state: 'attached' });
   if (!(await page.locator('#setup-tab-code').isVisible())) {
-    await page.getByText(/Join an existing shop/i).first().click();
+    // locale-independent: the wizard's secondary "Join an existing shop" button
+    // (its label is translated, so a text match fails under ?lang=de)
+    await page.locator('.setup-secondary-row button').first().click();
   }
   await page.locator('#setup-tab-code').click();
   await expect(page.locator('#setup-join-scan')).toBeVisible();
