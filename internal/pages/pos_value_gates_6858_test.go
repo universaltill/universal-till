@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -134,6 +135,25 @@ func TestPOSLine_NonHtmx_Cashier403JSON(t *testing.T) {
 			}
 			if rec := postForm(e.mux, "/api/pos/line", tc.form, e.manager); rec.Code != http.StatusOK {
 				t.Fatalf("manager non-htmx: %d", rec.Code)
+			}
+		})
+	}
+}
+
+// AC3b, review: a reduce-and-raise post needs BOTH permissions, so a session
+// holding only one of them is still refused before the PIN.
+func TestPOSLine_NonHtmx_ReduceAndRaise_OnePermissionIsNotEnough(t *testing.T) {
+	for _, granted := range []string{"void_comp_waste", "price_override"} {
+		t.Run(granted, func(t *testing.T) {
+			e := newGateEnv(t)
+			key := e.seedLine(t, 2)
+			if err := data.NewAuthRepo(e.dp.Db).SetRolePermission(t.Context(), nil, "cashier", granted, true); err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{"key": {key}, "qty": {"1"}, "discount": {"10"}}
+			requireForbiddenJSON(t, postForm(e.mux, "/api/pos/line", form, e.cashier))
+			if l := e.dp.Engine.Basket().Lines[0]; l.Qty != 2 || l.LineDiscount.Minor() != 0 {
+				t.Fatalf("line changed: qty %v disc %d", l.Qty, l.LineDiscount.Minor())
 			}
 		})
 	}
