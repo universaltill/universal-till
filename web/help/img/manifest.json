@@ -1483,7 +1483,7 @@
       "sha256": "5db33f344f2eb86646a1ac20a8c897366c7d1d372c12e11ab405cfdfa256fe71"
     },
     "web/public/pairing-stream.js": {
-      "sha256": "9748e63d4e4ac14bf76e14c6387be0cf87964c0508da82aa52d08cba73308739"
+      "sha256": "e52176c5b6d045326558ea34b412535889caf67ef9a10bf2b72dcdd0db7dd269"
     },
     "web/public/photo-cutout-worker.js": {
       "sha256": "9583f3b6af0d92b83aef6bc0c5bc03b8ddaa376aeccb5033faef54e199e51f82"
