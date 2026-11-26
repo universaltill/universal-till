@@ -22,7 +22,14 @@
 {{ if .Sale.DisplayNo }}<p class="order-no-journal" data-testid="journal-order-no">{{ T "journal.col.order_no" }}: <span dir="ltr">{{ .Sale.DisplayNo }}</span></p>{{ end }}
 <div style="text-align:center; margin:.4rem 0">{{ barcodesvg .Sale.ReceiptNo }}</div>
 
-{{ if or .Original .Returns }}
+{{ if or .Original .Returns .Refund }}
+{{ with .Refund }}{{ if .Status }}<div class="journal-refund" data-refund-status="{{ .Status }}">
+  {{ if eq .Status "pending" }}<span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ T "journal.refund_status.pending" }}</span>
+  {{ else if eq .Status "refunded" }}<span class="chip chip-note"><span aria-hidden="true">&#8617;</span> {{ T "journal.refund_status.refunded" }}</span>
+  {{ else }}<span class="chip chip-note"><span aria-hidden="true">&#9680;</span> {{ T "journal.refund_status.partly" }}</span>{{ end }}
+  {{ if and (ne .Status "pending") .Refunded.IsPositive }}<span class="muted"><bdi>{{ printf (T "journal.refunded_amount") (money .Refunded) (money .Total) }}</bdi></span>{{ end }}
+</div>
+{{ if eq .Status "pending" }}<p>{{ T "journal.refund_status.pending_explain" }}</p>{{ end }}{{ end }}{{ end }}
 <p class="muted" style="margin-bottom:.6rem">
   {{ if .Original }}{{ T "refund.original_ref" }}: <a href="/journal/{{ .Original }}">#{{ .Original }}</a>{{ end }}
   {{ if .Returns }}{{ T "refund.returns_ref" }}:
@@ -56,7 +63,7 @@
   <div class="card">
     <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.7rem">
       <span class="tag">{{ .Sale.Status }}</span>
-      <span class="tag">{{ .Sale.SaleType }}</span>
+      <span class="tag">{{ if eq .Sale.SaleType "return" }}{{ T "journal.type.refund" }}{{ else }}{{ T "journal.type.sale" }}{{ end }}</span>
       <span class="tag">{{ tenderLabel .Sale.TenderType }}</span>
       {{/* ut-docs#1181 (ADR-0073): the derived order-type summary. */}}
       {{ if eq .Sale.OrderType "takeaway" }}<span class="tag">🥡 {{ T "basket.order_type.takeaway" }}</span>{{ else if eq .Sale.OrderType "mixed" }}<span class="tag" data-testid="journal-mixed">⚖️ {{ T "basket.order_type.mixed" }}</span>{{ end }}

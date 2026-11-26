@@ -834,7 +834,7 @@ func DecideMove(ctx context.Context, cfg *config.Config, kv Settings, id, decisi
 // moveTerminal: the move can never be decided again, so the till drops it.
 func moveTerminal(code string) bool {
 	switch code {
-	case "move_cancelled", "move_declined", "move_failed", "move_done", "move_expired", moveUnavailableCode:
+	case "move_cancelled", "move_declined", "move_failed", "move_done", "move_expired", "move_region_mismatch", moveUnavailableCode:
 		return true
 	}
 	return false

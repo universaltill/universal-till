@@ -42,9 +42,17 @@
       <tbody>
         {{ range .Entries }}
           <tr class="journal-row" data-action="go:/journal/{{ .ReceiptNo }}" data-receipt="{{ .ReceiptNo }}">
-            <td><a href="/journal/{{ .ReceiptNo }}" data-action="stop">{{ .ReceiptNo }}</a></td>
+            {{ $rf := index $.Refunds .ID }}
+            <td><a href="/journal/{{ .ReceiptNo }}" data-action="stop">{{ .ReceiptNo }}</a>
+              {{ if eq .SaleType "return" }}{{ with $rf }}{{ if .OriginalReceipt }}<div class="journal-refund" data-refund-row="return"><span>{{ T "refund.original_ref" }} <a href="/journal/{{ .OriginalReceipt }}" data-action="stop" dir="ltr">#{{ .OriginalReceipt }}</a></span></div>{{ end }}{{ end }}
+              {{ else }}{{ with $rf }}<div class="journal-refund" data-refund-status="{{ .Status }}">
+                {{ if eq .Status "pending" }}<span class="chip chip-warn"><span aria-hidden="true">&#9888;</span> {{ T "journal.refund_status.pending" }}</span>
+                {{ else if eq .Status "refunded" }}<span class="chip chip-note"><span aria-hidden="true">&#8617;</span> {{ T "journal.refund_status.refunded" }}</span>
+                {{ else }}<span class="chip chip-note"><span aria-hidden="true">&#9680;</span> {{ T "journal.refund_status.partly" }}</span>{{ end }}
+                {{ if and (ne .Status "refunded") (ne .Status "pending") .Refunded.IsPositive }}<span class="muted journal-refund-amount"><bdi>{{ printf (T "journal.refunded_amount") (money .Refunded) (money .Total) }}</bdi></span>{{ end }}
+              </div>{{ end }}{{ end }}</td>
             <td>{{ if .DisplayNo }}<span class="order-no-journal" dir="ltr">{{ .DisplayNo }}</span>{{ end }}</td>
-            <td>{{ money .Total }}</td>
+            <td><bdi>{{ money .SignedTotal }}</bdi></td>
             <td>{{ tenderLabel .TenderType }}</td>
             <td>{{ .SyncStatus }}</td>
             <td>{{ datetime .CreatedAt }}</td>

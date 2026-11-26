@@ -68,7 +68,9 @@ func MarkReplaced(ctx context.Context, kv Settings, by, at string) {
 // ReplacedState reports whether this till was replaced, and by whom. A read
 // error reads as not replaced: the state only ever withholds LAN roles, and
 // the next refused cloud call records it again.
-func ReplacedState(ctx context.Context, kv Settings) (Replaced, bool) {
+func ReplacedState(ctx context.Context, kv interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+}) (Replaced, bool) {
 	if kv == nil {
 		return Replaced{}, false
 	}

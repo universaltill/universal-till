@@ -5,7 +5,7 @@ section: Everyday selling
 order: 21
 public: true
 summary: Set up the card readers a till can use, of any provider, so a cashier can choose which one takes each card payment.
-keywords: [card reader, terminal, readers, reader id, provider, stripe, sumup, self-order reader, which reader]
+keywords: [own terminal, external terminal, card reader, terminal, readers, reader id, provider, stripe, sumup, self-order reader, which reader]
 routes: [/settings/card-readers]
 ---
 
@@ -27,7 +27,11 @@ Only payment plugins that support several readers appear in **Provider**. A read
 
 Using a phone as a card reader is set up on the main till; its additional tills can send a sale to those phones too (see [Tills](/help/multitill)). A till holds at most 32 readers. Readers restored from a backup are kept but must be checked before use, because reader IDs are device specific.
 
-Every card reader needs an internet connection to take a payment; the **Which reader?** list at the till says so under each reader.
+A reader the till talks to needs an internet connection to take a payment; the **Which reader?** list at the till says so under each reader. **Your own terminal** (below) works without internet.
+
+## Your own terminal
+
+If you already have a card terminal that is not connected to the till, add it so cashiers can record its payments. In **Settings → Payments → Card readers**, enter a name and tap **Add your own terminal**. It needs no provider and no reader ID, and it works without internet. It appears under **Which reader?** at the till, never on the self-order kiosk. The till never talks to this terminal: the cashier types the amount into it and then tells the till the result (see [Payments](/help/payments)).
 
 ## What can go wrong
 
