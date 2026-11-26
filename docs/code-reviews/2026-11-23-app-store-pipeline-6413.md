@@ -1,0 +1,9 @@
+# Review: App Store pipeline (ut-docs#6413)
+
+Shipped: ios-testflight upload job in environment app-store-upload; ASC processing check moved to an ubuntu-latest job (no environment, to avoid a second approval); dSYM artifact from the archived app binary; one-line "PLA Update available" failure step; run_number header note. New app-store-submit.yml (env app-store-review, dry_run default true) and scripts/asc-submit (fixture tests, no network), guard-store-private.sh rule appstore-submit-switch (store-release/apple.opened + marker), wiring tests wired into ci.yml.
+Reviewer: independent Opus 5.5 subagent (Sonnet-built). Findings fixed: (1) second environment approval on processing-check; (2) dsymutil on a static ar archive cannot work, now run on the archived app binary; (3) re-submit after rejection (UNRESOLVED_ISSUES reused, item not added twice, tests added); (4) opening-file path now a constant, not a flag; (5) phased-release refusal (first release) only warns. Accepted: (6) a version already in review fails with a generic 409; (7) opening the store (ut-docs#6414) edits three files: apple.opened, workflow marker, wiring test.
+Verification: tests written first and seen failing (undefined client; missing fixtures), then green; go vet, gofmt, actionlint, shellcheck clean. dSYM step is unproven until a real macOS run (continue-on-error by design).
+Pre-flight: no secrets in run blocks, actions SHA-pinned, no real shop names.
+
+## Combined tester+reviewer pass (orchestrator, 2026-11-23)
+Focused tests, actionlint, go vet pass. One real defect found and fixed: release.yml dispatched ios-testflight.yml with `--ref "$TAG"` but the app-store-upload environment admits main only. Now dispatched from main; ios-testflight.yml checks out the tag after proving it is an ancestor of origin/main (play-publish precedent); test pin updated.

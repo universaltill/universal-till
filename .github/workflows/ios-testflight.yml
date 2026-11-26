@@ -39,6 +39,26 @@ name: ios-testflight
 #     run_attempt grows when a failed run is re-run (which keeps its
 #     run_number) — so every upload, across versions and re-runs, carries a
 #     higher build number than the one before it.
+#     NOTE (ut-docs#6413): renaming this workflow (the `name:` or the file)
+#     resets run_number to 1, so CFBundleVersion would restart below builds
+#     App Store Connect already holds and every upload would be refused. Keep
+#     the name and the file; if it must change, first raise the build number
+#     base here above the last uploaded build.
+#
+# Jobs and gates (ut-docs#6413, ADR-0194):
+#   testflight        macos-26, environment `app-store-upload` (owner approval
+#                     on every run, admin bypass off, main only; ut-infra
+#                     github-universal-till): build, sign, upload. Also keeps
+#                     the app's dSYM (Go runtime included) as an artifact.
+#   processing-check  ubuntu-latest, no environment (a second environment job
+#                     would ask the owner for a second approval 20-60 minutes
+#                     later): waits up to 40 minutes for App Store Connect to
+#                     process the build, so no macOS minutes are billed while
+#                     Apple works. The API key is a repository secret.
+#   An upload refused with "PLA Update available" means the Account Holder
+#   must accept the updated Program License Agreement (App Store Connect >
+#   Business / Agreements, or developer.apple.com/account); a failure step
+#   names it in one line.
 on:
   workflow_dispatch:
     inputs:
@@ -54,17 +74,36 @@ concurrency:
 jobs:
   testflight:
     if: github.repository == 'universaltill/universal-till'
+    environment: app-store-upload
+    outputs:
+      version: ${{ steps.versions.outputs.version }}
+      build: ${{ steps.versions.outputs.build }}
     # macos-26 = Xcode 26 / iOS 26 SDK: App Store Connect refuses uploads
     # built with an older SDK (ut-docs#3069; the 18.5 SDK on macos-15 was).
     runs-on: macos-26
-    # 60 for the build and upload + up to 40 waiting for App Store Connect
-    # to process it (the tester check below, ut-docs#3217) + 20 slack.
-    timeout-minutes: 120
+    # Build, sign and upload only: the processing wait is the
+    # processing-check job below (ubuntu), not billed here.
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Tags, for `git describe` on a dispatch.
           fetch-depth: 0
+      - name: Build the release tag (dispatched from main, like play-publish)
+        # The app-store-upload environment admits refs/heads/main only, so
+        # release.yml dispatches from main and the tree built is the tag's,
+        # after proving the tag is on main (ut-docs#6413).
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$INPUT_VERSION" ] || exit 0
+          tag="v${INPUT_VERSION#v}"
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+            || { echo "::error::tag $tag does not exist"; exit 1; }
+          git merge-base --is-ancestor "refs/tags/$tag" origin/main \
+            || { echo "::error::tag $tag is not on main; refusing to build it"; exit 1; }
+          git checkout --detach "refs/tags/$tag"
       - name: Refuse an iOS SDK App Store Connect would reject
         # First step: fails in seconds instead of after the 20-minute archive.
         run: |
@@ -83,6 +122,7 @@ jobs:
           fi
           echo "iphoneos SDK $sdk"
       - name: Resolve marketing and build versions
+        id: versions
         env:
           INPUT_VERSION: ${{ inputs.version }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -104,6 +144,8 @@ jobs:
           build="${RUN_NUMBER}.${RUN_ATTEMPT}"
           echo "MARKETING_VERSION=$version" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=$build" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "### TestFlight upload: Universal Till $version ($build)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -200,6 +242,29 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+      # ut-docs#6413: symbols for the Go runtime linked into the app (the
+      # gomobile framework is a static library, which dsymutil cannot read on
+      # its own), made from the archived app binary and kept as a run artifact
+      # so a TestFlight crash report can be symbolicated. A failure here must
+      # not block a release, so it warns instead.
+      - name: Make the dSYM of the Go runtime in the app
+        id: dsym
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/UniversalTill.xcarchive/Products/Applications/UniversalTill.app/UniversalTill"
+          [ -f "$bin" ] || { echo "::warning::no archived app binary to make a dSYM from"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/dsym"
+          dsymutil "$bin" -o "$RUNNER_TEMP/dsym/UniversalTill-go.app.dSYM"
+          test -d "$RUNNER_TEMP/dsym/UniversalTill-go.app.dSYM"
+      - name: Attach the dSYM
+        if: steps.dsym.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-dsym-${{ env.MARKETING_VERSION }}-${{ env.BUILD_NUMBER }}
+          path: ${{ runner.temp }}/dsym/UniversalTill-go.app.dSYM
+          retention-days: 90
+          if-no-files-found: error
       - name: Export and upload to App Store Connect (TestFlight)
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -234,17 +299,56 @@ jobs:
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/export.log"
           echo "Uploaded $MARKETING_VERSION ($BUILD_NUMBER); App Store Connect processes it before it shows in TestFlight." >> "$GITHUB_STEP_SUMMARY"
+      - name: Name an unaccepted Program License Agreement
+        # ut-docs#6413: a refused upload used to bury this in xcodebuild's log
+        # for weeks. One line, no secret (the log holds none).
+        if: failure()
+        run: |
+          if grep -qF 'PLA Update available' "$RUNNER_TEMP/export.log" 2>/dev/null; then
+            echo "::error::PLA Update available: the Account Holder must accept the updated Program License Agreement (App Store Connect > Business > Agreements, or developer.apple.com/account), then re-run this workflow"
+          fi
+      - name: Remove the API key and export options
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/private_keys" "$RUNNER_TEMP/ExportOptions.plist"
+  processing-check:
+    needs: testflight
+    if: github.repository == 'universaltill/universal-till'
+    # ubuntu-latest: up to 40 minutes of polling Apple, free of macOS minutes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::ASC_KEY_ID / ASC_KEY_P8 secrets are not set"
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          printf '%s' "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          chmod 600 "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
       - name: Check an internal tester can see the build
         # ut-docs#3217: an upload once went green and reached nobody for 6 h
         # (no beta group, no testers). Waits for App Store Connect to finish
         # processing (VALID), then fails unless an internal group with at
-        # least one tester can see this build. Reads the key file written
-        # above; logs nothing secret.
+        # least one tester can see this build. Logs nothing secret.
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          MARKETING_VERSION: ${{ needs.testflight.outputs.version }}
+          BUILD_NUMBER: ${{ needs.testflight.outputs.build }}
         run: |
           set -euo pipefail
           go run ./scripts/asc-testflight-check \
@@ -254,6 +358,6 @@ jobs:
             -version "$MARKETING_VERSION" -build "$BUILD_NUMBER" \
             -timeout 40m
           echo "An internal TestFlight group with testers can see $MARKETING_VERSION ($BUILD_NUMBER)." >> "$GITHUB_STEP_SUMMARY"
-      - name: Remove the API key and export options
+      - name: Remove the API key
         if: always()
-        run: rm -rf "$RUNNER_TEMP/private_keys" "$RUNNER_TEMP/ExportOptions.plist"
+        run: rm -rf "$RUNNER_TEMP/private_keys"

@@ -1518,8 +1518,10 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         # A TestFlight problem must never fail or roll back a published
         # release: warn, and a maintainer re-dispatches ios-testflight.yml.
+        # Dispatched from MAIN (the app-store-upload environment admits main
+        # only); the workflow checks the tag out after proving it is on main.
         run: |
-          gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
+          gh workflow run ios-testflight.yml --ref main -f version="${TAG#v}" \
             || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
       - name: Start the Google Play internal-testing upload for this release (ut-docs#6410)
         # Off until the owner has applied the ut-infra Terraform roots and sets the

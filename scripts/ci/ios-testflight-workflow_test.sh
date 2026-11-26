@@ -140,19 +140,39 @@ check_wf() {
   if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=appstore -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:appstore -X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}"' <<<"$bind"; then
     echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Channel=appstore -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:appstore -X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=\${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=\${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=\${UT_RELEASE_KEYS_HEX}\")"
   fi
-  # ut-docs#3217: a step after the export/upload (and before the key is
-  # removed) runs the audience check against the app's bundle ID.
-  local aud aud_at export_at cleanup_at
-  aud="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Check an internal tester can see the build/)} p' "$wf")"
-  aud_at="$(awk '/^      - name: Check an internal tester can see the build/{print NR; exit}' "$wf")"
-  export_at="$(awk '/^      - name: Export and upload/{print NR; exit}' "$wf")"
-  cleanup_at="$(awk '/^      - name: Remove the API key/{print NR; exit}' "$wf")"
-  if [ -z "$aud" ] || [ -z "$export_at" ] || [ -z "$cleanup_at" ] \
-    || ! grep -qF 'go run ./scripts/asc-testflight-check' <<<"$aud" \
-    || ! grep -qF -- '-bundle-id com.universaltill.pos' <<<"$aud" \
-    || [ "$aud_at" -lt "$export_at" ] || [ "$aud_at" -gt "$cleanup_at" ]; then
-    echo "FAIL:no TestFlight audience check (scripts/asc-testflight-check) between the upload and the key cleanup"
+  # ut-docs#3217 / ut-docs#6413: the audience check (waits up to 40 minutes for
+  # App Store Connect) runs in its OWN ubuntu-latest job after the upload, so
+  # no macOS minutes are billed while Apple processes. Only the upload job is in
+  # the reviewed environment (a second would need a second approval); the check
+  # job removes its key.
+  if grep -qE '^    environment:' <<<"$(awk '/^  processing-check:/{f=1; print; next} f && /^  [a-z-]+:$/{f=0} f' "$wf")"; then
+    echo "FAIL:processing-check sits in a reviewed environment (second approval)"
   fi
+  local tf pc
+  tf="$(awk '/^  testflight:/{f=1; print; next} f && /^  [a-z-]+:$/{f=0} f' "$wf")"
+  pc="$(awk '/^  processing-check:/{f=1; print; next} f && /^  [a-z-]+:$/{f=0} f' "$wf")"
+  grep -qE '^    environment: app-store-upload$' <<<"$tf" || echo "FAIL:upload job is not in the app-store-upload environment"
+  if [ -z "$pc" ] || ! grep -qE '^    runs-on: ubuntu-latest$' <<<"$pc" || ! grep -qE '^    needs: testflight$' <<<"$pc" \
+    || ! grep -qE '^    timeout-minutes: [0-9]+$' <<<"$pc" \
+    || ! grep -qF 'go run ./scripts/asc-testflight-check' <<<"$pc" \
+    || ! grep -qF -- '-bundle-id com.universaltill.pos' <<<"$pc" \
+    || ! grep -qF -- '-timeout 40m' <<<"$pc"; then
+    echo "FAIL:no TestFlight audience check (scripts/asc-testflight-check) in an ubuntu-latest job that needs the upload job"
+  fi
+  if grep -qF 'asc-testflight-check' <<<"$tf"; then
+    echo "FAIL:the 40-minute processing wait still runs on the macOS job"
+  fi
+  if [ -n "$pc" ] && ! awk '/^      - name: /{ if (blk ~ /if: always\(\)/ && blk ~ /rm -/ && blk ~ /private_keys/) ok=1; blk=$0; next } {blk = blk "\n" $0} END{ if (blk ~ /if: always\(\)/ && blk ~ /rm -/ && blk ~ /private_keys/) ok=1; exit ok?0:1 }' <<<"$pc"; then
+    echo "FAIL:the processing-check job does not remove its API key in an always() step"
+  fi
+  # ut-docs#6413: dSYM of the gomobile framework, uploaded as an artifact.
+  grep -qF 'dsymutil' <<<"$tf" || echo "FAIL:no dsymutil dSYM step for the gomobile framework"
+  grep -qE 'uses: actions/upload-artifact@[0-9a-f]{40}' <<<"$tf" || echo "FAIL:dSYM is not uploaded as an artifact"
+  # ut-docs#6413: an expired Program License Agreement is named in one line.
+  if ! grep -qF 'PLA Update available' <<<"$tf" || ! grep -qF 'if: failure()' <<<"$tf"; then
+    echo "FAIL:no failure step that names 'PLA Update available'"
+  fi
+  grep -qF 'run_number' <<<"$(sed -n '1,/^on:/p' "$wf")" && grep -qiE 'renam' <<<"$(sed -n '1,/^on:/p' "$wf")" || echo "FAIL:header lacks the note that renaming the workflow resets run_number"
   # ut-docs#6565 (finding 19): before the bind, a step runs the App Store
   # no-code-fetch guard (which also runs the gate's tests) and the tagged
   # test that the embedded set equals the lock.
@@ -202,7 +222,7 @@ bad="$(check_wf "$fixture")"
 for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
   'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind' \
-  'no TestFlight audience check' 'no App Store build gate'; do
+  'no TestFlight audience check' 'no App Store build gate' 'app-store-upload environment' 'no dsymutil' 'PLA Update available' 'renaming the workflow resets run_number'; do
   if grep -qF -- "$want" <<<"$bad"; then
     pass "self-test: broken fixture trips '${want}'"
   else
@@ -234,7 +254,7 @@ fi
 # release.yml's publish-release job is what starts the upload for a release.
 publish_job="$(awk '/^  publish-release:/{f=1} f && /^  [a-z-]+:$/ && !/publish-release/{f=0} f' .github/workflows/release.yml)"
 # shellcheck disable=SC2016
-if grep -qE 'gh workflow run ios-testflight\.yml --ref "\$TAG" -f version=' .github/workflows/release.yml \
+if grep -qE 'gh workflow run ios-testflight\.yml --ref main -f version=' .github/workflows/release.yml \
   && grep -qE '^      actions: write$' <<<"$publish_job"; then
   pass "release.yml publish-release dispatches ios-testflight.yml with the release version"
 else

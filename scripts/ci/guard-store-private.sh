@@ -258,6 +258,33 @@ if [ -n "$sw" ]; then
   violations="${violations:+${violations}$'\n'}${sw}"
 fi
 
+# appstore-submit-switch (ut-docs#6413): same shape for the App Store review
+# submit tool (scripts/asc-submit): a real submit is refused until
+# store-release/apple.opened exists, names its card (ut-docs#6414) and
+# .github/workflows/app-store-submit.yml carries the matching marker.
+asw="$(
+  tool="${SCAN_ROOT}/scripts/asc-submit/main.go"
+  wf="${SCAN_ROOT}/.github/workflows/app-store-submit.yml"
+  opened="${SCAN_ROOT}/store-release/apple.opened"
+  code_only=""
+  [ -f "$tool" ] && code_only="$(grep -v '^[[:space:]]*//' "$tool" || true)"
+  # shellcheck disable=SC2016
+  if [ -f "$tool" ] && { ! grep -qF 'store-release/apple.opened' <<<"$code_only" || ! grep -qF 'checkOpened(cfg.OpenedPath)' <<<"$code_only"; }; then
+    echo "scripts/asc-submit/main.go: [appstore-submit-switch] the submit tool does not check store-release/apple.opened before a real submit"
+  fi
+  if [ -f "$opened" ]; then
+    card="$(grep -oE 'ut-docs#[0-9]+' "$opened" | sed -n 1p || true)"
+    if [ -z "$card" ]; then
+      echo "store-release/apple.opened: [appstore-submit-switch] the opening file must name its owner-approved card (ut-docs#<N>)"
+    elif [ ! -f "$wf" ] || ! grep -qE "store-release:allow ${card}( |\$)" "$wf"; then
+      echo ".github/workflows/app-store-submit.yml: [appstore-submit-switch] store-release/apple.opened names ${card} but the workflow carries no 'store-release:allow ${card}' marker"
+    fi
+  fi
+)"
+if [ -n "$asw" ]; then
+  violations="${violations:+${violations}$'\n'}${asw}"
+fi
+
 if [ -n "$violations" ]; then
   echo "❌ store-private guard: a release path can reach a PUBLIC store audience (ut-docs#3052)" >&2
   echo "   Until launch every store build stays private: TestFlight internal testing, the" >&2

@@ -295,6 +295,20 @@ expect_fail msstore-submit-switch "an opening file without the workflow marker"
 printf '%s\n' 'name: s' 'on: workflow_dispatch' 'jobs:' '  submit:' '    runs-on: ubuntu-latest' '    steps:' '      - run: bash scripts/ci/msstore-submit.sh # store-release:allow ut-docs#6408' >"${REPO}/.github/workflows/msstore-submit.yml"
 expect_pass "an opening file with its card marker in the workflow"
 
+# --- App Store submit switch (ut-docs#6413 / ut-docs#6414) --------------------
+reset_tree; mkdir -p "${REPO}/scripts/asc-submit"; printf '%s\n' 'package main' 'func run() {}' >"${REPO}/scripts/asc-submit/main.go"
+expect_fail appstore-submit-switch "an App Store submit tool that never checks the opening file"
+reset_tree; mkdir -p "${REPO}/scripts/asc-submit"; printf '%s\n' 'package main' '// store-release/apple.opened is checked: checkOpened(cfg.OpenedPath)' >"${REPO}/scripts/asc-submit/main.go"
+expect_fail appstore-submit-switch "an App Store submit tool that only names the opening file in a comment"
+reset_tree; mkdir -p "${REPO}/scripts/asc-submit"; printf '%s\n' 'package main' 'const f = "store-release/apple.opened"' 'func run() { checkOpened(cfg.OpenedPath) }' >"${REPO}/scripts/asc-submit/main.go"
+expect_pass "an App Store submit tool that checks the opening file (file absent = closed)"
+mkdir -p "${REPO}/store-release"; printf '%s\n' 'opened by the owner' >"${REPO}/store-release/apple.opened"
+expect_fail appstore-submit-switch "an Apple opening file that names no card"
+printf '%s\n' 'opened: ut-docs#6414' >"${REPO}/store-release/apple.opened"
+expect_fail appstore-submit-switch "an Apple opening file without the workflow marker"
+printf '%s\n' 'name: s' 'on: workflow_dispatch' 'jobs:' '  submit:' '    runs-on: ubuntu-latest' '    steps:' '      - run: go run ./scripts/asc-submit # store-release:allow ut-docs#6414' >"${REPO}/.github/workflows/app-store-submit.yml"
+expect_pass "an Apple opening file with its card marker in the workflow"
+
 # --- Real tree ---------------------------------------------------------------
 if bash "${GUARD}" >"${WORK}/out" 2>&1; then
   echo "✓ guard passes on the real tree"
