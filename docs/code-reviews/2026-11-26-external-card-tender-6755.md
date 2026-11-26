@@ -51,6 +51,8 @@ Tester run by separate agents.
 | UX-F4 | nit | Inputs 44px vs the picker's 48px floor | Fixed |
 | Fix-verify | — | `TestReaderEligible_Table` external fixture had no method after R-F5 | Fixed (fixture; rows added for both mismatches) |
 
+| CI | — | `armv7-seccomp` reported "no OK 200" on a run whose strace tail ends in the deferred cleanup and `exit_group(0)` (success path); passes under qemu locally on the same head. The marker grep missed `OK 200` glued after another thread's return value (` = 0`) | Fixed: `guard-armv7-seccomp.sh` also accepts the marker after `= N`; `_test.sh` case added; "NOT OK 200" still fails |
+
 Deferred (low, epic #6753 checklist): T-D2 on a 422 the overlay's generic
 "Something went wrong" banner stays beside the specific error; T-D3 the
 inline error line is unstyled; T-D4 refund method dropdown shows the raw id
