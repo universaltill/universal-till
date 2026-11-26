@@ -47,7 +47,7 @@ else
     mssubmit="not reached (verify did not pass)"
   else
     case "$ms" in
-      success) if [ "$dry" = true ]; then mssubmit="probe ok (read-only, nothing changed)"; else if [ "${COMMIT:-true}" = false ]; then mssubmit="package set (draft, not committed)"; else mssubmit="submitted"; fi; fi;;
+      success) if [ "$dry" = true ]; then mssubmit="probe ok (read-only, nothing changed)"; elif [ "${COMMIT:-true}" = false ]; then mssubmit="package set (draft, not committed)"; else mssubmit="submitted"; fi;;
       failure) mssubmit="rejected or failed";;
       cancelled) mssubmit="cancelled (approval rejected, expired, or run cancelled)";;
       *) mssubmit="skipped";;
