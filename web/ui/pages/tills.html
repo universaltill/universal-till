@@ -13,4 +13,44 @@
 {{ template "tills_tab_body.html" . }}
 </div>
 </div>
+<script>
+(function () {
+  // A save that swapped its region (UT.refreshRegion) says "Saved." in the
+  // region's own message span (data-ut-saved-msg), as Settings does.
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  document.body.addEventListener('ut:region-refreshed', function (ev) {
+    var r = ev.target;
+    var sel = r && r.getAttribute ? r.getAttribute('data-ut-saved-msg') : null;
+    var m = sel ? r.querySelector(sel) : null;
+    if (m && typeof renderNotice === 'function') renderNotice(m, 'success', T.saved);
+  });
+})();
+(function () {
+  // Tab bar keyboard: Left/Right (mirrored in RTL), Home/End; focus goes to
+  // the panel heading after a swap, never into a field.
+  var nav = document.getElementById('tills-nav');
+  if (nav) {
+    nav.addEventListener('keydown', function (e) {
+      var tabs = Array.prototype.slice.call(nav.querySelectorAll('[role=tab]'));
+      var i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      var rtl = getComputedStyle(nav).direction === 'rtl';
+      var next = -1;
+      if (e.key === 'ArrowRight') next = i + (rtl ? -1 : 1);
+      else if (e.key === 'ArrowLeft') next = i + (rtl ? 1 : -1);
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next < 0) return;
+      e.preventDefault();
+      tabs[(next + tabs.length) % tabs.length].focus();
+    });
+  }
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (!e.detail || !e.detail.target || e.detail.target.id !== 'tills-tab') return;
+    var h = document.querySelector('#tills-tab [data-tills-heading]');
+    if (h) h.focus();
+  });
+})();
+</script>
 {{ end }}
+{{ define "tills_fragment" }}{{ template "tills_tab_frame.html" . }}{{ end }}
