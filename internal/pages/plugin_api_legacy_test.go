@@ -239,8 +239,8 @@ func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 	// http.Error(w, err.Error(), ...) — assert the localized fallback shows
 	// and the raw text is gone.
 	rec = postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"royal"}}, nil)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("invalid trust level = %d, want 500", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid trust level = %d, want 400", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "Could not update the trust level") {
 		t.Fatalf("invalid trust level error body = %q, want the localized trust-update-failed message", rec.Body.String())
@@ -249,15 +249,19 @@ func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 		t.Fatalf("invalid trust level error body leaked raw error text: %q", rec.Body.String())
 	}
 
-	if rec := postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"trusted"}}, nil); rec.Code != http.StatusOK {
+	// "trusted" is the marketplace-only level (ut-docs#7056): a manager is refused it.
+	if rec := postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"trusted"}}, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("manager trust=trusted = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/plugins/trust", url.Values{"plugin_id": {"com.test.trust"}, "trust_level": {"verified"}}, nil); rec.Code != http.StatusOK {
 		t.Fatalf("trust update = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 	var trust string
 	if err := d.Db.QueryRow(`SELECT trust_level FROM plugins WHERE id='com.test.trust'`).Scan(&trust); err != nil {
 		t.Fatalf("plugin row missing: %v", err)
 	}
-	if trust != "trusted" {
-		t.Fatalf("trust_level = %q, want trusted", trust)
+	if trust != "verified" {
+		t.Fatalf("trust_level = %q, want verified", trust)
 	}
 }
 

@@ -162,13 +162,13 @@ func TestImportFromFile_TrustLevelCheckIsWhatRefuses(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		return rec
 	}
-	for _, lvl := range []string{"system", "bogus", "revoked"} {
+	for _, lvl := range []string{"system", "bogus", "revoked", "trusted"} {
 		rec := post(lvl)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid trust_level") {
 			t.Fatalf("import with trust_level=%s = %d %q, want 400 invalid trust_level", lvl, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := post("trusted"); strings.Contains(rec.Body.String(), "invalid trust_level") {
+	if rec := post("verified"); strings.Contains(rec.Body.String(), "invalid trust_level") {
 		t.Fatalf("a known trust level was refused as invalid: %d %q", rec.Code, rec.Body.String())
 	}
 }

@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,18 +57,24 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 	return nil
 }
 
-// UpdatePluginTrustLevel changes the trust level of a plugin
+// ErrInvalidTrustLevel is returned when a manager asks for a level the till
+// does not let a manager set.
+var ErrInvalidTrustLevel = errors.New("invalid trust level")
+
+// UpdatePluginTrustLevel changes the trust level of a plugin on a manager's
+// say-so. "trusted" is the marketplace-only level (only the marketplace
+// installer writes it), so a manager can vouch with "verified" (shown as
+// "Trusted on this till") but never mint "trusted" (ut-docs#7056).
 func UpdatePluginTrustLevel(ctx context.Context, db *sql.DB, pluginID, trustLevel string) error {
 	repo := data.NewPluginRepo(db)
 	validLevels := map[string]bool{
 		"untrusted": true,
 		"verified":  true,
-		"trusted":   true,
 		"revoked":   true,
 	}
 
 	if !validLevels[trustLevel] {
-		return fmt.Errorf("invalid trust level: %s (must be untrusted, verified, trusted, or revoked)", trustLevel)
+		return fmt.Errorf("%w: %s (must be untrusted, verified, or revoked)", ErrInvalidTrustLevel, trustLevel)
 	}
 
 	if err := repo.UpdatePluginTrust(ctx, nil, pluginID, trustLevel); err != nil {

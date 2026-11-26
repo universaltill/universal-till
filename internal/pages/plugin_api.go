@@ -136,6 +136,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if err := plugins.UpdatePluginTrustLevel(r.Context(), d.Db, pluginID, trustLevel); err != nil {
+			if errors.Is(err, plugins.ErrInvalidTrustLevel) {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.trust_update_failed", "plugin_trust_invalid", err)
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.trust_update_failed", "plugin_trust_update", err)
 			return
 		}
@@ -1076,8 +1080,10 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		}
 		// "system" is the bundled first-party level only bundled.Sync sets
 		// (it drives the Built in group and the uninstall refusal); an
-		// import never gets it, nor any value outside the known levels.
-		if !slices.Contains([]string{"untrusted", "verified", "trusted"}, trustLevel) {
+		// import never gets it, nor "trusted" (marketplace-only: a manager vouches
+		// with "verified", shown as "Trusted on this till", ut-docs#7056), nor any
+		// value outside the known levels.
+		if !slices.Contains([]string{"untrusted", "verified"}, trustLevel) {
 			http.Error(w, "invalid trust_level", http.StatusBadRequest)
 			return
 		}

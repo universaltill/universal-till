@@ -1960,6 +1960,8 @@
   "plugins.trust.confirm": "This plugin is from an unverified publisher: %s. Do you trust this publisher and want to continue?",
   "plugins.trust.confirm_ok": "Trust and continue",
   "plugins.trust.level_updated": "Trust level updated",
+  "plugins.trust.local": "Trusted on this till",
+  "plugins.trust.local_hint": "A manager trusted this plugin on this till. The marketplace has not verified its developer.",
   "plugins.trust.official": "Universal Till",
   "plugins.trust.official_hint": "Built and maintained by Universal Till",
   "plugins.trust.revoked": "Not trusted",

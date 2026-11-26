@@ -214,3 +214,24 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#7056: GET /api/plugins/check-updates emits snake_case like the rest
+// of the API; no PascalCase key.
+func TestUpdateInfoJSONIsSnakeCase_7056(t *testing.T) {
+	b, err := json.Marshal(UpdateInfo{PluginID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"plugin_id", "installed_version", "available_version", "name", "description", "release_notes", "artifact_url", "artifact_hash", "device_arch", "trust_tier", "canonical_type"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing key %q in %s", k, b)
+		}
+	}
+	if len(m) != 11 {
+		t.Errorf("unexpected keys: %s", b)
+	}
+}

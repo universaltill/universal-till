@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -187,8 +188,13 @@ func TestUpdatePluginTrustLevel(t *testing.T) {
 		t.Fatalf("persist manifest: %v", err)
 	}
 
+	// "trusted" is marketplace-only: a manager path is refused (ut-docs#7056).
+	if err := UpdatePluginTrustLevel(ctx, db, manifest.ID, "trusted"); !errors.Is(err, ErrInvalidTrustLevel) {
+		t.Fatalf("UpdatePluginTrustLevel(trusted) = %v, want ErrInvalidTrustLevel", err)
+	}
+
 	// Update trust level
-	if err := UpdatePluginTrustLevel(ctx, db, manifest.ID, "trusted"); err != nil {
+	if err := UpdatePluginTrustLevel(ctx, db, manifest.ID, "verified"); err != nil {
 		t.Fatalf("UpdatePluginTrustLevel failed: %v", err)
 	}
 
@@ -201,8 +207,8 @@ func TestUpdatePluginTrustLevel(t *testing.T) {
 		t.Fatalf("query plugin: %v", err)
 	}
 
-	if trustLevel != "trusted" {
-		t.Errorf("expected trust_level 'trusted', got '%s'", trustLevel)
+	if trustLevel != "verified" {
+		t.Errorf("expected trust_level 'verified', got '%s'", trustLevel)
 	}
 
 	// Verify audit log
@@ -214,8 +220,8 @@ func TestUpdatePluginTrustLevel(t *testing.T) {
 		t.Fatalf("query audit_log: %v", err)
 	}
 
-	if !strings.Contains(details, "trust_level=trusted") {
-		t.Errorf("expected details to contain 'trust_level=trusted', got '%s'", details)
+	if !strings.Contains(details, "trust_level=verified") {
+		t.Errorf("expected details to contain 'trust_level=verified', got '%s'", details)
 	}
 }
 
@@ -268,7 +274,7 @@ func TestUpdatePluginTrustLevel_AllValidLevels(t *testing.T) {
 	}
 
 	// Test all valid trust levels
-	validLevels := []string{"untrusted", "verified", "trusted", "revoked"}
+	validLevels := []string{"untrusted", "verified", "revoked"}
 	for _, level := range validLevels {
 		if err := UpdatePluginTrustLevel(ctx, db, manifest.ID, level); err != nil {
 			t.Errorf("UpdatePluginTrustLevel failed for level '%s': %v", level, err)

@@ -187,6 +187,8 @@
   "common.close": {"description": "Button that closes a panel or dialog.", "review": "standard", "max_length": 24},
   "common.discard_confirm": {"description": "Confirmation question shown when the user leaves a form that has unsaved changes.", "review": "standard"},
   "plugins.trust.confirm_ok": {"description": "Confirm button on the unverified-publisher trust question: trusts the publisher and continues the download or install.", "review": "standard", "max_length": 24},
+  "plugins.trust.local": {"description": "Tag on an installed plugin's card on the Plugins page: a manager vouched for this plugin on this till (not verified by the marketplace).", "review": "standard", "max_length": 24},
+  "plugins.trust.local_hint": {"description": "Tooltip on the Trusted on this till tag of an installed plugin's card: a manager trusted it here and the marketplace has not verified the developer.", "review": "standard", "max_length": 100},
   "plugins.trust.revoked": {"description": "Tag on an installed plugin's card on the Plugins page: a manager marked this plugin as not trusted on this till.", "review": "standard", "max_length": 24},
   "plugins.trust.revoked_hint": {"description": "Tooltip on the Not trusted tag of an installed plugin's card: explains the plugin was marked as not trusted on this till.", "review": "standard", "max_length": 48},
   "issuereport.discard_keep": {"description": "Dismiss button on the discard-report question: keeps the bug report being written.", "review": "standard", "max_length": 24},

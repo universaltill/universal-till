@@ -13,26 +13,26 @@ import (
 
 // UpdateInfo contains information about an available plugin update
 type UpdateInfo struct {
-	PluginID         string
-	InstalledVersion string
-	AvailableVersion string
-	Name             string
-	Description      string
-	ReleaseNotes     string
-	ArtifactURL      string
-	ArtifactHash     string
-	DeviceArch       string
+	PluginID         string `json:"plugin_id"`
+	InstalledVersion string `json:"installed_version"`
+	AvailableVersion string `json:"available_version"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	ReleaseNotes     string `json:"release_notes"`
+	ArtifactURL      string `json:"artifact_url"`
+	ArtifactHash     string `json:"artifact_hash"`
+	DeviceArch       string `json:"device_arch"`
 	// TrustTier is the catalogue listing's raw trust tier. It is only emitted
 	// by GET /api/plugins/check-updates: install/update re-reads the tier via
 	// listingCatalogTier and maps it with marketplaceTrustTier (ut-docs#6549),
 	// so nothing here is persisted.
-	TrustTier string
+	TrustTier string `json:"trust_tier"`
 	// CanonicalType is the marketplace listing's plugin type (ADR-0002's
 	// 22-type taxonomy, e.g. "language", "theme") — carried through so a
 	// caller (StartPluginUpdateScheduler, ut-docs#1953) can decide whether
 	// this update is safe to auto-apply without a merchant's say-so. Not
 	// persisted anywhere locally; it comes from the catalog snapshot only.
-	CanonicalType string
+	CanonicalType string `json:"canonical_type"`
 }
 
 // UpdateChecker detects available plugin updates from marketplace

@@ -462,7 +462,7 @@ func TestPluginsPage_TrustTagIsTranslatedLabel_6554(t *testing.T) {
 	cases := []struct{ id, level, key string }{
 		{"com.x.untrusted", "untrusted", "unverified"},
 		{"com.x.trusted", "trusted", "verified"},
-		{"com.x.verified", "verified", "verified"},
+		{"com.x.verified", "verified", "local"},
 		{"com.x.system", "system", "official"},
 		{"com.x.revoked", "revoked", "revoked"},
 		{"com.x.weird", "weird", "unverified"},
@@ -500,7 +500,7 @@ func TestPluginsPage_TrustTagIsTranslatedLabel_6554(t *testing.T) {
 func TestInstalledTrustKeys(t *testing.T) {
 	cases := map[string]string{
 		"system": "plugins.trust.official", " System ": "plugins.trust.unverified",
-		"trusted": "plugins.trust.verified", "verified": "plugins.trust.verified",
+		"trusted": "plugins.trust.verified", "verified": "plugins.trust.local",
 		"revoked": "plugins.trust.revoked", "untrusted": "plugins.trust.unverified",
 		"": "plugins.trust.unverified", "official": "plugins.trust.unverified",
 	}

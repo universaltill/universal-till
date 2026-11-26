@@ -197,6 +197,8 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 
 // installedTrustKeys maps plugins.trust_level to the locale keys of the card
 // tag and its tooltip (ut-docs#6554), using the store badge's vocabulary.
+// "trusted" is the marketplace-only level (Verified); "verified" is a manager's
+// own vouching (Trusted on this till, ut-docs#7056).
 // Unknown or empty levels fall to "unverified": a label is never upgraded.
 // Exact match on purpose: a padded or re-cased "system" is not the bundled
 // level, so it fails closed to "unverified".
@@ -204,8 +206,11 @@ func installedTrustKeys(level string) (label, hint string) {
 	switch level {
 	case "system":
 		return "plugins.trust.official", "plugins.trust.official_hint"
-	case "trusted", "verified":
+	case "trusted":
 		return "plugins.trust.verified", "plugins.trust.verified_hint"
+	case "verified":
+		// Manager-vouched on this till; the marketplace did not verify it.
+		return "plugins.trust.local", "plugins.trust.local_hint"
 	case "revoked":
 		return "plugins.trust.revoked", "plugins.trust.revoked_hint"
 	}
