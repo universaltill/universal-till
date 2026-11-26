@@ -111,5 +111,9 @@ grep -qF 'blob="windows/v${ver}/${asset}"' scripts/ci/publish-installer.sh && ok
 # packaging scripts are not executable in git: a step must run them through bash (the v0.36.4 dry-run died with exit 126).
 direct="$(grep -nE '^ *run: +(\./)?packaging/' .github/workflows/msstore-submit.yml || true)"
 [ -z "$direct" ] && ok "no run: step executes a packaging script directly" || bad "run: step executes a non-executable script directly: $direct"
+# msstore-verify.sh executes its default helpers directly: they must carry the exec bit (v0.36.4 dry-run, exit 126).
+for h in packaging/windows/sign-exe.sh scripts/ci/msstore-soak.sh scripts/ci/check-installer-silent.sh; do
+  [ -x "$h" ] && ok "$h is executable" || bad "$h lacks the exec bit (msstore-verify.sh runs it directly)"
+done
 [ "$fails" = 0 ] || { echo "msstore-workflow_test: $fails failure(s)" >&2; exit 1; }
 echo "✓ msstore-workflow_test: all cases passed"
