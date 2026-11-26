@@ -3461,7 +3461,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				entries, err := repo.ListRecentSales(r.Context(), 5)
 				if err == nil {
 					var journalBuf bytes.Buffer
-					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
+					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true, Refunds: journalRefunds(r.Context(), d, entries)})
 					fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, viewHTML, journalBuf.String())
 					return
 				}

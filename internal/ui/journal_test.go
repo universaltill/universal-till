@@ -121,3 +121,31 @@ func TestNewJournalView_LocaleNotStaleAcrossCachedCalls(t *testing.T) {
 		t.Fatalf("en view's output changed after a different-locale view was built:\nfirst:  %s\nsecond: %s", enBuf.String(), enAgainBuf.String())
 	}
 }
+
+// ut-docs#7064: the sale-screen mini journal (OOB push) renders the refund
+// link and chips too, and keeps its swap attribute.
+func TestJournalView_OOBRendersRefundLinkAndChip(t *testing.T) {
+	httpx.InitCurrency("GBP")
+	view, err := NewJournalView(httpx.FuncsFor("en"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []data.SaleJournalEntry{
+		{ID: "r1", ReceiptNo: "R-2", Total: 300, SaleType: "return", TenderType: "card"},
+		{ID: "s1", ReceiptNo: "R-1", Total: 300, SaleType: "sale", TenderType: "card"},
+	}
+	refunds := map[string]*data.JournalRefund{
+		"r1": {OriginalReceipt: "R-1"},
+		"s1": {Status: data.JournalRefundRefunded, Refunded: 300, Total: 300},
+	}
+	var buf bytes.Buffer
+	if err := view.Render(&buf, JournalViewData{Entries: entries, OOB: true, Refunds: refunds}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{`hx-swap-oob="true"`, `href="/journal/R-1"`, `data-refund-status="refunded"`, "-£3.00"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q: %s", want, out)
+		}
+	}
+}

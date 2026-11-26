@@ -15,6 +15,10 @@ type JournalView struct {
 type JournalViewData struct {
 	Entries []data.SaleJournalEntry
 	OOB     bool
+	// Refunds (ut-docs#7064): per sale id, a return row's original receipt or
+	// a sale row's refund status. Both the full page and the mini journal set
+	// it; nil (lookup failed) renders no links/chips.
+	Refunds map[string]*data.JournalRefund
 
 	// ShowFilters/Tills/SelectedTill/Day are ut-docs#550's cross-till
 	// filtering — only the full /ui/journal page sets ShowFilters: true.
