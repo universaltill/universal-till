@@ -14,6 +14,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -57,6 +58,9 @@ type PhoneLink interface {
 // Attempts reads core's attempt rows (*data.PaymentAttemptRepo).
 type Attempts interface {
 	Get(ctx context.Context, key string) (data.PaymentAttempt, bool, error)
+	// SetPIID records the PaymentIntent core created for key while the
+	// attempt is still pending, so a later cancel or status can name it.
+	SetPIID(ctx context.Context, key, pi string) error
 }
 
 // Broker calls the payment broker as core (paybroker.CallerCore).
@@ -238,6 +242,19 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 	if pi.ID == "" || pi.Secret == "" {
 		return startFailed("unreadable_answer")
 	}
+	// Remember the PaymentIntent on the attempt row at once: core's own cancel
+	// and Check again (and the plugin's retry) can then name it. A failure
+	// here is not fatal for this collect, which holds the id in memory.
+	if err := s.cfg.Attempts.SetPIID(ctx, a.Key, pi.ID); err != nil {
+		logging.L().Warnf("readerlink: record PaymentIntent on attempt: %v", err)
+	}
+	// A cashier Cancel pressed before the phone was asked: nothing was started
+	// there, so only the new PaymentIntent is cancelled.
+	select {
+	case <-c.cancel:
+		return s.stopWith(nil, a, pi.ID, "cancelled")
+	default:
+	}
 	window := time.Until(deadline) - s.cfg.Margin
 	if window <= 0 || ctx.Err() != nil {
 		s.cancelIntent(a, pi.ID)
@@ -252,8 +269,38 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 	c.sent = true
 	s.mu.Unlock()
 	ackCtx, cancelAck := context.WithTimeout(ctx, s.cfg.AckTimeout)
-	raw, err := peer.Request(ackCtx, fleetlink.TypeReaderCollect, frame)
+	// A Cancel while the ack is awaited ends the wait: the phone may already
+	// have started, so it is told to stop and the PaymentIntent is cancelled.
+	var cancelledEarly atomic.Bool
+	watchDone := make(chan struct{})
+	go func() {
+		defer logging.RecoverAndLog("readerlink.cancelWatch")
+		select {
+		case <-c.cancel:
+			cancelledEarly.Store(true)
+			cancelAck()
+		case <-watchDone:
+		}
+	}()
+	raw, err := func() (json.RawMessage, error) {
+		defer close(watchDone)
+		return peer.Request(ackCtx, fleetlink.TypeReaderCollect, frame)
+	}()
 	cancelAck()
+	if err != nil {
+		// A Cancel that coincides with a transport error or an ack timeout may
+		// lose the watcher's select: c.cancel is a closed-channel broadcast,
+		// so reading it here is safe and the cashier's Cancel still stands.
+		select {
+		case <-c.cancel:
+			cancelledEarly.Store(true)
+		default:
+		}
+	}
+	if cancelledEarly.Load() {
+		s.setPhase(c, PhaseCancelling)
+		return s.stop(peer, a, pi.ID, "cancelled")
+	}
 	if err != nil {
 		var re *fleetlink.RemoteError
 		switch {
@@ -429,7 +476,12 @@ func (s *Service) WasBusy(key string) bool {
 // brokerStatus asks the broker (as core) for the PaymentIntent's state; "" when
 // it cannot be told.
 func (s *Service) brokerStatus(ctx context.Context, a data.PaymentAttempt, pi string) string {
-	body, _ := json.Marshal(map[string]string{"idempotency_key": a.Key, "payment_intent_id": pi})
+	// Exactly one identifier: the cloud refuses a body carrying both.
+	ref := map[string]string{"idempotency_key": a.Key}
+	if pi != "" {
+		ref = map[string]string{"payment_intent_id": pi}
+	}
+	body, _ := json.Marshal(ref)
 	out, err := s.cfg.Broker(ctx, a.Provider, "session_status", body)
 	if err != nil {
 		return ""
@@ -447,7 +499,11 @@ func (s *Service) brokerStatus(ctx context.Context, a data.PaymentAttempt, pi st
 func (s *Service) cancelIntent(a data.PaymentAttempt, pi string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), brokerTimeout)
 	defer cancel()
-	body, _ := json.Marshal(map[string]string{"idempotency_key": a.Key, "payment_intent_id": pi})
+	ref := map[string]string{"idempotency_key": a.Key}
+	if pi != "" {
+		ref = map[string]string{"payment_intent_id": pi}
+	}
+	body, _ := json.Marshal(ref)
 	_, err := s.cfg.Broker(ctx, a.Provider, "session_cancel", body)
 	return err == nil
 }
@@ -457,7 +513,14 @@ func (s *Service) cancelIntent(a data.PaymentAttempt, pi string) bool {
 // payment already succeeded is applied as approved (#6304); one that cannot
 // tell is pending.
 func (s *Service) stop(peer PhonePeer, a data.PaymentAttempt, pi, reason string) devicepay.Result {
-	_ = peer.Notify(fleetlink.TypeReaderCancel, fleetlink.ReaderCancel{IdempotencyKey: a.Key})
+	return s.stopWith(peer, a, pi, reason)
+}
+
+// stopWith is stop; a nil peer means the phone was never asked.
+func (s *Service) stopWith(peer PhonePeer, a data.PaymentAttempt, pi, reason string) devicepay.Result {
+	if peer != nil {
+		_ = peer.Notify(fleetlink.TypeReaderCancel, fleetlink.ReaderCancel{IdempotencyKey: a.Key})
+	}
 	if s.cancelIntent(a, pi) {
 		return devicepay.Result{Status: devicepay.StatusCancelled, Reason: reason}
 	}

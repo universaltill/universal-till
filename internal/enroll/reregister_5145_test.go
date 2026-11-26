@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -279,8 +280,8 @@ func TestReconnectRefusesAnAnswerForAnotherShop(t *testing.T) {
 	kv := newFakeKV()
 	cfg := registeredTill(t, cloud.srv.URL, kv)
 	_, err := Reconnect(context.Background(), cfg, kv)
-	if err == nil || !IsStoreNotReusable(err) {
-		t.Fatalf("err = %v, want store_not_reusable", err)
+	if err == nil || !IsReconnectOtherShop(err) || IsStoreNotReusable(err) || IsServerError(err) {
+		t.Fatalf("err = %v, want the other-shop sentinel and not store_not_reusable", err)
 	}
 	if kv.get(keyToken) != "tok-old" || kv.get(keyStoreID) != "store-abc" || CurrentStatus().StoreID == "store-OTHER" {
 		t.Fatalf("till moved: token=%q store=%q status=%q", kv.get(keyToken), kv.get(keyStoreID), CurrentStatus().StoreID)
@@ -443,5 +444,26 @@ func TestStartAsNewStoreReportsTheLeftShop(t *testing.T) {
 				t.Fatalf("left shops = %v, want [st_old]", left)
 			}
 		})
+	}
+}
+
+// ut-docs#6424 (L5): a 5xx is the cloud answering; a transport error and the
+// other-shop sentinel are not.
+func TestIsServerError(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"500":        {&RegisterHTTPError{Status: 500}, true},
+		"503":        {&RegisterHTTPError{Status: 503}, true},
+		"wrapped":    {fmt.Errorf("x: %w", &RegisterHTTPError{Status: 502}), true},
+		"409":        {&RegisterHTTPError{Status: 409}, false},
+		"429":        {&RegisterHTTPError{Status: 429}, false},
+		"other shop": {ErrReconnectOtherShop, false},
+		"url error":  {&url.Error{Op: "Post", URL: "http://x", Err: errors.New("refused")}, false},
+	} {
+		if got := IsServerError(tc.err); got != tc.want {
+			t.Errorf("%s: IsServerError = %v, want %v", name, got, tc.want)
+		}
 	}
 }

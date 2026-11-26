@@ -165,8 +165,8 @@ func TestHostFnAnswerIsNeutralAndSecretFree(t *testing.T) {
 			t.Fatalf("answer lacks %s: %s", want, val)
 		}
 	}
-	if got, _ := f.body.Load().(string); !strings.Contains(got, `"idempotency_key":"att:1:h"`) || !strings.Contains(got, `"payment_intent_id":"pi_1"`) {
-		t.Fatalf("outgoing body was not built from the binding: %s", got)
+	if got, _ := f.body.Load().(string); strings.Contains(got, `"idempotency_key"`) || !strings.Contains(got, `"payment_intent_id":"pi_1"`) {
+		t.Fatalf("outgoing body must carry exactly the binding's PaymentIntent (the cloud refuses both ids): %s", got)
 	}
 }
 

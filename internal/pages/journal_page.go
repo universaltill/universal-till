@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,9 +10,22 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
 )
+
+// journalRefunds derives the refund links/chips for a page of journal rows
+// (ut-docs#7064). A read failure only drops them: the journal, and the sale
+// that triggered the mini-journal push, never fail over a status lookup.
+func journalRefunds(ctx context.Context, d *common.Deps, entries []data.SaleJournalEntry) map[string]*data.JournalRefund {
+	refunds, err := data.NewPOSRepo(d.Db).JournalRefunds(ctx, entries)
+	if err != nil {
+		logging.L().Warnf("journal: refund status unavailable: %v (ut-docs#7064)", err)
+		return nil
+	}
+	return refunds
+}
 
 func registerJournal(mux *http.ServeMux, d *common.Deps) {
 	// Full journal page — receipts/sync history lives here, off the sale screen
@@ -42,6 +56,12 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		repo := data.NewPOSRepo(d.Db)
 		returns, _ := repo.ReturnReceiptsFor(r.Context(), sale.ID)
 		original, _, _ := repo.OriginalReceiptFor(r.Context(), sale.ID)
+		// ut-docs#7064: refund status chip; a lookup failure drops only the chip.
+		refund, rfErr := repo.JournalRefundFor(r.Context(), sale.ID, sale.Total, sale.SaleType)
+		if rfErr != nil {
+			logging.L().Warnf("journal: refund status unavailable: %v (ut-docs#7064)", rfErr)
+			refund = nil
+		}
 		// Invoicing (G31): show the issue form / existing invoice link
 		// only when the seller identity is configured.
 		_, invoicingOn := sellerConfig(r.Context(), d)
@@ -108,6 +128,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			"Sale":        sale,
 			"Returns":     returns,
 			"Original":    original,
+			"Refund":      refund,
 			"InvoicingOn": invoicingOn,
 			"HasInvoice":  hasInvoice,
 			"Invoice":     inv,
@@ -231,6 +252,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			IsReplica:                  isReplica,
 			ExplicitCrossTillOnReplica: explicitCrossTillOnReplica,
 			Truncated:                  truncated,
+			Refunds:                    journalRefunds(r.Context(), d, entries),
 		})
 	})
 }

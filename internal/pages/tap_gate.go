@@ -34,6 +34,17 @@ const declineCodeTapStartFailed = "start_failed"
 // the phone cannot take (Stripe 10.03, ux 2.1 pin_fallback).
 const declineCodeTapPinRequired = "offline_pin_required"
 
+// declineCodeCancelled is the decline_code a card plugin prints when the
+// cashier cancelled the tap (core's reader link answered cancelled).
+const declineCodeCancelled = "cancelled"
+
+// tapCancelledError: the cashier cancelled the tap and core confirmed with the
+// broker that nothing was charged. Not a decline and not unknown: the sale
+// stays open, nothing is locked (ut-docs#6538).
+type tapCancelledError struct{ Method string }
+
+func (e *tapCancelledError) Error() string { return "tap payment cancelled: " + e.Method }
+
 // tapStartFailedError: the tap payment could not be started; nothing was
 // charged, the basket is not locked.
 type tapStartFailedError struct {
@@ -176,6 +187,9 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 		settleAttempt(ctx, repo, requestID, data.AttemptUnknown, pos.PendingNotConfirmed)
 		return resp, dispatched, nil, err
 	}
+	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeCancelled {
+		original = &tapCancelledError{Method: method}
+	}
 	f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: requestID})
 	if !f.HaveRow && f.ErrCode == "" {
 		// No attempt row: nothing was started through core.
@@ -188,6 +202,9 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 		state := data.AttemptDeclined
 		if startFailed {
 			reason, state = "start_failed", data.AttemptCancelled
+		}
+		if _, ok := original.(*tapCancelledError); ok {
+			reason, state = "cancelled", data.AttemptCancelled
 		}
 		settleAttempt(ctx, repo, requestID, state, reason)
 		return resp, dispatched, nil, original

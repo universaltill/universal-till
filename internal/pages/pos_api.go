@@ -453,6 +453,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	defer releaseReaders()
 
+	// ut-docs#6755 (ADR-0205 §7): a card_external leg is only ever recorded
+	// against an external registry row; its terminal_id is that row's ref.
+	var externalLegs []pos.PaymentInput
+	for i := range payments {
+		if payments[i].MethodID != data.PaymentMethodCardExternal {
+			continue
+		}
+		if payments[i].ReaderKind != data.CardReaderKindExternal {
+			return "", &cardReaderError{Status: http.StatusConflict, Code: readerCodeRequired, Method: data.PaymentMethodCardExternal}
+		}
+		payments[i].TerminalID = payments[i].ReaderRef
+		externalLegs = append(externalLegs, payments[i])
+	}
+
 	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
@@ -603,6 +617,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		legEntry := legBase(requestID, p.MethodID, amount, payCurrency, p.ReaderRef)
 		resp, dispatched, tapConf, err := tapAuthorize(withLegJournal(detached, journal.hook(legEntry)), d, p.MethodID, requestID, amount, payCurrency, payload)
 		var tapStart *tapStartFailedError
+		var tapCancelled *tapCancelledError
 		var tapPending *pos.PaymentPendingError
 		var journalErr *paymentJournalError
 		if errors.As(err, &journalErr) {
@@ -618,6 +633,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "payment could not be recorded")
 			why = "tender refused (the payment journal is unavailable)"
 			return "", journalErr
+		}
+		if errors.As(err, &tapCancelled) {
+			// ut-docs#6538: the cashier cancelled and core confirmed nothing was
+			// charged. The sale stays open, nothing is locked, the request id is
+			// spent (a new tap is a new attempt); not worded as a decline.
+			journal.note(detached, legEntry, data.LegDeclined)
+			if abandonedUnder() {
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
+			}
+			stash := engine.SettleTender()
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tap payment cancelled")
+			why = "tender refused (the tap payment was cancelled)"
+			return "", tapCancelled
 		}
 		if errors.As(err, &tapStart) {
 			journal.note(detached, legEntry, data.LegDeclined)
@@ -1043,6 +1073,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnIfVoucherOverdrawnReason(ctx, repo, saleInput, "cross-till redemption (sale "+saleID+")",
 				"this till's own local voucher balance was stale relative to the primary's (ut-docs#1668)")
 			break
+		}
+	}
+
+	// ut-docs#6755: one audit row per own-terminal card leg (an honour record,
+	// ADR-0205 §7). Best effort, never unwinds the sale; never the last4 or
+	// the auth code themselves.
+	for _, p := range externalLegs {
+		touchReaderLastUsed(ctx, d, p.ReaderRowID)
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "external_card_tender", map[string]any{
+			"amount_minor":  p.Amount.Minor(),
+			"reader_row_id": p.ReaderRowID,
+			"has_auth_code": p.AuthCode != "",
+			"has_last4":     p.MaskedPAN != "",
+		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+			log.Printf("external card tender: audit for sale %s failed: %v", saleID, auditErr)
 		}
 	}
 
@@ -2969,6 +3014,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
+			// ut-docs#6755: the own-terminal tender needs the Paid/Declined
+			// step of the pay panel's form; a JSON/split leg has none, so it
+			// is refused rather than auto-picked.
+			if p.Method == data.PaymentMethodCardExternal {
+				http.Error(w, "card_external is tendered from the pay panel only", http.StatusBadRequest)
+				return
+			}
 			// ut-docs#1764 (independent review): pos.CompleteSale's
 			// netPayments already rejects change > amount as invalid
 			// (internal/pos/sales.go), but that check runs AFTER this
@@ -3057,6 +3109,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					http.Error(w, "invalid voucher id", http.StatusBadRequest)
 					return
 				}
+				// ut-docs#6755: own-terminal card fields, validated before anything
+				// happens (no payment, no sale, basket untouched). Read for no
+				// other method.
+				var extAuth, extMasked string
+				if method == data.PaymentMethodCardExternal {
+					var errKey string
+					extAuth, extMasked, errKey = parseExternalCardFields(r.Form.Get("auth_code"), r.Form.Get("last4"))
+					if errKey != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"data":  nil,
+							"error": map[string]string{"code": externalCardInvalidCode, "message": httpx.T(httpx.ResolveLocale(w, r), errKey)},
+						})
+						return
+					}
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -3073,6 +3142,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						VoucherID: formVoucherID,
 						// ut-docs#6566: the picker's confirm posts the row id.
 						ReaderRowID: strings.TrimSpace(r.Form.Get("reader")),
+						AuthCode:    extAuth,
+						MaskedPAN:   extMasked,
 					})
 				}
 			}
@@ -3269,6 +3340,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			// ut-docs#6455: a tap payment that never started. Nothing was
 			// charged and the basket is not locked; never worded "declined".
+			var tapCancelled *tapCancelledError
+			if errors.As(err, &tapCancelled) {
+				log.Printf("tender: %v", err)
+				locale := httpx.ResolveLocale(w, r)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.payment_cancelled")
+				b.ToastLevel = "info"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			var tapStart *tapStartFailedError
 			if errors.As(err, &tapStart) {
 				log.Printf("tender: %v", err)
@@ -3461,7 +3545,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				entries, err := repo.ListRecentSales(r.Context(), 5)
 				if err == nil {
 					var journalBuf bytes.Buffer
-					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
+					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true, Refunds: journalRefunds(r.Context(), d, entries)})
 					fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, viewHTML, journalBuf.String())
 					return
 				}

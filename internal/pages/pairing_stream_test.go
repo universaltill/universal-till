@@ -327,6 +327,30 @@ func TestPairingStreamJS_SingleSourceNoUserText(t *testing.T) {
 	}
 }
 
+// ut-docs#7057 / #6538: the Card reader requests box (#reader-requests)
+// refreshes every 3s behind the same utPairingBusy() guard, so the guard
+// must look inside it too, or a manager's half-typed PIN is wiped.
+func TestPairingStreamJS_BusyGuardCoversReaderRequests(t *testing.T) {
+	chdirRoot(t)
+	raw, err := os.ReadFile("web/public/pairing-stream.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(raw)
+	for _, id := range []string{"pending-pairings", "reader-requests"} {
+		if !strings.Contains(js, "'"+id+"'") {
+			t.Fatalf("utPairingBusy must guard #%s (a typed PIN there is wiped by the poll)", id)
+		}
+	}
+	rr, err := os.ReadFile("web/ui/partials/tills_reader_requests.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rr), `id="reader-requests"`) || !strings.Contains(string(rr), "!utPairingBusy()") {
+		t.Fatal("reader-requests partial changed: update the busy guard to match")
+	}
+}
+
 // Review (ut-docs#2743 AC7): the middleware checks the session only at
 // connect, so the stream re-checks it on every heartbeat and ends once the
 // session is signed out (or idle-locked), instead of nudging a locked page

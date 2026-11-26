@@ -718,19 +718,22 @@ func TestReaderEligible_Table(t *testing.T) {
 	cases := []struct {
 		kind, transport string
 		pos, kiosk      bool
+		method          string
 	}{
-		{"cloud", "internet", true, true},
-		{"phone", "internet", true, true},
-		{"sdk", "bluetooth", false, false},
-		{"sdk", "usb", false, false},
-		{"external", "none", false, false},
-		{"weird", "internet", false, false},
-		{"cloud", "bluetooth", false, false},
-		{"cloud", "serial", false, false},
-		{"tap_to_pay", "internet", false, false},
+		{"cloud", "internet", true, true, ""},
+		{"phone", "internet", true, true, ""},
+		{"sdk", "bluetooth", false, false, ""},
+		{"sdk", "usb", false, false, ""},
+		{"external", "none", true, false, data.PaymentMethodCardExternal},   // ut-docs#6755: own terminal: cashier surfaces yes, kiosk never
+		{"external", "none", false, false, "demopay"},                       // ut-docs#6755: external row on a plugin method fails closed
+		{"cloud", "internet", false, false, data.PaymentMethodCardExternal}, // card_external only on an external row
+		{"weird", "internet", false, false, ""},
+		{"cloud", "bluetooth", false, false, ""},
+		{"cloud", "serial", false, false, ""},
+		{"tap_to_pay", "internet", false, false, ""},
 	}
 	for _, c := range cases {
-		row := data.CardReader{Kind: c.kind, Transport: c.transport}
+		row := data.CardReader{Kind: c.kind, Transport: c.transport, MethodKey: c.method}
 		if got := readerEligible(row, readerSourcePOS); got != c.pos {
 			t.Errorf("%s/%s pos = %v, want %v", c.kind, c.transport, got, c.pos)
 		}
@@ -759,14 +762,10 @@ func TestReaderTender_SDKExternalAndInvalidRowsAreRefusedBeforeAnyPlugin(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	ext, err := repo.Create(context.Background(), data.CardReader{Name: "Own", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_ext", Kind: data.CardReaderKindExternal})
-	if err != nil {
-		t.Fatal(err)
-	}
 	weird := rawReader(t, dp, rp, "Weird", "tmr_weird", "weird", "internet")
 	badPair := rawReader(t, dp, rp, "BadPair", "tmr_bp", "cloud", "bluetooth")
 	scan(t, dp)
-	for name, id := range map[string]string{"sdk": sdk.ID, "external": ext.ID, "weird kind": weird, "bad pair": badPair} {
+	for name, id := range map[string]string{"sdk": sdk.ID, "weird kind": weird, "bad pair": badPair} {
 		rec := postTender(t, mux, tenderBody(leg("demopay", 120, id)))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: want 400, got %d: %s", name, rec.Code, rec.Body.String())
@@ -790,9 +789,6 @@ func TestReaderTender_OnlyIneligibleRowsRefuses(t *testing.T) {
 	repo := data.NewCardReaderRepo(dp.Db)
 	ctx := context.Background()
 	if _, err := repo.Create(ctx, data.CardReader{Name: "Sdk", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_sdk", Kind: data.CardReaderKindSDK, Transport: data.CardReaderTransportUSB}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.Create(ctx, data.CardReader{Name: "Own", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_ext", Kind: data.CardReaderKindExternal}); err != nil {
 		t.Fatal(err)
 	}
 	for source, want := range map[string]string{"pos": "reader_required", "kiosk": "card_reader.kiosk_none"} {

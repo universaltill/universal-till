@@ -47,7 +47,7 @@ func wirePayAttempts(db *sql.DB) {
 		}
 		return paybroker.AttemptView{
 			Key: a.Key, Provider: a.Provider, AmountMinor: a.AmountMinor, Currency: a.Currency,
-			Pending: a.State == data.AttemptPending,
+			Pending: a.State == data.AttemptPending, PIID: a.PIID,
 		}, true
 	})
 }
