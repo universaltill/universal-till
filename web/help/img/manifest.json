@@ -1774,7 +1774,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "1239822666aed9deec2b5c5a7fef9a86d7f6c4aea674bc989c1077fedb5b8c0d"
+      "sha256": "0937fad7953ed274dc5d8aa0e38fac8945184f96822b9fada46359a28153db12"
     },
     "web/ui/pages/setup.html": {
       "sha256": "28e9b30748d061eb75d8e395b8c3e4464007a9ac57cd2cb6bb3a577df810702f"
@@ -1795,7 +1795,7 @@
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
     },
     "web/ui/pages/tills.html": {
-      "sha256": "abe9863123881612397874d5195ba052276194f2bf5fac32199ab26bbab19538"
+      "sha256": "e66c58a031aa77d14214c5c67116169ac542c6297fad21f89654370d47bbeed1"
     },
     "web/ui/pages/translations.html": {
       "sha256": "669732ceb602e1b75cb8d829b7c8bb10c998da311be19b93319fd6efec319d79"
@@ -2164,7 +2164,7 @@
       "sha256": "93ad45690c87c4e68e616001d1155c28bd0735609a0cded607e1a4524a2558cd"
     },
     "web/ui/partials/tills_nav.html": {
-      "sha256": "5502b146e6f656342d008a8dec3faeca1143ecbc55b66b5f632ad8592ae6596a"
+      "sha256": "dd9371d49180e2dcc70ea54329fb68db01ee9f57a0e2877dc58d7aa1a679bffd"
     },
     "web/ui/partials/tills_network_key.html": {
       "sha256": "974ae90fa8146195828cfe8093a0bc0c1ad7263bcb7623164a08871efae6a1cb"
@@ -2191,16 +2191,16 @@
       "sha256": "5be5e325e580d52d5d22faf4ca4b98a5eaf30293b7b64c84168fd9579e419827"
     },
     "web/ui/partials/tills_tab_others.html": {
-      "sha256": "6d96ec0c8cbd9094ec16ff9316d160cc3b4493f82fd81a17b07c853b9d12a2fb"
+      "sha256": "b493401a6176e89e49f4b25c9ca12e9bfc1fe32f7e425c2e458e058cabe8ddf8"
     },
     "web/ui/partials/tills_tab_readers.html": {
       "sha256": "8ff87a6be5ac20ca265173fc1a4070407193f3af6f760d9b4256fad61cc20b64"
     },
     "web/ui/partials/tills_tab_settings.html": {
-      "sha256": "404a152c2ff906c8a85a19a39cbdd989245d06138d07baa8926971ad3334ee73"
+      "sha256": "ff532926e036f2c5598fbf9a92e7bab0b44f454fcb85d87fe666ef3da5583f55"
     },
     "web/ui/partials/tills_tab_this.html": {
-      "sha256": "276210755b78dfd319cee664d250258b9541ae21d1eea42233a230dc0bffbe05"
+      "sha256": "ae53ec0fa9de50b185771aa847265636934d5591c3c6c79332321d229522e897"
     },
     "web/ui/partials/tour.html": {
       "sha256": "2841be557675d2df794489d381b4fbaecc40dc0ea1f99a28426fc796fc82bd6c"
