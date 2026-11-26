@@ -4936,5 +4936,17 @@
   "pay.attention.charged_no_sale.journal_failed": "Recorded, but this row could not be closed. Choose Charged — refund at the provider again.",
   "pay.attention.tap_says_paid": "The payment service says this payment went through. Choose Charged — refund at the provider.",
   "pay.attention.tap_says_not_paid": "The payment service says nothing was charged. Choose Not charged.",
-  "pay.attention.tap_reason_required": "The payment service could not confirm this payment. Choose a reason, then your answer again."
+  "pay.attention.tap_reason_required": "The payment service could not confirm this payment. Choose a reason, then your answer again.",
+  "tender.card_external": "Card (own terminal)",
+  "card_reader.settings.add_external": "Add your own terminal",
+  "card_reader.settings.external_help": "A card terminal that is not connected to the till. The cashier types the amount into it and then taps Paid or Declined here. Works without internet.",
+  "card_reader.external.prompt": "Type %s into your terminal, then tap the result.",
+  "card_reader.external.auth_code": "Auth code (optional)",
+  "card_reader.external.last4": "Last 4 card digits (optional)",
+  "card_reader.external.paid": "Paid",
+  "card_reader.external.declined": "Declined",
+  "card_reader.external.declined_notice": "Declined. Nothing was recorded.",
+  "card_reader.external.invalid": "Check the auth code and the last 4 digits.",
+  "card_reader.external.err_auth_code": "The auth code can only have up to 12 letters and numbers.",
+  "card_reader.external.err_last4": "Enter exactly 4 digits, or leave it empty."
 }

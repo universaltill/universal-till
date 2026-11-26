@@ -377,7 +377,11 @@ func TestCreate_KindTransportPairs(t *testing.T) {
 			ok := ValidCardReaderPair(kind, want)
 			var before int
 			_ = db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&before)
-			c, err := repo.Create(ctx, CardReader{Name: fmt.Sprintf("R%d", n), MethodKey: "m", PluginID: "p", ReaderRef: fmt.Sprintf("ref%d", n), Kind: k, Transport: tr})
+			in := CardReader{Name: fmt.Sprintf("R%d", n), MethodKey: "m", PluginID: "p", ReaderRef: fmt.Sprintf("ref%d", n), Kind: k, Transport: tr}
+			if k == CardReaderKindExternal { // ut-docs#6755: core's own row, no plugin
+				in.MethodKey, in.PluginID = PaymentMethodCardExternal, ""
+			}
+			c, err := repo.Create(ctx, in)
 			var after int
 			_ = db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&after)
 			if ok {
@@ -462,7 +466,11 @@ func TestUnattendedDefault_RefusesSDKAndExternal(t *testing.T) {
 	db := newCardReaderTestDB(t)
 	repo := NewCardReaderRepo(db)
 	mk := func(name, ref, kind, tr string) CardReader {
-		c, err := repo.Create(ctx, CardReader{Name: name, MethodKey: "m", PluginID: "p", ReaderRef: ref, Kind: kind, Transport: tr})
+		in := CardReader{Name: name, MethodKey: "m", PluginID: "p", ReaderRef: ref, Kind: kind, Transport: tr}
+		if kind == CardReaderKindExternal {
+			in.MethodKey, in.PluginID = PaymentMethodCardExternal, ""
+		}
+		c, err := repo.Create(ctx, in)
 		if err != nil {
 			t.Fatal(err)
 		}

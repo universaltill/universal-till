@@ -33,10 +33,10 @@
       "tr": "2f6fbc07f6741833179091fbfb5933d9720760612edd5e0b723fde0d96fa5f86"
     },
     "card-readers": {
-      "en": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
-      "fa": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
-      "ar": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831",
-      "tr": "0ab5830b63def394f84cd4863f01dfc9d7047e18fb112cda6922f68db2ae8831"
+      "en": "ce7298c2bb4c02a7c62a5dfdfb514c029d33df489c1a780c115a546341fb52ba",
+      "fa": "ce7298c2bb4c02a7c62a5dfdfb514c029d33df489c1a780c115a546341fb52ba",
+      "ar": "ce7298c2bb4c02a7c62a5dfdfb514c029d33df489c1a780c115a546341fb52ba",
+      "tr": "ce7298c2bb4c02a7c62a5dfdfb514c029d33df489c1a780c115a546341fb52ba"
     },
     "catalog": {
       "en": "658965007f6585cb187a3a56a535cadbdad187c876a952a294310ddb4861b73c",
@@ -303,11 +303,14 @@
     "internal/pages/builtin_locale_bundle.go": {
       "sha256": "a0931b7243bc31f483adb06acb473165e55cfd79a9efc803d0f8d0f0ee957bdf"
     },
+    "internal/pages/card_external_tender.go": {
+      "sha256": "f2f99c4072bb35cd22ed243a8bcf0ab2ea275cf14d4cbc01aa2de4430419ca6c"
+    },
     "internal/pages/card_reader_tender.go": {
-      "sha256": "02f485b976079924d1a11103237196583c60259023b1719b3e44ce47a6ceddbc"
+      "sha256": "199784af00226e35e21deabb60a4dbc5801a29f7cf0e4307595e9a1afe36f3e8"
     },
     "internal/pages/card_readers_page.go": {
-      "sha256": "f331e86646a31632a0228cfce5a19eb46f78859995fd0e2ce49f259478f42d10"
+      "sha256": "7dc5231e82233d2922c0b52a0e01aee2a2150e0d2d14a8b06cba6cb4db5faaad"
     },
     "internal/pages/catalog/handlers.go": {
       "sha256": "716b360b442a5577c5514eb39aff310954f1157e9ed60e99053097dc4f3334a5"
@@ -511,7 +514,7 @@
       "sha256": "d13c44afd30f7548130f13c603e58e9de35a6d17e992226cfa5a801694597092"
     },
     "internal/pages/index_page.go": {
-      "sha256": "3bf89b328b8d6b2a4429605b0c59c4718a2ea6bc05e206a7f853ec856780519c"
+      "sha256": "1d2b6d0165f98fd4ee61eb55bcadba57bd641c9356cd047359076bd366f13521"
     },
     "internal/pages/init.go": {
       "sha256": "26b61f60b5659c6d3093775cda042df74d59ad31b920e5974e44a13d3c41ca9d"
@@ -682,7 +685,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "a9bcdc801ff626a227eac3847340a852104938c56dbbd9b309f9b2d3f77c7416"
+      "sha256": "74193a04baff1192a3bfa95d9230e527496de5fff1b1e0c5a3206ab76072f349"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -820,7 +823,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "5e9ae33763850a68d0efc2cd94b2a335df6f4241026711d6ecbe4ff7f4399afc"
+      "sha256": "4c4b3eeea3761a13f36869eb71ecbe6bc0cb2a7c8987034f9f30747cb9a87161"
     },
     "web/public/app.js": {
       "sha256": "5a0518d301f684e740c2974bed06f63b6aba3b2d00d8cc2206d6dc2b861063e9"
@@ -1453,7 +1456,7 @@
       "sha256": "e924d5e0bee9fae90aace86655aa1e8f41480ecda485ee49750b21cdd13231ff"
     },
     "web/public/card-reader-picker.js": {
-      "sha256": "e251ddaac892042978cab639145628d0aab7a60572b0ed3433217660b6e0d14f"
+      "sha256": "ee1323d81b30f10a3ce8980b911fea95590431df6d8ffb0a6898fe489f83832d"
     },
     "web/public/category-filter.js": {
       "sha256": "1f6ccf3527b087a0237d7e0c35530bf6e88fd20fb7acaf7cb2e36737d9bf351f"
@@ -1642,7 +1645,7 @@
       "sha256": "ad9c10f72169207128265e55cd24904251319e134f50480aac64661b3ae88a0a"
     },
     "web/ui/pages/index.html": {
-      "sha256": "dca76a77f3bb4e699b3f691edbe7e3efe5e11dbaceb9b3fb78faae165d73eac9"
+      "sha256": "6feece6d424d03af6ecee55cad2c2bfdcfb3652ce2c5fc0ec79ff0f1ad144ee4"
     },
     "web/ui/pages/inventory.html": {
       "sha256": "4b7c2442334e0198a66bc6179992a366f78c4da535bc50661571592245284b50"
@@ -1831,10 +1834,10 @@
       "sha256": "bc069c826343994194add6d7064f542fb12e745c8e2a8a180012a96897080427"
     },
     "web/ui/partials/card_reader_picker.html": {
-      "sha256": "76a68099dcc4ff54c5ecbf7d24f0edc897835f50334c983892f312bebe737cf4"
+      "sha256": "8646c202524fb3b49cee36beaa66a1459a4d1b838233e7d49e04467826c8ab14"
     },
     "web/ui/partials/card_reader_settings_body.html": {
-      "sha256": "d34f510be036f4bd2f123b694f138d836a447c0ae46da5b028b082f137656a72"
+      "sha256": "59b67afa0276bd87eb8387f80049b8f4815d62cf815045b20dfc551c2dad41be"
     },
     "web/ui/partials/catalog_barcode_backfill.html": {
       "sha256": "1c7b68e5f30ddffd6cca29200febccc4edf8b48da96678de410d292d0526ee26"
