@@ -65,17 +65,28 @@ func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRe
 	if len(rows) == 0 {
 		return nil, false, nil
 	}
-	ok, err := data.NewPluginRepo(d.Db).HasActiveHook(ctx, rows[0].PluginID, readersHook(method))
+	ok, err := methodManaged(ctx, d, rows[0].PluginID, method)
 	if err != nil || !ok {
 		return nil, false, err
 	}
 	return rows, true, nil
 }
 
+// methodManaged: card_external is core's own (no plugin, no hook, ADR-0205
+// §7, ut-docs#6755); any other method is managed when its plugin declares the
+// readers hook.
+func methodManaged(ctx context.Context, d *common.Deps, pluginID, method string) (bool, error) {
+	if method == data.PaymentMethodCardExternal {
+		return true, nil
+	}
+	return data.NewPluginRepo(d.Db).HasActiveHook(ctx, pluginID, readersHook(method))
+}
+
 // readerEligible: a row whose stored kind/transport pair is not allowed is
 // never offered (fail closed, ADR-0205 §8); sdk rows wait for the native
-// bridge (no build reports sdk transports yet, §3); external rows have no
-// card-tender path yet (#6755); a tap_to_pay row needs a registered device
+// bridge (no build reports sdk transports yet, §3); an external row (the
+// shop's own terminal, #6755) is offered on every cashier surface and never
+// on the kiosk; a tap_to_pay row needs a registered device
 // bridge and is offered on the main/standalone cashier till only (never the
 // kiosk or a satellite).
 func readerEligible(c data.CardReader, source string) bool {
@@ -88,8 +99,10 @@ func readerEligible(c data.CardReader, source string) bool {
 		return source == readerSourceAdditional
 	}
 	switch c.Kind {
-	case data.CardReaderKindSDK, data.CardReaderKindExternal:
+	case data.CardReaderKindSDK:
 		return false
+	case data.CardReaderKindExternal:
+		return source != readerSourceKiosk
 	case data.CardReaderKindTapToPay:
 		return tapOfferedOn(source) && cardreaders.TapToPayAvailable()
 	}

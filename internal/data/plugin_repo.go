@@ -2330,7 +2330,7 @@ WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 // builtinPaymentMethodIDs are the seeded built-in tenders: never owned by a
 // plugin, never adoptable (single definition for the SyncPluginPaymentMethods
 // invariant and AdoptOwnerlessPaymentMethods, ut-docs#6928).
-var builtinPaymentMethodIDs = []string{"cash", "card", "gift", "voucher"}
+var builtinPaymentMethodIDs = []string{"cash", "card", "gift", "voucher", "card_external"}
 
 // AdoptOwnerlessPaymentMethods sets payment_methods.plugin_id = pluginID on
 // the rows among keys that have no owner and are not built-ins — the

@@ -453,6 +453,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	defer releaseReaders()
 
+	// ut-docs#6755 (ADR-0205 §7): a card_external leg is only ever recorded
+	// against an external registry row; its terminal_id is that row's ref.
+	var externalLegs []pos.PaymentInput
+	for i := range payments {
+		if payments[i].MethodID != data.PaymentMethodCardExternal {
+			continue
+		}
+		if payments[i].ReaderKind != data.CardReaderKindExternal {
+			return "", &cardReaderError{Status: http.StatusConflict, Code: readerCodeRequired, Method: data.PaymentMethodCardExternal}
+		}
+		payments[i].TerminalID = payments[i].ReaderRef
+		externalLegs = append(externalLegs, payments[i])
+	}
+
 	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
@@ -1043,6 +1057,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnIfVoucherOverdrawnReason(ctx, repo, saleInput, "cross-till redemption (sale "+saleID+")",
 				"this till's own local voucher balance was stale relative to the primary's (ut-docs#1668)")
 			break
+		}
+	}
+
+	// ut-docs#6755: one audit row per own-terminal card leg (an honour record,
+	// ADR-0205 §7). Best effort, never unwinds the sale; never the last4 or
+	// the auth code themselves.
+	for _, p := range externalLegs {
+		touchReaderLastUsed(ctx, d, p.ReaderRowID)
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "external_card_tender", map[string]any{
+			"amount_minor":  p.Amount.Minor(),
+			"reader_row_id": p.ReaderRowID,
+			"has_auth_code": p.AuthCode != "",
+			"has_last4":     p.MaskedPAN != "",
+		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+			log.Printf("external card tender: audit for sale %s failed: %v", saleID, auditErr)
 		}
 	}
 
@@ -3057,6 +3086,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					http.Error(w, "invalid voucher id", http.StatusBadRequest)
 					return
 				}
+				// ut-docs#6755: own-terminal card fields, validated before anything
+				// happens (no payment, no sale, basket untouched). Read for no
+				// other method.
+				var extAuth, extMasked string
+				if method == data.PaymentMethodCardExternal {
+					var errKey string
+					extAuth, extMasked, errKey = parseExternalCardFields(r.Form.Get("auth_code"), r.Form.Get("last4"))
+					if errKey != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"data":  nil,
+							"error": map[string]string{"code": externalCardInvalidCode, "message": httpx.T(httpx.ResolveLocale(w, r), errKey)},
+						})
+						return
+					}
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -3073,6 +3119,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						VoucherID: formVoucherID,
 						// ut-docs#6566: the picker's confirm posts the row id.
 						ReaderRowID: strings.TrimSpace(r.Form.Get("reader")),
+						AuthCode:    extAuth,
+						MaskedPAN:   extMasked,
 					})
 				}
 			}

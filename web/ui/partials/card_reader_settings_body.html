@@ -23,7 +23,7 @@
       <div class="card-reader-main">
         <strong class="card-reader-name">{{ .Name }}</strong>
         <span class="muted">{{ T (printf "card_reader.kind.%s" .Kind) }}{{ if .ProviderName }} · {{ T .ProviderName }}{{ end }}</span>
-        <span class="muted">{{ T "card_reader.settings.reader_id" }}: <span class="card-reader-id" dir="ltr"><bdi>{{ .ReaderRef }}</bdi></span></span>
+        {{ if ne .Kind "external" }}<span class="muted">{{ T "card_reader.settings.reader_id" }}: <span class="card-reader-id" dir="ltr"><bdi>{{ .ReaderRef }}</bdi></span></span>{{ end }}
         <span>
           {{ if eq .Source "migrated" }}<span class="card-reader-tag">{{ T "card_reader.settings.source_migrated" }}</span>{{ end }}
           {{ if .UnattendedDefault }}<span class="card-reader-tag" data-testid="card-reader-unattended-tag">{{ T "card_reader.settings.unattended_tag" }}</span>{{ end }}
@@ -87,5 +87,19 @@
     {{ if .AtLimit }}<p class="error" data-testid="card-reader-limit">{{ printf (T "card_reader.settings.limit_reached") .Max }}</p>{{ end }}
   </form>
   {{ end }}
+
+  {{/* ut-docs#6755: the shop's own terminal needs no provider and no reader id. */}}
+  <form id="card-reader-add-external-form" class="card-reader-add-form" data-testid="card-reader-add-external-form" hx-post="/settings/card-readers"
+        hx-target="#card-reader-settings-body" hx-swap="outerHTML">
+    <input type="hidden" name="kind" value="external">
+    <fieldset{{ if .AtLimit }} disabled{{ end }} style="border:0;padding:0;margin:0;display:grid;gap:.6rem">
+      <p class="muted">{{ T "card_reader.settings.external_help" }}</p>
+      <label>{{ T "card_reader.settings.name" }}
+        <input type="text" name="name" maxlength="40" required autocomplete="off"
+               {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}>
+      </label>
+      <button class="btn secondary" type="submit" data-testid="card-reader-add-external">{{ T "card_reader.settings.add_external" }}</button>
+    </fieldset>
+  </form>
 </div>
 {{ end }}

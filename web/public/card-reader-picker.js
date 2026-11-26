@@ -67,11 +67,31 @@
     form.elements.reader.value = opt.getAttribute('data-reader-id') || '';
     form.elements.method.value = opt.getAttribute('data-method') || '';
     var btn = byId('card-reader-confirm');
+    var ext = opt.getAttribute('data-kind') === 'external';
+    setExternal(ext);
     if (btn) {
       btn.disabled = false;
-      var amount = btn.getAttribute('data-amount') || '';
-      setConfirmLabel(btn, btn.getAttribute('data-label'), amount, opt.getAttribute('data-name') || '');
+      if (ext) {
+        btn.textContent = btn.getAttribute('data-label-external') || '';
+      } else {
+        var amount = btn.getAttribute('data-amount') || '';
+        setConfirmLabel(btn, btn.getAttribute('data-label'), amount, opt.getAttribute('data-name') || '');
+      }
     }
+  }
+
+  // ut-docs#6755: the own-terminal block (auth code, last 4, Declined) shows,
+  // and its inputs are enabled (so they post), only for an external row.
+  function setExternal(on) {
+    var box = byId('card-reader-external');
+    if (!box) return;
+    box.hidden = !on;
+    var eb = byId('card-reader-external-error');
+    if (eb) { eb.textContent = ''; eb.hidden = true; }
+    Array.prototype.forEach.call(box.querySelectorAll('input'), function (i) {
+      i.disabled = !on;
+      if (!on) i.value = '';
+    });
   }
 
   // The tender footer and the Offline toggle are hidden while the picker is
@@ -158,10 +178,17 @@
     startRefresh();
     var cbtn = byId('card-reader-confirm');
     var pre = options().filter(function (o) { return o.getAttribute('aria-checked') === 'true'; })[0];
-    if (cbtn && pre) setConfirmLabel(cbtn, cbtn.getAttribute('data-label'), cbtn.getAttribute('data-amount') || '', pre.getAttribute('data-name') || '');
+    if (pre && pre.getAttribute('data-kind') === 'external') select(pre);
+    else if (cbtn && pre) setConfirmLabel(cbtn, cbtn.getAttribute('data-label'), cbtn.getAttribute('data-amount') || '', pre.getAttribute('data-name') || '');
     var form = byId('card-reader-form');
     if (p.getAttribute('data-auto') === '1' && form) {
       var only = options().filter(selectable)[0];
+      // never auto-submit an own-terminal row: the Paid step is the point (#6755)
+      if (only && only.getAttribute('data-kind') === 'external') {
+        select(only);
+        if (only.focus) only.focus();
+        return;
+      }
       if (only) {
         select(only);
         var live = byId('card-reader-live');
@@ -187,7 +214,16 @@
       if (selectable(opt)) select(opt);
       return;
     }
-    if (t.closest('#card-reader-back')) closePanel();
+    if (t.closest('#card-reader-back')) { closePanel(); return; }
+    if (t.closest('#card-reader-external-declined')) {
+      // Declined: nothing is sent or recorded; back to the pay grid.
+      var live = byId('card-reader-live');
+      var msg = live ? live.getAttribute('data-declined') : '';
+      setExternal(false);
+      closePanel();
+      var lastLive = byId('pos-live') || document.querySelector('[role="status"]');
+      if (lastLive && msg) { lastLive.textContent = ''; window.setTimeout(function () { lastLive.textContent = msg; }, 30); }
+    }
   });
 
   document.addEventListener('keydown', function (ev) {
@@ -257,6 +293,20 @@
     }
     // A tender that needs a reader choice (nothing was charged): open the picker.
     var xhr = d.xhr;
+    // ut-docs#6755: a refused auth code / last 4: keep the panel, show why.
+    if (xhr && xhr.status === 422 && el && el.id === 'card-reader-form') {
+      var em = null;
+      try { var ej = JSON.parse(xhr.responseText); if (ej.error && ej.error.code === 'card_reader.external.invalid') em = ej.error.message; } catch (e) { em = null; }
+      if (em) {
+        var ab = byId('pos-alert');
+        var at = ab && ab.querySelector('.notice-text');
+        if (ab && at && at.textContent === (ab.dataset.msgServer || '')) ab.hidden = true;
+        var eb = byId('card-reader-external-error');
+        if (eb) { eb.textContent = em; eb.hidden = false; }
+        say(em);
+        return;
+      }
+    }
     if (!xhr || (xhr.status !== 409 && xhr.status !== 400 && xhr.status !== 402)) return;
     var trig = xhr.getResponseHeader && xhr.getResponseHeader('HX-Trigger');
     if (!trig || trig.indexOf('card-reader-needed') === -1) return;

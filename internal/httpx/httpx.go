@@ -1499,6 +1499,8 @@ func PaymentMethodKey(id string) (key string, ok bool) {
 		return "tender.cash", true
 	case "card":
 		return "tender.card", true
+	case "card_external": // ut-docs#6755: the shop's own terminal
+		return "tender.card_external", true
 	case "voucher":
 		return "tender.voucher", true
 	case "gift":
