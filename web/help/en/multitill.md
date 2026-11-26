@@ -19,7 +19,7 @@ keywords: [second till, pairing, sync, lan, main till, register, quarantine]
 Everything about your tills is on one page, **Tills & devices**, in five tabs (the old Settings → Tills & devices card and the old links all lead here):
 
 - **This till**: one sentence saying what this till is ("This is the main till of …"), its name and register, and a banner if it was replaced or lost its link to the shop.
-- **Other tills**: the tills on this shop network next to the tills in your shop account, each marked as in both, **Not in your account** (an old entry you can remove with one tap, or all at once), or **In your account, not added here**. If your account and the network disagree about a till's role, a plain notice says so; nothing is changed for you. If your account cannot be reached, or does not yet list its tills with their till IDs, nothing is marked stale and the tab shows the tills on this network only. Phones used as card readers are listed in their own block underneath.
+- **Other tills**: the tills on this shop network next to the tills in your shop account, each marked as in both, **Not in your account** (an old entry you can remove with one tap, or all at once), an **Old entry** (a till your account has removed, or one not seen for 30 days: **Remove** it, its past sales stay), or **In your account, not added here**. If your account and the network disagree about a till's role, a plain notice says so; nothing is changed for you. If your account cannot be reached, or does not yet list its tills with their till IDs, nothing is marked stale and the tab shows the tills on this network only. Phones used as card readers are listed in their own block underneath.
 - **Add a till**: choose what you need (another till of this shop, join an existing shop, or replace this till), then the pairing code and QR, the join form, finding a main till on the network and pairing requests waiting for approval.
 - **Card readers**: phones paired as card readers.
 - **Settings for this page**: who on the network may reach this till, the network security key, the copy of every sale, quarantined entries, and links to the kiosk, notices and shop-account settings.
@@ -83,6 +83,8 @@ Do this on the **main till**, as a manager.
 3. If you want, change the **Role** in the row (additional till or satellite) before you approve.
 4. Type your **Manager PIN** in the row's box. A wrong PIN shows **Incorrect manager PIN.**
 5. Press **Approve**, or **Deny** to refuse the request.
+
+A joining till that asks again (for example after its app was restarted) replaces its own earlier request, so each device shows as one row. While you are typing a PIN, or for a short while after you touched the box, the list does not refresh itself, so the row you are working on stays where it is.
 
 The joining till then finishes joining. If you deny the request, the joining till is not told: it keeps showing **Waiting for approval…** until the request expires, 10 minutes after it was sent. It then shows **No response — the request may have been declined or it expired. Try again.** and can send a new request. The same message appears if nobody answers within 10 minutes.
 

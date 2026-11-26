@@ -61,16 +61,39 @@ func (r *PairingRepo) CreatePendingRequest(ctx context.Context, deviceName, comm
 // LAN TLS pin served on the request's connection ("" for plain HTTP,
 // ut-docs#4091).
 func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceName, commitment, role, servedPin string, ttl time.Duration) (string, error) {
+	return r.CreatePendingRequestForDevice(ctx, deviceName, commitment, role, servedPin, "", ttl)
+}
+
+// CreatePendingRequestForDevice is CreatePendingRequestWithRole for a request
+// that names its requesting device (ut-docs#7097, AC16): in the same
+// transaction the device's older still-pending rows are deleted, so a retry
+// (or a restarted phone app) replaces its request instead of piling up. A
+// blank requesterDeviceID (an older till) replaces nothing. Approved and
+// denied rows are never touched.
+func (r *PairingRepo) CreatePendingRequestForDevice(ctx context.Context, deviceName, commitment, role, servedPin, requesterDeviceID string, ttl time.Duration) (string, error) {
 	if !ValidPairingRole(role) {
 		return "", fmt.Errorf("create pending pairing: invalid role %q", role)
 	}
 	id := uuid.NewString()
 	now := r.now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role, served_pin)
-VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role, servedPin)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return "", fmt.Errorf("create pending pairing: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if requesterDeviceID != "" {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pending_pairings WHERE requester_device_id = ? AND status = 'pending'`, requesterDeviceID); err != nil {
+			return "", fmt.Errorf("replace older pending pairings: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role, served_pin, requester_device_id)
+VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role, servedPin, requesterDeviceID); err != nil {
+		return "", fmt.Errorf("create pending pairing: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("create pending pairing: %w", err)
 	}
 	return id, nil

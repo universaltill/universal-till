@@ -51,7 +51,7 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 			confirmed[id] = true
 		}
 		for _, row := range rows {
-			if row.State != tills.StateLocalOnly || row.IsSelf || !row.LongUnseen || !confirmed[row.ID] {
+			if (row.State != tills.StateLocalOnly && row.State != tills.StateOldEntry) || row.IsSelf || !row.LongUnseen || !confirmed[row.ID] {
 				continue
 			}
 			if err := repo.DeleteTill(r.Context(), row.ID); err != nil {

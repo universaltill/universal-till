@@ -2046,3 +2046,83 @@ func TestSyncEnroll_ReplaceOfSatelliteNameOverPlainHTTPIsRefused(t *testing.T) {
 		t.Fatalf("a satellite's enrolment was replaced over plain HTTP: %s", rec.Body.String())
 	}
 }
+
+func mintEnrolTokenForTest(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token", strings.NewReader("url=http://192.168.1.10:8080"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	marker := `<code style="user-select:all">`
+	start := strings.Index(body, marker)
+	if start == -1 {
+		t.Fatalf("expected an enrolment code, got %s", body)
+	}
+	start += len(marker)
+	_, token, err := decodeEnrollCode(body[start : start+strings.Index(body[start:], "</code>")])
+	if err != nil {
+		t.Fatalf("decode enrolment code: %v", err)
+	}
+	return token
+}
+
+func enrolForTest(t *testing.T, mux *http.ServeMux, token, name, deviceID string) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(map[string]string{"token": token, "name": name, "device_id": deviceID})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// T7 / AC15 (ut-docs#7097): a till that joins again under a NEW name (same
+// device id, not seen lately) keeps its row: one row, new name, same id. A
+// different device adds a row and never touches another device's row.
+func TestSyncEnroll_RenameKeepsTheRowForTheSameDevice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	repo := data.NewTillsRepo(dp.Db)
+	const dev = "till-77777777-7777-4777-8777-777777777777"
+	if rec := enrolForTest(t, mux, mintEnrolTokenForTest(t, mux), "Phone", dev); rec.Code != http.StatusOK {
+		t.Fatalf("first enrol: %d %s", rec.Code, rec.Body.String())
+	}
+	first, ok, err := repo.TillByDeviceID(t.Context(), dev)
+	if err != nil || !ok || first.Name != "Phone" {
+		t.Fatalf("first row: %+v ok=%v err=%v", first, ok, err)
+	}
+	// Live (seen a minute ago): a rename join must not take the row over.
+	if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := enrolForTest(t, mux, mintEnrolTokenForTest(t, mux), "Phone live copy", "till-99999999-9999-4999-8999-999999999999")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("other device: %d %s", rec.Code, rec.Body.String())
+	}
+	if again, _, _ := repo.TillByDeviceID(t.Context(), dev); again.ID != first.ID || again.Name != "Phone" {
+		t.Fatalf("row of the live device changed: %+v", again)
+	}
+	if list, _ := repo.ListTills(t.Context()); len(list) != 2 {
+		t.Fatalf("tills = %+v, want 2 (a different device adds a row)", list)
+	}
+	var out struct {
+		Data struct {
+			TillID string `json:"till_id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if err := repo.DeleteTill(t.Context(), out.Data.TillID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := enrolForTest(t, mux, mintEnrolTokenForTest(t, mux), "Phone renamed", dev); rec.Code != http.StatusOK {
+		t.Fatalf("rename enrol: %d %s", rec.Code, rec.Body.String())
+	}
+	list, _ := repo.ListTills(t.Context())
+	if len(list) != 1 || list[0].ID != first.ID || list[0].Name != "Phone renamed" {
+		t.Fatalf("tills = %+v, want ONE row %s named %q", list, first.ID, "Phone renamed")
+	}
+}

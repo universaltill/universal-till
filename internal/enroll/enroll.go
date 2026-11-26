@@ -40,6 +40,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,31 @@ const RegisterBlockedUntilKey = "marketplace.device_register_blocked_until"
 // lazy path stays quiet until an operator action; a successful register clears
 // it. Device-local like the block above ("marketplace.device_" prefix).
 const keyRegisterKeyRefused = "marketplace.device_register_key_refused"
+
+// T4 (ut-docs#7097, AC10): a copied data folder keeps the device live for ever,
+// so the device_live block would be re-armed again and again. After
+// maxRegisterRearms the till stops and says it is in use on two machines.
+// Per-till state under the never-synced till_identity. prefix.
+const (
+	keyRegisterRearms = "till_identity.register_rearms"
+	keyInUseElsewhere = "till_identity.in_use_elsewhere_at"
+	maxRegisterRearms = 3
+	keyRefusedHoldFor = 24 * time.Hour
+)
+
+// InUseElsewhere: this till's identity is live on another machine (a copied
+// data folder) and the till stopped re-arming. Local only.
+func InUseElsewhere(ctx context.Context, kv Settings) bool {
+	v, _, err := kv.Get(ctx, keyInUseElsewhere)
+	return err == nil && strings.TrimSpace(v) != ""
+}
+
+// keyRefusedHolds: the key-refused hold is in force for keyRefusedHoldFor, then
+// the till tries once more (a changed key or a fixed cloud heals itself).
+func keyRefusedHolds(ctx context.Context, kv Settings) bool {
+	at := KeyRefusedAt(ctx, kv)
+	return !at.IsZero() && time.Since(at) < keyRefusedHoldFor
+}
 
 // StoreCountrySettingsKey is the settings.key a shop's chosen country lives
 // under (ADR-0026 setup wizard). Duplicated from
@@ -525,6 +551,7 @@ func noteRegisterOutcome(ctx context.Context, kv Settings, err error) {
 		if serr := kv.Set(ctx, keyRegisterBlockedUntil, usable.UTC().Format(time.RFC3339)); serr != nil {
 			logging.L().Warnf("enrolment: persist register block: %v", serr)
 		}
+		noteRearm(ctx, kv)
 		return
 	}
 	if IsKeyRefused(err) {
@@ -534,12 +561,28 @@ func noteRegisterOutcome(ctx context.Context, kv Settings, err error) {
 		return
 	}
 	if err == nil {
-		for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused} {
+		for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused, keyRegisterRearms, keyInUseElsewhere} {
 			if v, _, gerr := kv.Get(ctx, key); gerr == nil && v != "" {
 				if serr := kv.Set(ctx, key, ""); serr != nil {
 					logging.L().Warnf("enrolment: clear %s: %v", key, serr)
 				}
 			}
+		}
+	}
+}
+
+// noteRearm counts a device_live re-arm and, past maxRegisterRearms, records
+// the two-machines state.
+func noteRearm(ctx context.Context, kv Settings) {
+	v, _, _ := kv.Get(ctx, keyRegisterRearms)
+	n, _ := strconv.Atoi(strings.TrimSpace(v))
+	n++
+	if err := kv.Set(ctx, keyRegisterRearms, strconv.Itoa(n)); err != nil {
+		logging.L().Warnf("enrolment: persist register re-arm count: %v", err)
+	}
+	if n > maxRegisterRearms && !InUseElsewhere(ctx, kv) {
+		if err := kv.Set(ctx, keyInUseElsewhere, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			logging.L().Warnf("enrolment: persist in-use-elsewhere state: %v", err)
 		}
 	}
 }
@@ -681,7 +724,7 @@ func StartAsNewStore(ctx context.Context, cfg *config.Config, kv Settings) (Stat
 	}
 	defer releaseAttempt()
 	oldStore := resetIdentityForPair(ctx, kv, false, "till-"+uuid.NewString())
-	for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused} {
+	for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused, keyRegisterRearms, keyInUseElsewhere} {
 		if err := kv.Set(ctx, key, ""); err != nil {
 			logging.L().Warnf("enrolment: new shop: clear %s: %v", key, err)
 		}
@@ -914,10 +957,14 @@ func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) conf
 		if registrationStopped(ctx, kv) {
 			return Effective(cfg)
 		}
+		// ut-docs#7097 (AC9): a restored till never auto-registers as a new shop.
+		if RestoredState(ctx, kv) {
+			return Effective(cfg)
+		}
 		// ut-docs#5145: the cloud said this device was in use recently; the
 		// lazy path stays quiet until usable_from (a deliberate operator
 		// action still tries). Local read, so the till never waits on it.
-		if !RegisterBlockedUntil(ctx, kv).IsZero() || !KeyRefusedAt(ctx, kv).IsZero() {
+		if !RegisterBlockedUntil(ctx, kv).IsZero() || keyRefusedHolds(ctx, kv) || InUseElsewhere(ctx, kv) {
 			return Effective(cfg)
 		}
 		// Still waits for a real shop name (ut-docs#4272, unchanged for this
