@@ -1930,14 +1930,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
 				return
 			}
-			elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
-			if elev.Outcome == needsElevation {
-				hidden := []elevationHiddenField{{Name: "reason", Value: reason}}
-				if key != "" {
-					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-				} else {
-					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			hidden := []elevationHiddenField{{Name: "reason", Value: reason}}
+			if key != "" {
+				hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+			} else {
+				hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			}
+			// ut-docs#7085: bind the reason, the target and a snapshot of every
+			// priced line this removal drops, so the PIN cannot be reused for
+			// another line, another reason or a line that has since changed.
+			var snap []string
+			for _, l := range matched {
+				if l.GiftVoucher != nil {
+					continue
 				}
+				snap = append(snap, l.LineKey+"|"+l.SKU+"|"+strconv.FormatFloat(l.Qty, 'f', -1, 64)+"|"+
+					strconv.FormatInt(l.PriceCents.Minor(), 10))
+			}
+			snap = append(snap, strconv.FormatInt(extended.Minor(), 10))
+			elev, tok := checkOrElevateBound(d, r, approvalBinding("/api/pos/remove", getSessionUserID(r),
+				[]string{"void_comp_waste"}, hidden, snap...), "void_comp_waste")
+			if elev.Outcome == needsElevation {
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				renderElevationPrompt(w, r, "/api/pos/remove", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.void_comp_waste"), httpx.T(locale, "shrinkage.reason."+reason)),
 					hidden, elev)
@@ -2215,30 +2229,45 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 			}
-			pin := r.Form.Get("override_pin")
+			// ut-docs#7085: the replayed fields are built BEFORE the check so
+			// the approval binds exactly what the prompt shows and the retry
+			// applies (render and verify share one slice). Replay the ABSOLUTE
+			// target qty (not delta): the approver confirms the exact result.
+			hidden := []elevationHiddenField{
+				{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+				// ut-docs#6113: also replay the qty the summary shows as the
+				// starting point, so the retry is refused if the line moved.
+				{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
+				{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+				// ut-docs#5416: and the discount the summary starts from.
+				{Name: "from_discount", Value: strconv.FormatInt(cur.LineDiscount.Minor(), 10)},
+			}
+			if reduction {
+				hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
+			}
+			if key != "" {
+				hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+			} else {
+				hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			}
+			var tok string
 			switch {
 			case reduction && raise:
-				elev = checkOrElevateAll(d, r, pin, "void_comp_waste", "price_override")
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"void_comp_waste", "price_override"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					"void_comp_waste", "price_override")
 			case reduction:
-				elev = checkOrElevate(d, r, "void_comp_waste", pin)
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"void_comp_waste"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					"void_comp_waste")
 			default:
-				elev = checkOrElevate(d, r, "price_override", pin)
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"price_override"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					"price_override")
 			}
 			if elev.Outcome == needsElevation {
-				// Replay the ABSOLUTE target qty (not delta): the approver
-				// confirms the exact result shown in the summary.
-				hidden := []elevationHiddenField{
-					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
-					// ut-docs#6113: also replay the qty the summary shows as the
-					// starting point, so the retry is refused if the line moved.
-					{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
-					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					// ut-docs#5416: and the discount the summary starts from.
-					{Name: "from_discount", Value: strconv.FormatInt(cur.LineDiscount.Minor(), 10)},
-				}
 				var summary []string
 				if reduction {
-					hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
 					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
 						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
 						httpx.T(locale, "shrinkage.reason."+reason)))
@@ -2247,11 +2276,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.line_discount"), cur.Name,
 						httpx.FormatMoneyDisplay(cur.LineDiscount.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)))
 				}
-				if key != "" {
-					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-				} else {
-					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
-				}
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				// The stepper/qty field target #basket (outerHTML); the
 				// prompt's hint must land in the small hint slot instead,
 				// or it would replace the whole basket (as /api/pos/remove).
@@ -2396,14 +2421,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				writeForbiddenJSON(w, locale, "pos.error.discount_not_permitted")
 				return
 			}
-			elev = checkOrElevate(d, r, "price_override", r.Form.Get("override_pin"))
+			// ut-docs#7085: the PIN approves exactly this to/from pair, once.
+			hidden := []elevationHiddenField{
+				{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+				{Name: "from_discount", Value: strconv.FormatInt(from.Minor(), 10)},
+			}
+			var tok string
+			elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/discount", getSessionUserID(r),
+				[]string{"price_override"}, hidden), "price_override")
 			if elev.Outcome == needsElevation {
 				w.Header().Set("HX-Retarget", "#shrinkage-hint")
 				w.Header().Set("HX-Reswap", "innerHTML")
-				hidden := []elevationHiddenField{
-					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					{Name: "from_discount", Value: strconv.FormatInt(from.Minor(), 10)},
-				}
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				renderElevationPrompt(w, r, "/api/pos/discount", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.sale_discount"),
 						httpx.FormatMoneyDisplay(from.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)),

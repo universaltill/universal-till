@@ -54,7 +54,10 @@ approved, and the sale is left alone until the PIN is entered:
 
 If the sale changes (a line is edited or a scan comes in) while the PIN
 prompt is open, the approval is not applied: the basket says it changed and
-you start again. Scanning a promo code never asks for a PIN.
+you start again. Scanning a promo code never asks for a PIN. A PIN approves
+only what the prompt showed, and only once: if anything in the request
+changes, or the prompt is left open for more than a few minutes, the till
+asks for the PIN again.
 
 ## What gets recorded
 
