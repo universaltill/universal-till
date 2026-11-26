@@ -27,6 +27,9 @@ import (
 func resetDiscardPost(t *testing.T, mux *http.ServeMux) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/pos/reset", nil)
+	// The till's own page posts New sale over htmx; a plain caller without the
+	// reset permission is refused (403, ut-docs#6858).
+	req.Header.Set("HX-Request", "true")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

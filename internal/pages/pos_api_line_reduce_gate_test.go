@@ -50,7 +50,7 @@ func TestLineHandler_CashierReductionNeedsManagerPIN(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, key, lines, shrink := seedPricedLine(t, tc.start)
-			rec := postForm(mux, "/api/pos/line", tc.form(key), &cashier)
+			rec := postFormHtmx(mux, "/api/pos/line", tc.form(key), &cashier)
 			if !isElevationPrompt(rec) {
 				t.Fatalf("want elevation prompt, got %d: %s", rec.Code, rec.Body.String())
 			}
@@ -72,7 +72,7 @@ func TestLineHandler_CashierWrongPINRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}, "override_pin": {"000000"}}, &auth.User{ID: blockedID, Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}, "override_pin": {"000000"}}, &auth.User{ID: blockedID, Role: "cashier"})
 	if !isElevationPrompt(rec) {
 		t.Fatalf("wrong PIN: want prompt, got %d", rec.Code)
 	}
@@ -89,7 +89,7 @@ func TestLineHandler_ManagerPINApprovesReductionAndAudits(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "override_pin": {"445566"}}, &auth.User{ID: blockedID, Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "override_pin": {"445566"}}, &auth.User{ID: blockedID, Role: "cashier"})
 	if isElevationPrompt(rec) || rec.Code != http.StatusOK {
 		t.Fatalf("approved: got %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -117,7 +117,7 @@ func TestLineHandler_ManagerReductionNeedsNoPINButIsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}}, &auth.User{ID: mgrID, Role: "manager"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}}, &auth.User{ID: mgrID, Role: "manager"})
 	if rec.Code != http.StatusOK || len(dp.Engine.Basket().Lines) != 0 {
 		t.Fatalf("manager: code=%d lines=%d", rec.Code, len(dp.Engine.Basket().Lines))
 	}
@@ -130,7 +130,7 @@ func TestLineHandler_ManagerReductionNeedsNoPINButIsAudited(t *testing.T) {
 func TestLineHandler_CashierNonReductionsStayFree(t *testing.T) {
 	cashier := auth.User{ID: "cashier-1", Role: "cashier"}
 	mux, key, lines, shrink := seedPricedLine(t, 2)
-	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"1"}}, &cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
+	if rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"1"}}, &cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("plus: %d", rec.Code)
 	}
 	if lines()[0].Qty != 3 {
@@ -138,7 +138,7 @@ func TestLineHandler_CashierNonReductionsStayFree(t *testing.T) {
 	}
 	// same-qty re-post (the discount field posts the row's qty) is no reduction;
 	// lowering a discount is free too (ut-docs#5416 gates only a raise).
-	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}, "discount": {"0"}}, &cashier); isElevationPrompt(rec) || rec.Code != http.StatusOK {
+	if rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}, "discount": {"0"}}, &cashier); isElevationPrompt(rec) || rec.Code != http.StatusOK {
 		t.Fatalf("same-qty discount edit: %d", rec.Code)
 	}
 	if lines()[0].Qty != 3 || shrink() != 0 {
@@ -152,7 +152,7 @@ func TestLineHandler_CashierMayReduceZeroValueLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if isElevationPrompt(rec) || len(dp.Engine.Basket().Lines) != 0 {
 		t.Fatalf("a free line carries no loss: code=%d lines=%d", rec.Code, len(dp.Engine.Basket().Lines))
 	}
@@ -164,13 +164,13 @@ func TestLineHandler_BadQtyNeverVoids(t *testing.T) {
 	cashier := auth.User{ID: "cashier-1", Role: "cashier"}
 	for _, q := range []string{"", "abc", "-1", "NaN", "Inf"} {
 		mux, key, lines, _ := seedPricedLine(t, 2)
-		rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {q}}, &cashier)
+		rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {q}}, &cashier)
 		if ls := lines(); len(ls) != 1 || ls[0].Qty != 2 {
 			t.Fatalf("qty=%q: line must be untouched, got %+v (code %d)", q, ls, rec.Code)
 		}
 	}
 	mux, key, lines, _ := seedPricedLine(t, 2)
-	postForm(mux, "/api/pos/line", url.Values{"key": {key}}, &cashier)
+	postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}}, &cashier)
 	if ls := lines(); len(ls) != 1 || ls[0].Qty != 2 {
 		t.Fatalf("no qty at all: line must be untouched, got %+v", ls)
 	}
@@ -180,7 +180,7 @@ func TestLineHandler_BadQtyNeverVoids(t *testing.T) {
 // gated (the unit price is non-zero), or micro-steps drain a line unrecorded.
 func TestLineHandler_SubCentReductionStillGated(t *testing.T) {
 	mux, key, lines, shrink := seedPricedLine(t, 2)
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1.996"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1.996"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if !isElevationPrompt(rec) {
 		t.Fatalf("sub-cent reduction: want prompt, got %d", rec.Code)
 	}
@@ -198,7 +198,7 @@ func TestLineHandler_RefusedDiscountRecordsNoShrinkage(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "discount": {"999999"}}, &auth.User{ID: mgrID, Role: "manager"})
+	postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "discount": {"999999"}}, &auth.User{ID: mgrID, Role: "manager"})
 	if dp.Engine.Basket().Lines[0].Qty != 3 {
 		t.Fatal("engine should have refused the update")
 	}
@@ -216,7 +216,7 @@ func TestLineHandler_AmbiguousCodeRefused(t *testing.T) {
 	if n := len(dp.Engine.Basket().Lines); n != 2 {
 		t.Skipf("could not seed two same-SKU lines (%d)", n)
 	}
-	rec := postForm(mux, "/api/pos/line", url.Values{"code": {"ABC"}, "qty": {"0"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"code": {"ABC"}, "qty": {"0"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if rec.Code != http.StatusBadRequest || len(dp.Engine.Basket().Lines) != 2 {
 		t.Fatalf("want 400 and both lines kept, got %d / %d lines", rec.Code, len(dp.Engine.Basket().Lines))
 	}
