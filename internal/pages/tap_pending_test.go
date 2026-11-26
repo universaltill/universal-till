@@ -843,3 +843,47 @@ func isTapNoDeclineKey(k string) bool {
 }
 
 func runtimeCallerFile() (uintptr, string, int, bool) { return runtime.Caller(1) }
+
+// ut-docs#6538: a cashier's Cancel ends the tap as CANCELLED, never "declined",
+// never "outcome unknown"; the sale stays open, nothing is locked.
+func TestTapGate_CashierCancelIsCancelledNotDeclinedNorLocked(t *testing.T) {
+	e := tapRig(t)
+	e.plugin.answer = func(int) string { return "DECLINE:cancelled" }
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	rec := e.tender(t)
+	if e.sales(t) != 0 || e.dp.Engine.TenderLock() != "" {
+		t.Fatalf("a cancel leaves the sale open and unlocked (sales=%d lock=%q)", e.sales(t), e.dp.Engine.TenderLock())
+	}
+	e.wantText(t, rec, "pos.toast.payment_cancelled")
+	if low := strings.ToLower(rec.Body.String()); strings.Contains(low, "declin") || strings.Contains(low, "unknown") {
+		t.Fatalf("a cancel is never declined/unknown: %s", rec.Body.String())
+	}
+	if a := e.attempt(t); a.State != data.AttemptCancelled {
+		t.Fatalf("attempt = %+v, want cancelled", a)
+	}
+	if e.dp.Engine.Basket().Total.Minor() == 0 {
+		t.Fatal("the basket must still hold the sale")
+	}
+}
+
+// A cancel the broker cannot confirm is not a cancel: it stays pending.
+func TestTapGate_CancelTheBrokerCannotConfirmStaysPending(t *testing.T) {
+	e := tapRig(t)
+	e.plugin.answer = func(int) string { return "DECLINE:cancelled" }
+	e.broker.setStatus(piStatus("processing", 0))
+	e.tender(t)
+	if e.dp.Engine.TenderLock() == "" {
+		t.Fatal("an unconfirmed cancel must lock as pending, never be called cancelled")
+	}
+}
+
+// A cancel that raced a completed tap settles from the payment service.
+func TestTapGate_CancelRacingACompletedTapIsApproved(t *testing.T) {
+	e := tapRig(t)
+	e.plugin.answer = func(int) string { return "DECLINE:cancelled" }
+	e.broker.setStatus(piStatus("succeeded", 120))
+	e.tender(t)
+	if e.sales(t) != 1 {
+		t.Fatalf("the broker says it was charged: the sale must complete (sales=%d)", e.sales(t))
+	}
+}

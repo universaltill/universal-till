@@ -452,7 +452,7 @@ func TestBrokerDownIsPendingNeverDeclined(t *testing.T) {
 
 func TestAmountMismatchReaderResultIsPending(t *testing.T) {
 	g := newPhoneRig(t)
-	g.ob.set(func(b *opBroker) { b.status = piStatus("succeeded", 100) }) // 1.00 charged for a 1.20 sale
+	g.ob.set(func(b *opBroker) { b.status = strings.Replace(piStatus("succeeded", 100), "pi_k1b", "pi_r1b", 1) }) // the attempt records the reader link's PI; 1.00 charged for a 1.20 sale
 	ph := g.connect(t, fleetlink.ReaderReady)
 	done := g.tenderAsync(t)
 	c := ph.acceptCollect(t)

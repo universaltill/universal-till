@@ -415,3 +415,35 @@ func TestPaymentAttempt_MarkChargedNoSale_7028(t *testing.T) {
 		t.Fatalf("absent: %v, want ErrAttemptNotFound", err)
 	}
 }
+
+// ut-docs#6538: the PaymentIntent is recorded while the attempt stays pending,
+// so a cancel or status can name it; a settled attempt is never touched.
+func TestPaymentAttempt_SetPIIDKeepsPendingAndRefusesSettled(t *testing.T) {
+	ctx := context.Background()
+	repo := NewPaymentAttemptRepo(newAttemptTestDB(t, filepath.Join(t.TempDir(), "a.db")))
+	if _, err := repo.Begin(ctx, baseAttempt("k1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetPIID(ctx, "k1", "pi_9"); err != nil {
+		t.Fatalf("SetPIID: %v", err)
+	}
+	a, _, _ := repo.Get(ctx, "k1")
+	if a.PIID != "pi_9" || a.State != AttemptPending {
+		t.Fatalf("attempt = %+v, want PIID pi_9 and pending", a)
+	}
+	if err := repo.SetPIID(ctx, "nope", "pi_1"); !errors.Is(err, ErrAttemptNotFound) {
+		t.Fatalf("absent: %v", err)
+	}
+	if err := repo.SetPIID(ctx, "k1", ""); !errors.Is(err, ErrAttemptInvalid) {
+		t.Fatalf("empty pi: %v", err)
+	}
+	if err := repo.Mark(ctx, "k1", AttemptUnknown, AttemptUpdate{Reason: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetPIID(ctx, "k1", "pi_other"); !errors.Is(err, ErrAttemptSettled) {
+		t.Fatalf("non-pending: %v", err)
+	}
+	if a, _, _ = repo.Get(ctx, "k1"); a.PIID != "pi_9" {
+		t.Fatalf("PIID changed to %q", a.PIID)
+	}
+}

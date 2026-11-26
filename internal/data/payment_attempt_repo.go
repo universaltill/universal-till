@@ -238,6 +238,30 @@ WHERE idempotency_key = ? AND state IN (` + strings.TrimSuffix(strings.Repeat("?
 	return ErrAttemptSettled
 }
 
+// SetPIID records the PaymentIntent core created for key while the attempt is
+// still pending (the state does not change), so a cancel or a status lookup
+// can name it. A settled or unknown attempt is left alone: ErrAttemptSettled;
+// an absent one is ErrAttemptNotFound.
+func (r *PaymentAttemptRepo) SetPIID(ctx context.Context, key, pi string) error {
+	if pi == "" {
+		return ErrAttemptInvalid
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE payment_attempts SET pi_id = ?, updated_at = ? WHERE idempotency_key = ? AND state = ?`,
+		pi, ts(time.Now()), key, AttemptPending)
+	if err != nil {
+		return fmt.Errorf("set payment attempt pi: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return nil
+	}
+	if _, found, gerr := r.Get(ctx, key); gerr != nil {
+		return gerr
+	} else if !found {
+		return ErrAttemptNotFound
+	}
+	return ErrAttemptSettled
+}
+
 // MarkChargedNoSale stamps an approved attempt that never became a sale with
 // reason charged_no_sale (ut-docs#7028, ADR-0198 §6.8) so its key can never
 // confirm a payment. The state stays approved. prior is the row before the

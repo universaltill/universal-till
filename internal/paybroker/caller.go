@@ -100,7 +100,8 @@ type AttemptView struct {
 	Provider    string
 	AmountMinor int64
 	Currency    string
-	Pending     bool // the attempt is still open: not settled
+	Pending     bool   // the attempt is still open: not settled
+	PIID        string // the PaymentIntent core recorded for it ("" until created)
 }
 
 var (
@@ -161,6 +162,19 @@ func hostBody(ctx context.Context, provider, op string, plugin []byte) ([]byte, 
 	if !ok || b.Provider != provider {
 		return nil, ErrNoDispatch
 	}
+	// A tap entry's binding carries no PI (the PaymentIntent is created by
+	// core's reader link or the phone shell): read it from core's own attempt
+	// row by the binding's key, never from the plugin's JSON.
+	if b.PI == "" && b.Kind == BindAuthorize && b.AttemptKey != "" && (op == "session_status" || op == "session_cancel") {
+		attemptMu.RLock()
+		lookup := attemptLookup
+		attemptMu.RUnlock()
+		if lookup != nil {
+			if a, found := lookup(ctx, b.AttemptKey); found && a.Provider == provider && a.PIID != "" {
+				b.PI = a.PIID
+			}
+		}
+	}
 	var req map[string]json.RawMessage
 	if len(bytes.TrimSpace(plugin)) > 0 {
 		if err := json.Unmarshal(plugin, &req); err != nil || req == nil {
@@ -187,11 +201,11 @@ func hostBody(ctx context.Context, provider, op string, plugin []byte) ([]byte, 
 	out := map[string]any{}
 	switch op {
 	case "session_status":
-		if b.AttemptKey != "" && b.Kind == BindAuthorize {
-			out["idempotency_key"] = b.AttemptKey
-		}
+		// Exactly one identifier: the cloud refuses a body carrying both.
 		if b.PI != "" {
 			out["payment_intent_id"] = b.PI
+		} else if b.AttemptKey != "" && b.Kind == BindAuthorize {
+			out["idempotency_key"] = b.AttemptKey
 		}
 		if len(out) == 0 {
 			return nil, ErrNoDispatch

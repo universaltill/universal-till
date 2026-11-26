@@ -595,7 +595,7 @@
       "sha256": "f7e7f8548506855a3bd2dbe668c895a6f7febcc9c246d38fb876b422830d3d77"
     },
     "internal/pages/paybroker_target.go": {
-      "sha256": "9c3c1769eb5ea7ce3760cac13a50f5321d51ac6d72757f351fcf6630bf99e404"
+      "sha256": "8ffca00860c84a3473fc924500a3a7f85853fcba8bc7c0eda2975f5a6065472b"
     },
     "internal/pages/payment_leg_journal.go": {
       "sha256": "8047c3fd26fc4667db78898fb38a461f6b97418ff7e019326fc6cd975b5dd50d"
@@ -757,7 +757,7 @@
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
     },
     "internal/pages/tap_gate.go": {
-      "sha256": "0e33aee588d0ee2386e9558e04ec71b180bfbce5e9ce8d22499a2903567c012f"
+      "sha256": "6818ba0e81c2f371e416a0fef011c792f6a8e8c74d320130e70f74d630042633"
     },
     "internal/pages/tap_offering.go": {
       "sha256": "19b5a0259062df28bcb526059a3b5d90742ec31ee2cd9f152d2ccf52abbcf982"

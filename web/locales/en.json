@@ -2032,6 +2032,7 @@
   "pos.toast.item_not_found": "Item not found",
   "pos.toast.payment_outcome_unknown": "The card may have been charged. Tap Pay again to settle it. Do not take another payment.",
   "pos.toast.payment_journal_unavailable": "This till could not record the card payment safely, so it was not taken. Nothing was charged. Try again, or use another method.",
+  "pos.toast.payment_cancelled": "Card payment cancelled. Nothing was charged. The sale is still open.",
   "pos.toast.payment_declined": "Payment declined — try again or choose another method",
   "pos.toast.payment_declined_no_reader": "No card reader is set up on this till. Nothing was charged. Choose another payment method, or ask a manager to set up a card reader.",
   "pos.toast.payment_declined_reader_offline": "The card reader is not connected. Nothing was charged. Check that it is on and online, or choose another payment method.",

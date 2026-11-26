@@ -148,8 +148,9 @@ func TestConfirmTap_RefusesToStoreAnythingButBrandAndLast4(t *testing.T) {
 	}
 }
 
-// The request is built from the attempt row: key from the row, never from
-// the caller; and it goes out as core (session_status).
+// The request is built from the attempt row, never from the caller, and names
+// EXACTLY ONE identifier (the cloud refuses both): the PaymentIntent once the
+// row has it, else the key. It goes out as core (session_status).
 func TestConfirmTap_AsksByTheRowsKeyAndPI(t *testing.T) {
 	seen, stop := broker(t, 200, `{"payment_intent_id":"pi_1","status":"succeeded","amount_received_minor":1250,"currency":"gbp"}`)
 	defer stop()
@@ -159,7 +160,7 @@ func TestConfirmTap_AsksByTheRowsKeyAndPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(*seen) != 1 || !strings.HasPrefix((*seen)[0], "/v1/payments/stripe/session_status ") ||
-		!strings.Contains((*seen)[0], `"idempotency_key":"att-1"`) || !strings.Contains((*seen)[0], `"payment_intent_id":"pi_1"`) {
+		strings.Contains((*seen)[0], `idempotency_key`) || !strings.Contains((*seen)[0], `"payment_intent_id":"pi_1"`) {
 		t.Fatalf("broker request = %v", *seen)
 	}
 	// A different PI in the answer than the one on the row is not this payment.
@@ -217,4 +218,23 @@ func TestConfirmTap_BrokerNotEnrolledIsPending(t *testing.T) {
 	f := openAttempt()
 	_, err := ConfirmTap(context.Background(), f, "att-1")
 	wantPending(t, err, PendingLookupFailed)
+}
+
+func TestBrokerRef_ExactlyOneIdentifier(t *testing.T) {
+	seen, stop := broker(t, 200, `{"payment_intent_id":"pi_1","status":"requires_payment_method","currency":"gbp"}`)
+	defer stop()
+	f := openAttempt()
+	if _, err := TapBrokerStatus(context.Background(), f.row); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains((*seen)[0], `"idempotency_key":"att-1"`) || strings.Contains((*seen)[0], "payment_intent_id") {
+		t.Fatalf("no PI known: %v, want the key only", *seen)
+	}
+	f.row.PIID = "pi_1"
+	if err := TapBrokerCancel(context.Background(), f.row); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains((*seen)[1], `"payment_intent_id":"pi_1"`) || strings.Contains((*seen)[1], "idempotency_key") {
+		t.Fatalf("PI known: %v, want the PI only", *seen)
+	}
 }
