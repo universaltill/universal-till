@@ -1551,6 +1551,27 @@ jobs:
       tag: ${{ needs.prepare.outputs.tag }}
       expected_sha256: ${{ needs.windows-installer.outputs.exe_sha256 }}
 
+  # ut-docs#6407: early-warning Microsoft Store verify once the installer blob
+  # exists (publish-installer first: the verify soaks the blob URL). verify_only
+  # touches no Store, needs no approval. Never gating: a failure here warns and
+  # promote-release.yml re-runs the verify. --ref main: the workflow file must
+  # carry the verify_only input, an older tag does not.
+  msstore-verify-dispatch:
+    needs: [prepare, publish-installer]
+    if: ${{ !cancelled() && needs.publish-installer.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the Microsoft Store verify (no Store call, no approval)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh workflow run msstore-submit.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG" -f dry_run=true -f commit=false -f verify_only=true -f soak_minutes=2 \
+            || echo "::warning::could not dispatch the Microsoft verify for $TAG; promote-release re-runs it"
+
   # Attaches the notarized .dmg to the already-published release (ut-docs#2917)
   # and folds its line into checksums.txt — internal/selfupdate's mac update
   # path (macapp_darwin.go) verifies the .dmg against it before mounting and

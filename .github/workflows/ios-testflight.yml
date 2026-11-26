@@ -1,4 +1,5 @@
 name: ios-testflight
+run-name: ios-testflight ${{ inputs.version }}
 # ut-docs#3069: signs the iOS/iPadOS till app and uploads it to App Store
 # Connect for TestFlight INTERNAL testing (owner + developers, ut-docs#3052:
 # no public TestFlight or App Store release until v1.0). It never submits

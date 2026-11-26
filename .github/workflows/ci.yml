@@ -153,6 +153,13 @@ jobs:
           bash scripts/ci/msstore-verify_test.sh
           bash scripts/ci/msstore-submit_test.sh
           bash scripts/ci/msstore-workflow_test.sh
+          bash scripts/ci/release-msstore-verify_test.sh
+      - name: Store promote-release scripts and workflow (ut-docs#6407)
+        run: |
+          bash scripts/ci/promote-preflight_test.sh
+          bash scripts/ci/promote-stores_test.sh
+          bash scripts/ci/promote-summary_test.sh
+          bash scripts/ci/promote-release-workflow_test.sh
       - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)

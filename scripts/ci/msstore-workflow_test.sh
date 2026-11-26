@@ -17,7 +17,8 @@ verify="$(job verify)"; submit="$(job submit)"
 [ -n "$verify" ] && [ -n "$submit" ] && ok "both jobs exist" || bad "jobs missing"
 # Top level: no ambient permissions.
 grep -qE '^permissions: \{\}$' "$WF" && ok "top-level permissions are empty" || bad "top-level permissions"
-has "$(cat "$WF")" 'workflow_dispatch:' "manual dispatch only"
+has "$(cat "$WF")" 'workflow_dispatch:' "manual dispatch"
+has "$(cat "$WF")" 'workflow_call:' "callable by promote-release.yml"
 hasnt "$(cat "$WF")" 'push:' "no push trigger"
 hasnt "$(cat "$WF")" 'workflow_run' "no workflow_run trigger"
 hasnt "$(cat "$WF")" 'pull_request' "no pull_request trigger"
@@ -50,11 +51,31 @@ hasnt "$submit" 'continue-on-error' "submit cannot be tolerated"
 [ "$(grep -c 'id-token: write' "$WF")" = 1 ] && ok "exactly one job holds OIDC" || bad "id-token count"
 # Triggers: the only key under on: is workflow_dispatch.
 trig="$(awk '/^on:/{on=1;next} on && /^[a-z]/{exit} on && /^  [a-z_]+:/{print $1}' "$WF" | tr -d '\n')"
-[ "$trig" = "workflow_dispatch:" ] && ok "workflow_dispatch is the only trigger" || bad "triggers: $trig"
-# Safe defaults: dry run on, commit off.
+[ "$trig" = "workflow_dispatch:workflow_call:" ] && ok "workflow_dispatch + workflow_call are the only triggers" || bad "triggers: $trig"
 dflt() { awk -v i="      $1:" '$0==i{on=1;next} on && /^      [a-z_]+:/{exit} on && /default:/{print $2; exit}' "$WF"; }
+[ "$(dflt verify_only)" = false ] && ok "verify_only defaults to false" || bad "verify_only default"
+has "$submit" '!inputs.verify_only' "submit is skipped when verify_only"
+hasnt "$(cat "$WF")" 'secrets: inherit' "no secrets: inherit"
+hasnt "$(grep -E '^\s+secrets:' "$WF")" 'secrets' "no secrets pass-through block"
+# Safe defaults: dry run on, commit off.
 [ "$(dflt dry_run)" = true ] && ok "dry_run defaults to true" || bad "dry_run default"
 [ "$(dflt commit)" = false ] && ok "commit defaults to false" || bad "commit default"
+# The same defaults on the workflow_call trigger (dflt reads the first block only).
+cdflt() { awk -v i="      $1:" '/^  workflow_call:/{c=1;next} c && $0==i{on=1;next} on && /^      [a-z_]+:/{exit} on && /default:/{print $2; exit}' "$WF"; }
+[ "$(cdflt dry_run)" = true ] && ok "workflow_call dry_run defaults to true" || bad "workflow_call dry_run default"
+[ "$(cdflt commit)" = false ] && ok "workflow_call commit defaults to false" || bad "workflow_call commit default"
+[ "$(cdflt verify_only)" = false ] && ok "workflow_call verify_only defaults to false" || bad "workflow_call verify_only default"
+# Direct dispatch cannot skip the gates: preflight in verify and again after the approval.
+[ "$(grep -c 'promote-preflight.sh' "$WF")" = 2 ] && ok "promote-preflight.sh runs in verify and in submit (post-approval)" || bad "preflight wiring"
+has "$submit" 'promote-preflight.sh' "submit re-checks the gates after the approval"
+hasnt "$(awk '/^concurrency:/{f=1} f' <<<"$(sed -n '1,/^jobs:/p' "$WF")")" 'concurrency:' "no workflow-level concurrency (a parked approval must not block a verify)"
+has "$submit" 'group: msstore-submit-' "submit serialised per tag"
+# Main-ref check inside the workflow, in the verify job, before anything else.
+first="$(awk '/^    steps:/{on=1;next} on && /- name:/{print; exit}' <<<"$verify")"
+has "$first" 'Store-reaching runs only from main' "first verify step is the main-ref check"
+has "$verify" 'if: ${{ !inputs.verify_only }}' "main-ref check skipped only for verify_only"
+has "$verify" '[ "$REF" = "refs/heads/main" ]' "main-ref check compares to refs/heads/main"
+has "$verify" 'REF: ${{ github.ref }}' "ref reaches the check through env"
 has "$submit" 'environment: msstore-submit' "submit runs in the msstore-submit environment"
 has "$submit" 'id-token: write' "submit has job-scoped OIDC"
 has "$submit" 'vars.AZURE_MSSTORE_CLIENT_ID' "federated client id variable"
@@ -64,8 +85,9 @@ has "$submit" 'allow-no-subscriptions: true' "no subscription needed"
 has "$submit" 'msstore-submit.sh' "submit goes through msstore-submit.sh"
 hasnt "$submit" 'client-secret' "no client secret"
 hasnt "${submit//secrets.GITHUB_TOKEN/}" 'secrets.' "no repository secret beyond the job token"
-# No opening marker before the owner's card.
-hasnt "$(grep -v '^ *#' "$WF")" 'store-release:allow' "no store-release:allow marker before ut-docs#6408"
+# The owner opened the Microsoft Store (ut-docs#6408): marker + opening file.
+grep -qE 'store-release:allow ut-docs#6408( |$)' "$WF" && ok "workflow carries the store-release:allow ut-docs#6408 marker" || bad "marker missing"
+[ "$(cat store-release/microsoft.opened 2>/dev/null)" = "ut-docs#6408" ] && ok "store-release/microsoft.opened names ut-docs#6408" || bad "opening file"
 # Third-party actions pinned by full SHA (actions/* first-party tags as release.yml).
 while IFS= read -r l; do
   a="${l#*uses: }"; a="${a%% *}"
@@ -80,5 +102,11 @@ a="$(grep -E '^MS_ROOT_SHA256=' packaging/windows/setup-signing.sh)"; b="$(grep 
 for v in UT_MSSTORE_TEST SIGN_EXE SOAK_CMD SILENT_CMD SIG_VERIFY_CMD INSTALLER_NSI MSSTORE_SOAK_ALLOW_HTTP MSSTORE_ROOT; do
   ! grep -qwF -- "$v" "$WF" && ok "msstore-submit.yml never sets $v" || bad "msstore-submit.yml names the test override $v"
 done
+# The blob the Store fetches is the one publish-installer uploads: no drift.
+base="$(sed -n 's/^INSTALLER_BASE=//p' scripts/ci/msstore-submit.endpoints)"
+acct="$(sed -n 's/^ *STORAGE_ACCOUNT: *//p' .github/workflows/publish-installer.yml | sed -n 1p)"
+cont="$(sed -n 's/^container="${CONTAINER:-\(.*\)}"$/\1/p' scripts/ci/publish-installer.sh)"
+[ -n "$acct" ] && [ -n "$cont" ] && [ "$base" = "https://${acct}.blob.core.windows.net/${cont}" ] && ok "INSTALLER_BASE equals publish-installer account/container" || bad "INSTALLER_BASE drifted from publish-installer ($base vs $acct/$cont)"
+grep -qF 'blob="windows/v${ver}/${asset}"' scripts/ci/publish-installer.sh && ok "blob path layout windows/vX.Y.Z/<asset> unchanged" || bad "publish-installer blob layout changed"
 [ "$fails" = 0 ] || { echo "msstore-workflow_test: $fails failure(s)" >&2; exit 1; }
 echo "✓ msstore-workflow_test: all cases passed"

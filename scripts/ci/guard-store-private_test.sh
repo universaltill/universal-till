@@ -295,6 +295,13 @@ expect_fail msstore-submit-switch "an opening file without the workflow marker"
 printf '%s\n' 'name: s' 'on: workflow_dispatch' 'jobs:' '  submit:' '    runs-on: ubuntu-latest' '    steps:' '      - run: bash scripts/ci/msstore-submit.sh # store-release:allow ut-docs#6408' >"${REPO}/.github/workflows/msstore-submit.yml"
 expect_pass "an opening file with its card marker in the workflow"
 
+printf '%s\n' 'name: s' '# store-release:allow ut-docs#6408 owner opened the Microsoft Store (order 2026-11-26)' 'on: workflow_dispatch' >"${REPO}/.github/workflows/msstore-submit.yml"
+expect_pass "the opening file with the marker as a workflow comment (the real form)"
+printf '%s\n' 'name: s' '# store-release:allow ut-docs#9999 some other card' 'on: workflow_dispatch' >"${REPO}/.github/workflows/msstore-submit.yml"
+expect_fail msstore-submit-switch "a marker for another card does not open ut-docs#6408"
+printf '%s\n' 'name: s' '# store-release:allow ut-docs#64081 prefix of another card' >"${REPO}/.github/workflows/msstore-submit.yml"
+expect_fail msstore-submit-switch "a marker for a longer card number does not match"
+
 # --- Real tree ---------------------------------------------------------------
 if bash "${GUARD}" >"${WORK}/out" 2>&1; then
   echo "✓ guard passes on the real tree"
