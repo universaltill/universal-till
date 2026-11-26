@@ -62,6 +62,9 @@ under it; GET and POST share `refundLegsFor`; e2e seed paths from `UT_DATA_DIR`.
 Pre-flight: help topic updated (sell.md, payments.md); docs-shots deferred → ut-docs#7105
 (no refund screenshot existed); reference page updated (ut-docs payment-provider-contract.md);
 README n/a (no stale text); en.json keys → en.meta.json updated; review record this file;
-follow-ups filed (#7104, #7105).
+follow-ups filed (#7104, #7105). CI `guard-docs-shots`: `make docs-shots` re-run; only
+`manifest.json` committed (sell topic hash + the two surface files). No existing
+shot shows the refund page and step 6 is not in a `sell` shot; the PNGs this
+container re-rendered differed only by environment noise, so they were not committed.
 
 Verdict: ship after fixes — fixes applied.
