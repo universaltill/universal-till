@@ -8546,3 +8546,10 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .pay-attn-reason input { flex: none; margin: 0; }
 .pay-attn-choices { display: flex; flex-direction: column; gap: .6rem; }
 .pay-attn-q { margin: 0; font-weight: 600; }
+
+/* ut-docs#3428: scanned pairing code on the join forms. The code is a long
+   base64url string: keep it on one truncated line (never a wall of text) and
+   read left-to-right in RTL. The chip and Clear wrap on narrow screens. */
+.join-scanned { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
+.join-scanned[hidden] { display: none; }
+input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
