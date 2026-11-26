@@ -104,13 +104,6 @@ func (s *approvalStore) consume(tok, binding string) bool {
 	return true
 }
 
-// reset drops every approval (tests simulate a restart with it).
-func (s *approvalStore) reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m = map[string]approvalEntry{}
-}
-
 // approvalBinding is the canonical, length-prefixed join of everything the
 // prompt summarised and the retry will apply. fields are the prompt's hidden
 // fields (canonical computed values, never raw form text); extra carries

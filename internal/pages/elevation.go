@@ -119,29 +119,8 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 	return verifyElevationPIN(dp, r, actorID, pin, action)
 }
 
-// checkOrElevateAll is checkOrElevate for a request that needs several
-// actions at once (ut-docs#5416: one post that both lowers a line's qty and
-// raises its discount). allowed only if the session holds EVERY action;
-// otherwise ONE PIN verification, whose approver must hold every action too
-// (errApproverInsufficientRole if any is missing). The PIN is checked once,
-// so a wrong PIN counts one failed attempt toward the shared lockout, not one
-// per action.
-func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...string) elevationCheck {
-	actorID := getSessionUserID(r)
-	all := true
-	for _, a := range actions {
-		if !canPerform(dp, r, a) {
-			all = false
-			break
-		}
-	}
-	if all {
-		return elevationCheck{Outcome: allowed, ActorID: actorID}
-	}
-	return verifyElevationPIN(dp, r, actorID, pin, actions...)
-}
-
-// checkOrElevateBound is checkOrElevateAll whose PIN only counts for the
+// checkOrElevateBound checks the session holds every action, else the
+// manager PIN, and the PIN only counts for the
 // exact request the prompt summarised (ut-docs#7085). binding is the
 // approvalBinding of the values the caller computed from THIS request; the
 // returned token (non-empty when Outcome == needsElevation) must be rendered
