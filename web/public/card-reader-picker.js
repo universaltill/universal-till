@@ -221,8 +221,14 @@
       var msg = live ? live.getAttribute('data-declined') : '';
       setExternal(false);
       closePanel();
-      var lastLive = byId('pos-live') || document.querySelector('[role="status"]');
-      if (lastLive && msg) { lastLive.textContent = ''; window.setTimeout(function () { lastLive.textContent = msg; }, 30); }
+      // Own always-present live region in the pay panel (outside the mount that
+      // closePanel() empties); visible, so the cashier sees it too.
+      var payLive = byId('pay-live');
+      if (payLive && msg) {
+        payLive.hidden = true; payLive.textContent = '';
+        window.setTimeout(function () { payLive.textContent = msg; payLive.hidden = false; }, 30);
+        window.setTimeout(function () { payLive.hidden = true; }, 8000);
+      }
     }
   });
 
@@ -303,7 +309,12 @@
         if (ab && at && at.textContent === (ab.dataset.msgServer || '')) ab.hidden = true;
         var eb = byId('card-reader-external-error');
         if (eb) { eb.textContent = em; eb.hidden = false; }
-        say(em);
+        var ac = el.querySelector('[name="auth_code"]'), l4 = el.querySelector('[name="last4"]');
+        var badAuth = ac && !/^[A-Za-z0-9]{0,12}$/.test(ac.value.trim());
+        if (ac) ac.setAttribute('aria-invalid', badAuth ? 'true' : 'false');
+        if (l4) l4.setAttribute('aria-invalid', !badAuth ? 'true' : 'false');
+        var bad = badAuth ? ac : l4;
+        if (bad && bad.focus) bad.focus();
         return;
       }
     }

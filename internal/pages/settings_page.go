@@ -593,6 +593,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			scale = 1
 		}
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
+		payMethods = withoutExternalCardMethod(payMethods) // ut-docs#6755: no grid button, so no default/fee rule
 		payDefault, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
 		type feeRow struct {
 			ID, Name   string

@@ -128,19 +128,48 @@ func TestExternalTender_FieldsIgnoredForOtherMethods(t *testing.T) {
 	}
 }
 
-func TestExternalTender_SplitJSONCashPlusExternal(t *testing.T) {
+// ut-docs#6755 review F3: a JSON/split leg cannot do the Paid/Declined step, so
+// it is refused (4xx) even when exactly one external row would be auto-picked.
+func TestExternalTender_SplitJSONRefusesExternalLeg(t *testing.T) {
 	mux, dp := readerRig(t)
 	ext := addExternal(t, data.NewCardReaderRepo(dp.Db), "Counter")
 	scan(t, dp)
-	rec := postTender(t, mux, tenderBody(leg("cash", 50, ""), leg("card_external", 70, ext.ID)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("split = %d %s", rec.Code, rec.Body.String())
+	for _, reader := range []string{"", ext.ID} {
+		rec := postTender(t, mux, tenderBody(leg("cash", 50, ""), leg("card_external", 70, reader)))
+		if rec.Code < 400 || rec.Code >= 500 {
+			t.Fatalf("split with external leg (reader %q) = %d %s", reader, rec.Code, rec.Body.String())
+		}
 	}
-	if n := countRows(t, dp, `SELECT COUNT(*) FROM payments WHERE method_id IN ('cash','card_external')`); n != 2 {
-		t.Fatalf("legs = %d", n)
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM payments`); n != 0 {
+		t.Fatalf("payments recorded: %d", n)
 	}
-	if n := countRows(t, dp, `SELECT COUNT(*) FROM payments WHERE method_id='card_external' AND terminal_id='`+ext.ReaderRef+`'`); n != 1 {
-		t.Fatal("external leg must carry the row ref")
+}
+
+func TestExternalTender_NotOfferedInSplitOrSettingsLists(t *testing.T) {
+	in := []data.PaymentMethod{{ID: "cash"}, {ID: "card_external"}, {ID: "card"}}
+	got := withoutExternalCardMethod(in)
+	if len(got) != 2 || got[0].ID != "cash" || got[1].ID != "card" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(in) != 3 {
+		t.Fatal("input mutated")
+	}
+}
+
+func TestReaderEligible_ExternalFailsClosedOnMethod(t *testing.T) {
+	ok := data.CardReader{Kind: data.CardReaderKindExternal, Transport: data.CardReaderTransportNone, MethodKey: data.PaymentMethodCardExternal}
+	if !readerEligible(ok, readerSourcePOS) {
+		t.Fatal("external+card_external must be eligible on the till")
+	}
+	bad := ok
+	bad.MethodKey = "sumup"
+	if readerEligible(bad, readerSourcePOS) {
+		t.Fatal("external kind with a plugin method must be refused")
+	}
+	other := ok
+	other.Kind, other.Transport = data.CardReaderKindCloud, data.CardReaderTransportInternet
+	if readerEligible(other, readerSourcePOS) {
+		t.Fatal("card_external with a non-external kind must be refused")
 	}
 }
 

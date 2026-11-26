@@ -8441,7 +8441,7 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .card-reader-external { flex: 1 1 100%; display: grid; gap: .6rem; text-align: start; }
 .card-reader-external[hidden] { display: none; }
 .card-reader-external label { display: grid; gap: .25rem; }
-.card-reader-external input { min-block-size: 44px; }
+.card-reader-external input { min-block-size: 48px; }
 /* Settings page */
 .card-reader-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
                             padding-block: .6rem; border-block-end: 1px solid var(--border); }

@@ -1184,6 +1184,12 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatMoneyDisplay(cents, locale)
 	}
+	// {{ printfBDI (T "key") (money .Total) }}: like printf for ONE %s, with
+	// both parts HTML-escaped and the argument isolated in <bdi>, so an amount
+	// cannot reorder inside RTL text (ut-docs#6755).
+	funcs["printfBDI"] = func(format, arg string) template.HTML {
+		return template.HTML(fmt.Sprintf(template.HTMLEscapeString(format), "<bdi>"+template.HTMLEscapeString(arg)+"</bdi>"))
+	}
 	// {{ moneyIn .Total .Currency }}: an amount that carries its own ISO 4217
 	// code (a channel order placed in another currency than the till's),
 	// formatted by that code's minor unit and symbol (ut-docs#4768).

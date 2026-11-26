@@ -43,7 +43,7 @@
   <div id="card-reader-live" class="card-reader-live" aria-live="polite" role="status"
        data-announce="{{ T "card_reader.announce.changed" }}" data-auto-announce="{{ T "card_reader.pick.auto" }}"
        data-declined="{{ T "card_reader.external.declined_notice" }}"></div>
-  <form id="card-reader-form" class="card-reader-actions" hx-post="/api/pos/tender" hx-include="#offline-flag"
+  <form id="card-reader-form" class="card-reader-actions" novalidate hx-post="/api/pos/tender" hx-include="#offline-flag"
         hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
         data-after-request="ok no-error-toast close:payment-overlay">
     <input type="hidden" name="amount" value="0">
@@ -53,13 +53,13 @@
     {{/* ut-docs#6755: the shop's own terminal. Shown (and its inputs enabled)
          only while an external row is selected; Paid is the Confirm button. */}}
     <div id="card-reader-external" class="card-reader-external" data-testid="card-reader-external" hidden>
-      <p class="card-reader-external-prompt">{{ printf (T "card_reader.external.prompt") (money .Total) }}</p>
+      <p class="card-reader-external-prompt">{{ printfBDI (T "card_reader.external.prompt") (money .Total) }}</p>
       <label>{{ T "card_reader.external.auth_code" }}
-        <input type="text" name="auth_code" maxlength="12" pattern="[A-Za-z0-9]{0,12}" autocomplete="off" spellcheck="false" dir="ltr" disabled
+        <input type="text" name="auth_code" aria-describedby="card-reader-external-error" maxlength="12" pattern="[A-Za-z0-9]{0,12}" autocomplete="off" spellcheck="false" dir="ltr" disabled
                {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}>
       </label>
       <label>{{ T "card_reader.external.last4" }}
-        <input type="text" name="last4" {{ if ne (oskmode) "off" }}inputmode="none" {{ else }}inputmode="numeric" {{ end }}maxlength="4" pattern="[0-9]{4}" autocomplete="off" dir="ltr" disabled>
+        <input type="text" name="last4" aria-describedby="card-reader-external-error" {{ if ne (oskmode) "off" }}inputmode="none" {{ else }}inputmode="numeric" {{ end }}maxlength="4" pattern="[0-9]{4}" autocomplete="off" dir="ltr" disabled>
       </label>
       <p id="card-reader-external-error" class="error" role="alert" data-testid="card-reader-external-error" hidden></p>
       <button type="button" id="card-reader-external-declined" class="btn danger" data-testid="card-reader-external-declined">{{ T "card_reader.external.declined" }}</button>

@@ -98,6 +98,11 @@ func readerEligible(c data.CardReader, source string) bool {
 		// till's, never any other surface's (ADR-0198 amendment 2026-11-25).
 		return source == readerSourceAdditional
 	}
+	// ut-docs#6755 F5: the external kind and the card_external method go
+	// together or not at all (fail closed on a row written some other way).
+	if (c.Kind == data.CardReaderKindExternal) != (c.MethodKey == data.PaymentMethodCardExternal) {
+		return false
+	}
 	switch c.Kind {
 	case data.CardReaderKindSDK:
 		return false
@@ -244,4 +249,18 @@ func readerStateQuerier(d *common.Deps) cardreaders.Querier {
 		}
 		return resp, nil
 	}
+}
+
+// withoutExternalCardMethod drops the built-in card_external method from a
+// list that must not offer it: the self-order kiosk, the Split select and the
+// settings default-method/fee lists (ut-docs#6755). It is only ever tendered
+// from the cashier's pay panel, through its registry row. Returns a copy.
+func withoutExternalCardMethod(methods []data.PaymentMethod) []data.PaymentMethod {
+	out := make([]data.PaymentMethod, 0, len(methods))
+	for _, m := range methods {
+		if m.ID != data.PaymentMethodCardExternal {
+			out = append(out, m)
+		}
+	}
+	return out
 }

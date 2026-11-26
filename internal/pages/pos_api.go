@@ -2998,6 +2998,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
+			// ut-docs#6755: the own-terminal tender needs the Paid/Declined
+			// step of the pay panel's form; a JSON/split leg has none, so it
+			// is refused rather than auto-picked.
+			if p.Method == data.PaymentMethodCardExternal {
+				http.Error(w, "card_external is tendered from the pay panel only", http.StatusBadRequest)
+				return
+			}
 			// ut-docs#1764 (independent review): pos.CompleteSale's
 			// netPayments already rejects change > amount as invalid
 			// (internal/pos/sales.go), but that check runs AFTER this
