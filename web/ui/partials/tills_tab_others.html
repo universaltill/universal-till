@@ -44,7 +44,7 @@
   <tbody>
   {{ range .Rows }}
   <tr id="till-row-{{ .ID }}" data-till-id="{{ .ID }}" data-state="{{ .State }}"{{ if .IsSelf }} data-self="1"{{ end }}>
-    <td>{{ .Name }}{{ if .IsSelf }} <span class="tag">{{ T "tills.this_till_tag" }}</span>{{ end }}</td>
+    <td>{{ .Name }}{{ if .IsSelf }} <span class="tag">{{ T "settings.tills.role_label" }}</span>{{ end }}</td>
     <td>{{ if eq .Role "main" }}{{ T "tills.role.main" }}{{ else if eq .Role "satellite" }}{{ T "tills.role.satellite" }}{{ else if .Role }}{{ T "tills.role.replica" }}{{ else }}—{{ end }}</td>
     <td>
       {{ if eq .State "local_only" }}<span class="tag warn">{{ T "tills.list.state.local_only" }}</span>

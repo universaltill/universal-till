@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -339,15 +337,6 @@ func tillsTabFromRequest(r *http.Request) string {
 		return t
 	}
 	return "this"
-}
-
-// tillsTabURL builds /tills?tab=… for redirects.
-func tillsTabURL(tab, fragment string) string {
-	u := "/tills?tab=" + url.QueryEscape(tab)
-	if fragment != "" {
-		u += "#" + strings.TrimPrefix(fragment, "#")
-	}
-	return u
 }
 
 // tillsSentence is the one sentence the This till tab opens with.

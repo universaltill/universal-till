@@ -3,13 +3,13 @@
      works without JS; HTMX swaps just the panel (GET /ui/tills/tab/{id}) and
      the tab bar out of band. Each tab is its own partial. */}}
 <div class="page-head">
-  <h1>{{ T "tills.page_title" }}</h1>
+  <h1>{{ T "settings.cat.devices.label" }}</h1>
   <a class="btn secondary" href="/settings"><span class="back-arrow" aria-hidden="true">←</span> {{ T "settings.title" }}</a>
 </div>
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
 <div class="tills-page" data-testid="tills-page">
 {{ template "tills_nav.html" . }}
-<div id="tills-tab" class="tills-panel" role="tabpanel" aria-label="{{ T "tills.page_title" }}" tabindex="-1">
+<div id="tills-tab" class="tills-panel" role="tabpanel" aria-label="{{ T "settings.cat.devices.label" }}" tabindex="-1">
 {{ template "tills_tab_body.html" . }}
 </div>
 </div>

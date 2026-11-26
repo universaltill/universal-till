@@ -2,7 +2,7 @@
      that explains any trouble, its name and register, its shop account. The
      name and register forms post to the same endpoints Settings uses
      (elevation-wired there, unchanged). */}}
-<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.this" }}</h2>
+<h2 tabindex="-1" data-tills-heading>{{ T "settings.tills.role_label" }}</h2>
 <div class="card" data-testid="tills-this-status">
   <p class="tills-sentence"><span class="dot{{ if or .MainUnreachable .IsReplaced }} warn{{ end }}" aria-hidden="true"></span> <span data-testid="tills-this-sentence">{{ .ThisSentence }}</span></p>
   {{ if .MainTillAddr }}<p class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</p>{{ end }}
