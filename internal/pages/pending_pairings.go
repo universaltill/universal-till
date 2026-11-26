@@ -50,18 +50,33 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			DeviceName       string
 			VerificationCode string
 			RequestedRole    string // ut-docs#2781: preselects the card's role select
+			// ut-docs#7057: the name is already enrolled here. Approving
+			// replaces that enrolment, unless the enrolled till of that
+			// name is live right now (a different device): NameInUse.
+			AlreadyEnrolled bool
+			NameInUse       bool
 		}
+		tillsRepo := data.NewTillsRepo(d.Db)
+		now := time.Now()
 		rows := make([]row, 0, len(list))
 		for _, p := range list {
 			if p.RequestedRole == data.TillRoleCardReader {
 				continue // ut-docs#6538: reader requests have their own card
 			}
-			rows = append(rows, row{
+			rw := row{
 				ID:               p.ID,
 				DeviceName:       p.DeviceName,
 				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID, p.ServedPin),
 				RequestedRole:    p.RequestedRole,
-			})
+			}
+			if existing, same, terr := tillsRepo.TillByName(r.Context(), p.DeviceName); terr == nil && same {
+				if existing.SeenWithin(now, replaceLiveWindow) {
+					rw.NameInUse = true
+				} else {
+					rw.AlreadyEnrolled = true
+				}
+			}
+			rows = append(rows, rw)
 		}
 		httpx.RenderPartial("ui/partials/pending_pairings.html", map[string]any{"Pending": rows})(w, r)
 	})

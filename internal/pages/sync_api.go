@@ -532,6 +532,10 @@ func refusePlainSyncWhenClosed(w http.ResponseWriter, r *http.Request, repo *dat
 	return true
 }
 
+// replaceLiveWindow is how recently a till must have been seen for a pair
+// request with its name to count as a different live device (ut-docs#7057).
+const replaceLiveWindow = 24 * time.Hour
+
 // plainClosureRefusedWarned and plainClosureCheckFailedWarned make
 // refusePlainSyncWhenClosed log its first refusal, and a failing closure
 // check, once per process: a peer retrying every few seconds (or a broken
@@ -559,33 +563,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
-		// The roster (names, last seen and — on a main till — each till's
-		// live link, ut-docs#2742) is shared with GET /ui/tills/roster,
-		// which the page polls; tills_roster.go has the details.
-		m, err := tillsRosterData(r.Context(), d, w, r)
+		m, err := tillsPageData(w, r, d, tillsTabFromRequest(r))
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
 			return
 		}
-		// ut-docs#2722: the main till has stopped answering this replica —
-		// the same view as the status-bar chip that links here (#2742).
-		lv := replicaLinkView(r.Context(), d)
 		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
 		m["theme"] = d.ResolvedTheme(r)
 		m["menuItems"] = d.MenuSnapshot()
-		m["MainUnreachable"] = lv.State == linkUnreachable
-		m["MainUnreachableSince"] = lv.Since
-		// ut-docs#5162: a restored copy has no bearer; the chip says "join
-		// again" and so does this page (never both with the notice above).
-		m["NeedsRejoin"] = lv.State == linkRejoin
-		// ut-docs#4507: joining replaces this till's sales too — the join
-		// section warns and asks for a confirm (same as the join notice).
-		m["HasSales"] = hasSalesHistory(r.Context(), d)
-		// ut-docs#5058 UT-5: a joined till's re-join sends these first.
-		if isJoinedTill(r.Context(), d) {
-			m["IsJoinedTill"] = true
-			m["UnsentSales"] = countUnsentSales(r.Context(), d)
-		}
 		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
@@ -763,6 +748,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				writeSatelliteRefusal(w)
 				return
 			}
+			// A replace keeps the enrolled till's own role (ut-docs#7057): a
+			// satellite's name over plain HTTP would hand it a bearer in clear.
+			if ex, same, terr := repo.TillByName(r.Context(), strings.TrimSpace(in.Name)); terr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", terr)
+				return
+			} else if same && ex.Role == data.TillRoleSatellite {
+				writeSatelliteRefusal(w)
+				return
+			}
 		}
 		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
 		// rate-limited per source and spends the shop-wide failure budget;
@@ -800,11 +794,31 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// real machine-to-machine call (no cookie, no query) the two are
 		// already identical, so this changes no legitimate flow.
 		primaryName := tillNameOrDefault(r.Context(), d, httpx.DefaultLocale())
-		nameTaken, err := repo.NameTaken(r.Context(), name)
+		// ut-docs#7057 (ADR-0033 amended): a name already enrolled from a
+		// till that has not been seen lately is the same till coming back
+		// (new device, restored copy): its enrolment is replaced, not
+		// refused. A till seen within replaceLiveWindow is a different live
+		// device and still gets name_taken.
+		existing, sameName, err := repo.TillByName(r.Context(), name)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
+		replaceID := ""
+		if sameName && !strings.EqualFold(name, primaryName) && !existing.SeenWithin(time.Now(), replaceLiveWindow) {
+			// Only a manager's approval of THIS name unlocks a replace: a typed
+			// code, or a token approved for another device name, never does.
+			approvedName, approved, aerr := pairingRepo.NameForToken(r.Context(), presented)
+			if aerr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", aerr)
+				return
+			}
+			if approved && strings.EqualFold(strings.TrimSpace(approvedName), name) {
+				replaceID = existing.ID
+				sameName = false
+			}
+		}
+		nameTaken := sameName
 		if strings.EqualFold(name, primaryName) || nameTaken {
 			common.LogAndLocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.name_taken", "sync_api",
 				fmt.Errorf("till name %q already in use", name))
@@ -826,7 +840,25 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// 2, and a number once granted is never granted to another till
 		// (revoked, withdrawn or promoted tills included). A re-joining till
 		// keeps its own when it is free (ut-docs#5058 UT-5).
-		tillID, tillNo, tillPrefix, err := repo.EnrolTillPrefix(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
+		var tillID, tillPrefix string
+		var tillNo int
+		if replaceID != "" {
+			tillID = replaceID
+			// The role stays the enrolled till's own (a satellite keeps its
+			// TLS-only rule); a role change is the Change role action.
+			role = existing.Role
+			if err = repo.ReplaceEnrolment(r.Context(), replaceID, hashBearer(bearer), role, time.Now().Add(-replaceLiveWindow)); err == nil {
+				tillPrefix, err = repo.ReceiptPrefixOf(r.Context(), replaceID)
+				tillNo = data.TillNumberOfPrefix(tillPrefix)
+			}
+		} else {
+			tillID, tillNo, tillPrefix, err = repo.EnrolTillPrefix(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
+		}
+		if errors.Is(err, data.ErrTillStillLive) {
+			// It came back between the look and the write: a different live device.
+			common.LogAndLocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.name_taken", "sync_api", err)
+			return
+		}
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -869,13 +901,18 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// register_id degrades gracefully to exactly the pre-#894 behaviour —
 		// completeJoin/ApplyReplicaIdentity already treat "" as "older
 		// primary, no register sent" and fall back to manual assignment.
-		registerID, registerName, err := posRepo.CreateRegisterForEnrolment(r.Context(), name)
-		if err != nil {
+		var registerID, registerName string
+		if replaceID != "" {
+			// A replaced enrolment keeps its register (ut-docs#7057).
+			registerID, _ = posRepo.EnrolledRegisterID(r.Context(), tillID)
+		} else if registerID, registerName, err = posRepo.CreateRegisterForEnrolment(r.Context(), name); err != nil {
 			logging.L().Errorf("auto-provision register for enrolling till %s: %v", tillID, err)
 			registerID, registerName = "", ""
 		}
+		// Same action for a replace, so EnrolledRegisterID keeps working;
+		// the payload says it was one.
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role,
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role, "replaced": replaceID != "",
 				// ut-docs#5074: which number it got, and whether it was the
 				// one it asked for (a re-join), so a reclaimed number shows.
 				"till_no": tillNo, "requested_prefix": in.ReceiptPrefix},
@@ -892,6 +929,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				"receipt_prefix": tillPrefix,
 				"register_id":    registerID,
 				"role":           role,
+				"replaced":       replaceID != "",
 			},
 			"error": nil,
 		})

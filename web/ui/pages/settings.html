@@ -88,8 +88,7 @@
 <span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-select-oob="#settings-privacy" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
-  {{/* ut-docs#6955: who on the network may reach this till (managers only; the fragment 403s otherwise). */}}
-  <div hx-get="/ui/settings/lan-access" hx-trigger="load" hx-swap="innerHTML"></div>
+  {{/* ut-docs#6955 / ut-docs#7057: "other devices on this network" moved to Tills & devices, Settings tab. */}}
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
        subscription is stale or lapsed — explained in place, nothing hidden.
        A registered till with cloud sync off (ADR-0148) already says so below
@@ -2336,74 +2335,21 @@
 })();
 </script>
 {{ end }}
-<!-- ut-docs#867: till-name and till-register are elevation-wired — the card
-     renders for every session. -->
+<!-- ut-docs#7057: this till's name, register, role, the tills list, pairing
+     and the network settings moved to the one Tills & devices page (/tills).
+     The card stays as the way in, and a link to #settings-tills lands on
+     /tills?tab=this (script below). -->
 <div class="card" id="settings-tills">
-  <h2>🔗 {{ T "tills.title" }}</h2>
-  <!-- ut-docs#2782: which kind of till this is, and (on a joined till) the
-       main till it follows. -->
+  <h2>🔗 {{ T "settings.cat.devices.label" }}</h2>
   <p id="settings-till-role"><strong>{{ T "settings.tills.role_label" }}: {{ T .TillRoleKey }}</strong>
     {{ if .MainTillAddr }}<br><span class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</span>{{ end }}</p>
-  <!-- This till's own name, on every till (ut-docs#3292): the main till
-       saves till.name; a joined till saves its own per-till sync.till_name,
-       never till.name (which there holds the main till's name). -->
-  <!-- ut-docs#796: same Content-Type reload guard as the report-retention
-       form above — a 200 elevation prompt (text/html) must not trigger the
-       success refresh, which would destroy the just-opened dialog; the real
-       success is a bare 204 with no Content-Type. -->
-  <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-saved-msg="#till-name-msg">
-  <!-- ut-docs#3308: a name another till in the shop uses comes back 422
-       with its translated reason, shown inline like the retention form's 409. -->
-  <form hx-post="/api/settings/till-name" hx-swap="none"
-        data-after-request="ok not-html refresh-region; status:422 text-response:till-name-msg; fail not-status:422 save-error:settings-save-error">
-    <label>{{ T "settings.tills.name_label" }}
-      <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
-    </label>
-    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-    <!-- Exists purely as the elevation dialog retry's hx-target (see the
-         report-retention form's identical span). -->
-    <span id="till-name-msg" aria-live="polite"></span>
-  </form>
-  </div>
-  <!-- This till's register identity (ut-docs#268): which register's shift a
-       payout (e.g. Pfandrückgabe) lands on. Like the till-name field above,
-       this renders on primary AND replica — every till processes its own
-       local payouts, so its register identity matters everywhere. -->
-  <div id="settings-till-register-region" data-ut-refresh="#settings-till-register-region" data-ut-saved-msg="#till-register-msg">
-  <form hx-post="/api/settings/till-register" hx-swap="none"
-        data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
-    <label>{{ T "settings.tills.register_label" }}
-      <select name="register_id" required>
-        {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
-        {{ range .registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
-      </select>
-    </label>
-    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-    <span id="till-register-msg" aria-live="polite"></span>
-    <p class="muted">{{ T "settings.tills.register_help" }}
-      {{ if .CanManageRegisters }}<a href="/registers">{{ T "registers.title" }}</a>{{ end }}</p>
-  </form>
-  </div>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
-  {{ if .ShowQuarantineSection }}
-  <!-- ut-docs#1133 (ADR-0065 follow-up): a quarantined LAN-sync journal
-       entry is a primary-only concept (see registerSyncQuarantinePage's
-       doc comment) -- shown only on the primary, same guard as the
-       till-name field above. Also hidden entirely on a single-till shop
-       that has never enrolled a replica (ShowQuarantineSection is false
-       there): it cannot structurally have a quarantine row yet, and
-       showing the button anyway is premature noise (independent review,
-       2026-08-26) -- ShowQuarantineSection stays true once QuarantineCount
-       is nonzero even after every replica is later revoked, so the
-       section never disappears while there's something real to see. -->
-  <p class="muted" style="margin-top:.6rem">
-    {{ T "sync.quarantine_settings_help" }}
-    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ if eq .QuarantineCount 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}</strong>{{ end }}
-  </p>
-  <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
-  {{ end }}
 </div>
+<script>
+// ut-docs#7057: the old Tills card moved to /tills; a hash cannot reach the server.
+if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); }
+</script>
 <!-- ut-docs#866: invoice seller identity is elevation-wired — the card
      renders for every session (server-side checkOrElevate is the real
      gate). -->

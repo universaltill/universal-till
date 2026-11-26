@@ -16,7 +16,7 @@ test('settings: a till name already in use is refused inline', async ({ page }) 
     status: 422, contentType: 'text/plain; charset=utf-8', headers: { 'X-UT-Response': 'refused' }, body: reason + '\n',
   }));
   const alertHiddenAfter = await recordAlertAfterRequest(page, '/api/settings/till-name');
-  await page.goto('/settings?lang=en#settings-tills');
+  await page.goto('/tills?lang=en&tab=this');
   const tn = page.locator('#settings-till-name-region');
   await tn.locator('input[name="name"]').fill('Terrace 3308');
   await Promise.all([

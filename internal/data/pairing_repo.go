@@ -259,6 +259,27 @@ WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
 	return role, true, nil
 }
 
+// NameForToken returns the device name a manager approved for this enrolment
+// token (ut-docs#7057): the name the approval card showed. ok is false for a
+// token that no approved, unexpired request carries (a typed pairing code, an
+// expired approval).
+func (r *PairingRepo) NameForToken(ctx context.Context, token string) (name string, ok bool, err error) {
+	if token == "" {
+		return "", false, nil
+	}
+	err = r.db.QueryRowContext(ctx, `
+SELECT device_name FROM pending_pairings
+WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
+		token, r.now().UTC().Format(time.RFC3339)).Scan(&name)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("pending pairing name by token: %w", err)
+	}
+	return name, true, nil
+}
+
 // Deny resolves a request as refused. A till request is deleted outright (a
 // later request from the same replica is a brand new row). A card_reader
 // request instead keeps a `denied` tombstone with its token cleared and its

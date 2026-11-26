@@ -1,0 +1,298 @@
+{{/* Tab "Add a till" (ut-docs#7057): the chooser, then what is waiting for a
+     manager, then only the section the chooser selected (?need=another|join|
+     replace). A replaced main till shows the replaced notice instead of a
+     pairing code and the pending list; the API answer (409 till_replaced) is
+     unchanged. */}}
+<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.add" }}</h2>
+<div class="card" data-testid="tills-add-chooser">
+  <h3>{{ T "tills.add.chooser.title" }}</h3>
+  <div class="choices">
+    <a class="choice" data-testid="tills-choice-another" href="/tills?tab=add&amp;need=another" hx-get="/ui/tills/tab/add?need=another" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=another"{{ if eq .Need "another" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.another" }}</strong><span class="muted">{{ T "tills.add.chooser.another_help" }}</span></a>
+    <a class="choice" data-testid="tills-choice-join" href="/tills?tab=add&amp;need=join" hx-get="/ui/tills/tab/add?need=join" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=join"{{ if eq .Need "join" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.join" }}</strong><span class="muted">{{ T "tills.add.chooser.join_help" }}</span></a>
+    <a class="choice" data-testid="tills-choice-replace" href="/tills?tab=add&amp;need=replace" hx-get="/ui/tills/tab/add?need=replace" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=replace"{{ if eq .Need "replace" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.replace" }}</strong><span class="muted">{{ T "tills.add.chooser.replace_help" }}</span></a>
+  </div>
+</div>
+
+{{ if .IsReplaced }}
+<div class="sync-banner" role="status" data-testid="tills-add-replaced">
+  {{ if .ReplacedBy }}{{ printf (T "tills.add.replaced_notice") .ReplacedBy }}{{ else }}{{ T "tills.add.replaced_notice_unnamed" }}{{ end }}
+  <a class="btn secondary" href="/tills?tab=add&amp;need=join">{{ if .ReplacedBy }}{{ printf (T "tills.add.replaced_join") .ReplacedBy }}{{ else }}{{ T "tills.add.replaced_join_unnamed" }}{{ end }}</a>
+</div>
+{{ else if .IsMain }}
+{{/* ut-docs#2904: approve/deny (pending_pairings.html) refresh this card
+     only; the fresh copy's load trigger re-fetches the list. ut-docs#7057: a
+     request is never hidden, and one whose name is already enrolled says so. */}}
+<div class="card" id="tills-pairing-card" data-ut-refresh="#tills-pairing-card" data-testid="tills-waiting">
+  <h3>{{ T "tills.add.waiting_title" }}</h3>
+  <p class="muted">{{ T "tills.pairing.help" }}</p>
+  <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
+</div>
+{{ end }}
+
+{{ if eq .Need "another" }}
+<div class="card" data-testid="tills-add-another">
+  <h3>{{ T "tills.add.another.title" }}</h3>
+  {{ if .IsReplaced }}
+    <p class="muted">{{ T "tills.add.another.replaced" }}</p>
+  {{ else if .SyncPrimary }}
+    {{/* ut-docs#405: a code minted on a joined till would encode ITS address,
+         not the real main till's, so it is not offered there. */}}
+    <p>{{ printf (T "tills.add.another.only_main") .PrimaryTillName }}</p>
+  {{ else }}
+    <p class="muted">{{ T "tills.add.another.help" }}</p>
+    <button class="btn primary" hx-post="/api/sync/enroll-token" hx-target="#till-qr" hx-swap="innerHTML">{{ T "tills.add.another.get_code" }}</button>
+    <div id="till-qr" style="margin-top:.6rem"></div>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ if eq .Need "join" }}
+<div class="card" data-testid="tills-add-join">
+  <h3>{{ T "tills.add.join.title" }}</h3>
+  {{/* ut-docs#1548: an ESTABLISHED main till (other tills enrolled to it)
+       does not offer "join a different shop": joining would abandon them. A
+       joined till keeps it (re-pairing at another main till is supported). */}}
+  {{ if or .SyncPrimary (not .Tills) }}
+  <div class="tills-join" x-data="{
+    tab: 'discover',
+    focusTab(dir) {
+      const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+      if (!tabs.length) return;
+      const i = Math.max(0, tabs.indexOf(document.activeElement));
+      const next = tabs[(i + dir + tabs.length) % tabs.length];
+      next.click(); next.focus();
+    }
+  }">
+    <p class="muted">{{ T "tills.add.join.intro" }}</p>
+    {{/* ut-docs#1548: was two stacked cards (paste-a-code, then LAN
+         discovery below it), each with its own till-name field — now two
+         tabs sharing ONE. Same .tab-bar/.tab/.tab-panel pattern and
+         roving-tabindex keyboard nav as index.html's payment-method tabs
+         (tender/split), Alpine already loaded site-wide via base.html. */}}
+    <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+      <button type="button" id="tills-tab-discover" class="tab" role="tab" :class="tab === 'discover' && 'active'" :aria-selected="tab === 'discover'" :tabindex="tab === 'discover' ? 0 : -1" aria-controls="tills-panel-discover" @click="tab = 'discover'">{{ T "tills.join_tabs.discover" }}</button>
+      <button type="button" id="tills-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="tills-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
+    </div>
+    <label>{{ T "tills.pairing.your_till_name" }}
+      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2" required maxlength="60"></label>
+    {{/* Independent review, ut-docs#1548: NOT tills.pairing.error.name_required
+         — that key's copy names the discover tab's action in every locale
+         ("…before you can request pairing" / "…قبل إرسال طلب الإقران" /
+         "…göndermeden önce"), and pairing_join.go's pair-start handler still
+         uses it for exactly that. This message sits ABOVE both tabs and also
+         fires for Join (paste-a-code), which enrols with a one-time token and
+         never files a pairing request — so it gets the action-neutral
+         "<field> is required" wording the rest of the app already uses
+         (locations/registers/taxcodes .error.required). */}}
+    <p id="pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+    {{/* ut-docs#4507: either tab's join replaces this till's whole DB with
+         the main till's copy, sales included. When this till already holds
+         sales (.HasSales, sync_api.go) it says so above both tabs, and a
+         required tick box — hx-include'd and validate:-guarded by both
+         tabs' requests, like the name — holds the request back until a
+         manager confirms. pair-start and /api/sync/join refuse without it
+         too. Same warning and label as the join notice (ut-docs#3796).
+         ut-docs#4560: the slot is always there, and both tabs always
+         include and validate the box (a missing one is skipped): a join
+         refused for sales fills it out of band (join_replace_slot.html,
+         keep the two identical) when the first sale landed after this
+         page rendered. */}}
+    {{/* ut-docs#5058 UT-5: a joined till re-joining sends its unsent
+         journal to the new main till first (rejoin_replay.go). */}}
+    {{ if .IsJoinedTill }}<p class="muted" data-testid="tills-rejoin-note">{{ printf (T "tills.join.rejoin_note") .UnsentSales }}</p>{{ end }}
+    <div id="pairing-replace-slot">{{ if .HasSales }}
+      <p class="join-notice-warning join-replace-warning" id="pairing-replace-warning">{{ if .IsJoinedTill }}{{ T "tills.join.rejoin_sales_warning" }}{{ else }}{{ T "tills.discovery.ambient.has_sales_warning" }}{{ end }}</p>
+      <span class="join-notice-confirm">
+        <input type="checkbox" id="pairing-replace-local" name="replace_local_data" value="1" required hx-preserve aria-describedby="pairing-replace-warning">
+        <label class="join-notice-label" for="pairing-replace-local">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>
+      </span>
+    {{ end }}</div>
+    {{/* ut-docs#2781: "Join as" — the role this till asks to join as. Shared
+         by both tabs like the name above (hx-include'd by id); the main till's
+         manager can still change it on the approval card or later on Tills. */}}
+    <fieldset class="join-role" id="pairing-join-role">
+      <legend>{{ T "tills.join_role.label" }}</legend>
+      <label><input type="radio" name="role" value="additional" checked> {{ T "tills.role.replica" }}
+        <small class="muted">{{ T "tills.join_role.additional_help" }}</small></label>
+      <label><input type="radio" name="role" value="satellite"> {{ T "tills.role.satellite" }}
+        <small class="muted">{{ T "tills.join_role.satellite_help" }}</small></label>
+    </fieldset>
+    <div class="tab-panel" id="tills-panel-discover" role="tabpanel" aria-labelledby="tills-tab-discover" x-show="tab === 'discover'">
+      <p class="muted">{{ T "tills.discovery.help" }}</p>
+      <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+      <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
+      <div id="discover-results"></div>
+      <div id="pairing-status-host"></div>
+    </div>
+    <div class="tab-panel" id="tills-panel-code" role="tabpanel" aria-labelledby="tills-tab-code" x-show="tab === 'code'" x-cloak>
+      <!-- ut-docs#1548: #pairing-till-name moved out of this form (now
+           shared with the discover tab), so its own `required` is no
+           longer natively checked on submit — same explicit
+           reportValidity() guard the discover button already needs for
+           the same reason (ut-docs#1540). -->
+      <form hx-post="/api/sync/join" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" hx-target="#join-msg" hx-swap="innerHTML"
+            data-before-request="trim-validate:pairing-till-name validate:pairing-replace-local">
+        {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
+             address; both are typed here. The address is ignored when the
+             full (long) code is pasted instead, so it stays optional. */}}
+        {{/* ut-docs#3428: scan the main till's pairing QR. Fill-then-confirm: a scan only fills the code below and shows the host; shared binder web/public/join-scan.js. */}}
+        <button type="button" class="btn secondary" id="tills-join-scan" data-join-scan data-testid="join-scan-btn">{{ T "scan.pair.button" }}</button>
+        <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required></label>
+        <label>{{ T "tills.join_address" }} <input type="text" name="address" dir="ltr" placeholder="{{ T "tills.join_address_ph" }}" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
+        <div id="tills-join-scanned" class="join-scanned" hidden>
+          <span class="tag ok" data-join-scanned-text></span>
+          <button type="button" class="btn secondary" id="tills-join-scan-clear" data-join-scan-clear>{{ T "tills.join_scan.clear" }}</button>
+        </div>
+        <p id="tills-join-scan-next" class="muted" aria-live="polite" data-join-scan-next></p>
+        <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
+        <p class="small muted" data-testid="tills-join-outcome">{{ T "tills.join.outcome.additional" }}</p>
+        <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+      </form>
+      <div id="tills-join-scan-overlay" class="ai-identify-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tills-join-scan-title"
+           data-decoder-v="{{ assetv "public/vendor/barcode-detector/ponyfill.js" }}"
+           data-msg-permission-denied="{{ T "scan.pair.permission_denied" }}"
+           data-msg-no-camera="{{ T "scan.pair.no_camera" }}"
+           data-msg-busy="{{ T "scan.camera.camera_busy" }}"
+           data-msg-not-ut="{{ T "scan.pair.not_ut_code" }}"
+           data-msg-scanning="{{ T "scan.pair.scanning" }}"
+           data-msg-scanned-from="{{ T "scan.pair.scanned_from" }}"
+           data-msg-scanned-next="{{ T "scan.pair.scanned_next" }}">
+        <div class="ai-identify-panel">
+          <h3 id="tills-join-scan-title">{{ T "scan.pair.title" }}</h3>
+          <video id="tills-join-scan-video" class="camera-overlay-video" autoplay playsinline muted></video>
+          <div id="tills-join-scan-status" class="ai-identify-status" aria-live="polite"></div>
+          <div class="ai-identify-controls">
+            <button type="button" class="btn secondary" id="tills-join-scan-close">{{ T "scan.pair.close" }}</button>
+            <button type="button" class="btn secondary" id="tills-join-scan-type">{{ T "scan.pair.type_instead" }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{ else }}
+  <p class="muted" data-testid="tills-join-blocked">{{ T "tills.add.join.blocked" }}</p>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ if eq .Need "replace" }}
+<div class="card" data-testid="tills-add-replace">
+  <h3>{{ T "tills.add.replace.title" }}</h3>
+  <p class="muted">{{ T "tills.add.replace.help" }}</p>
+  <a class="btn secondary" href="/tills?tab=others" hx-get="/ui/tills/tab/others" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=others">{{ T "tills.add.replace.go" }}</a>
+  <p class="small muted">{{ T "tills.add.replace.main" }}</p>
+</div>
+{{ end }}
+
+<script>
+(function () {
+  // LAN till discovery (ADR-0033 part 1, ut-docs#264) + approve-to-pair
+  // (ADR-0033 part 3/3, ut-docs#185): the search itself stays a plain
+  // fetch() (unchanged, already working); each result now also renders a
+  // "Request to pair" button wired with htmx attributes. The vendored htmx
+  // here is 1.9.12 — no MutationObserver auto-processing (that's a 2.x
+  // thing) — so content inserted outside htmx's own swap machinery is
+  // otherwise never scanned for hx- attributes; htmx.process() below is
+  // required, same as catalog.html's own image-upload table refresh does.
+  var btn = document.getElementById('discover-btn');
+  if (!btn) return;
+  var msg = document.getElementById('discover-msg');
+  var out = document.getElementById('discover-results');
+  var i18n = {
+    searching: "{{ T "tills.discovery.searching" }}",
+    noneFound: "{{ T "tills.discovery.none_found" }}",
+    resultName: "{{ T "tills.discovery.result_name" }}",
+    resultAddress: "{{ T "tills.discovery.result_address" }}",
+    error: "{{ T "tills.discovery.error" }}",
+    denied: "{{ T "tills.discovery.denied" }}",
+    requestBtn: "{{ T "tills.pairing.request_btn" }}"
+  };
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+  // ut-docs#1295: two different, unrelated shops can both still be on their
+  // unconfigured default name, so the raw till_id UUID shown below is often
+  // the ONLY thing distinguishing two entries — meaningless to a human
+  // without SSH/adb access to compare it directly. base_url already carries
+  // this candidate's real LAN address, so surface that too as a friendlier
+  // disambiguator. Falls back to a small regex (not just new URL(), which a
+  // couple of older embedded webviews still in the hardware fleet may lack)
+  // rather than throwing and losing the whole result row over a cosmetic field.
+  function hostOf(url) {
+    try { return new URL(url).hostname; } catch (e) {}
+    // Bracketed IPv6 vs. a bare hostname/IPv4 need separate capture groups —
+    // a single "stop at the first colon" class would truncate an IPv6
+    // address at its first internal colon (independent review, ut-docs#1295).
+    var m = /^[a-z]+:\/\/(?:\[([^\]]+)\]|([^/:]+))/i.exec(url || '');
+    return m ? (m[1] || m[2]) : '';
+  }
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    msg.textContent = i18n.searching;
+    out.innerHTML = '';
+    fetch('/api/sync/discover-primaries')
+      .then(function (r) {
+        // ut-docs#2157: a session-expired 401 answers with the auth
+        // middleware's {code,message} error object — j.data below would be
+        // null, silently reading as "no primaries found" instead of telling
+        // the operator they need to sign back in.
+        if (r.status === 401) { window.location.href = '/login'; return null; }
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j) return;
+        btn.disabled = false;
+        // ut-docs#3218: iOS refused the Local Network permission — say so,
+        // and how to fix it, instead of the generic "could not search".
+        if (j.error && j.error.code === 'local_network_denied') { msg.textContent = i18n.denied; return; }
+        var list = (j.data && j.data.primaries) || [];
+        if (!list.length) { msg.textContent = i18n.noneFound; return; }
+        msg.textContent = '';
+        out.innerHTML = '<ul style="list-style:none; padding-inline-start:0; margin:.4rem 0">' + list.map(function (p) {
+          var vals = JSON.stringify({ base_url: p.base_url, till_id: p.till_id });
+          var addr = hostOf(p.base_url);
+          var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
+          return '<li style="padding:.3rem 0">' + esc(p.name)
+            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + '<bdi dir="ltr">' + esc(p.till_id) + '</bdi>' + addrPart + '</span> '
+            + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
+            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" '
+            // ut-docs#1540: same required-field guard as the setup wizard's
+            // discovery button — this one lives outside a <form> too, so
+            // the input's own `required` attribute needs an explicit
+            // reportValidity() call to actually surface to the operator.
+            // Trimming in place first is what makes a whitespace-only
+            // entry fail `required` instead of cancelling silently.
+            + 'data-before-request="trim-validate:pairing-till-name validate:pairing-replace-local" '
+            + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
+        }).join('') + '</ul>';
+        htmx.process(out);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        msg.textContent = i18n.error;
+      });
+  });
+})();
+(function () {
+  // ut-docs#1548: `required` alone is invisible until submit — the field's
+  // own reportValidity() (called by the discover button and the code-paste
+  // form above, both outside a native form-boundary for this field or with
+  // it hx-included) fires a transient native tooltip, but the AC wants a
+  // persistent red border + message. Listen for the `invalid` event
+  // reportValidity()/checkValidity() dispatch and mirror it into
+  // .field-invalid/.field-error-msg instead, clearing on the next valid
+  // input so it doesn't linger once the operator fixes it.
+  var input = document.getElementById('pairing-till-name');
+  var error = document.getElementById('pairing-till-name-error');
+  if (!input || !error) return;
+  input.addEventListener('invalid', function () {
+    input.classList.add('field-invalid');
+    error.hidden = false;
+  });
+  input.addEventListener('input', function () {
+    if (input.validity.valid) {
+      input.classList.remove('field-invalid');
+      error.hidden = true;
+    }
+  });
+})();
+</script>

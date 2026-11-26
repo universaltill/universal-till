@@ -1560,6 +1560,15 @@ var renderFiles = []string{
 	// ut-docs#2742: same reasoning — GET /ui/tills/roster's 10 s poll and
 	// tills.html's own page render both need this exact roster markup.
 	"ui/partials/tills_roster.html",
+	"ui/partials/tills_nav.html",
+	"ui/partials/tills_network_key.html",
+	"ui/partials/tills_tab_add.html",
+	"ui/partials/tills_tab_body.html",
+	"ui/partials/tills_tab_frame.html",
+	"ui/partials/tills_tab_others.html",
+	"ui/partials/tills_tab_readers.html",
+	"ui/partials/tills_tab_settings.html",
+	"ui/partials/tills_tab_this.html",
 	// ut-docs#1950: items.html's own content template includes this by its
 	// {{ define "items_rail" }} name (same as help_topic.html/help_nav.html
 	// above) — riding along here is what lets that work through the plain

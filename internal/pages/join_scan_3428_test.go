@@ -85,7 +85,9 @@ func assertJoinScanMarkup(t *testing.T, path string) {
 }
 
 func TestSetupJoinFormHasScanButton(t *testing.T) { assertJoinScanMarkup(t, "/setup") }
-func TestTillsJoinFormHasScanButton(t *testing.T) { assertJoinScanMarkup(t, "/tills") }
+func TestTillsJoinFormHasScanButton(t *testing.T) {
+	assertJoinScanMarkup(t, "/tills?tab=add&need=join")
+}
 
 func TestJoinScanStringsInEnglishLocale(t *testing.T) {
 	raw, err := locales.FS.ReadFile("en.json")

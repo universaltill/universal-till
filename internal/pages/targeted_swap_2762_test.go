@@ -108,12 +108,34 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 		{"/api/settings/basket-panel-width", "settings-basket-width-region"},
 		{"/api/settings/report-retention", "settings-retention-region"},
 		{"/api/settings/printer", "settings-printer-region"},
-		{"/api/settings/till-name", "settings-till-name-region"},
-		{"/api/settings/till-register", "settings-till-register-region"},
 		{"/api/settings/invoice", "settings-invoice-region"},
 		{"/api/settings/telemetry", "settings-telemetry-region"},
 		{"/api/settings/store-name", "settings-store-name-region"},
 		{"/api/settings/cloud-staff-breakdown", "settings-cloud-staff-region"}, // ut-docs#2557
+	}
+	// ut-docs#7057: this till's name and register live on the Tills & devices
+	// page's first tab; same rules, other file.
+	thisTab, err := os.ReadFile("web/ui/partials/tills_tab_this.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ post, region string }{
+		{"/api/settings/till-name", "settings-till-name-region"},
+		{"/api/settings/till-register", "settings-till-register-region"},
+	} {
+		ts := string(thisTab)
+		at := strings.Index(ts, `id="`+c.region+`" data-ut-refresh="#`+c.region+`" data-ut-saved-msg="#`)
+		if at < 0 {
+			t.Errorf("tills_tab_this.html: missing region %q", c.region)
+			continue
+		}
+		form := formTag(t, ts, c.post)
+		if strings.Contains(form, "reload:") || !strings.Contains(form, "ok not-html refresh-region") {
+			t.Errorf("tills_tab_this.html: %s must refresh its region behind the not-html guard: %s", c.post, form)
+		}
+		if strings.Index(ts, form) < at {
+			t.Errorf("tills_tab_this.html: %s's form is not inside #%s", c.post, c.region)
+		}
 	}
 	for _, c := range swapped {
 		anchor := `id="` + c.region + `" data-ut-refresh="#` + c.region + `" data-ut-saved-msg="#`
@@ -197,8 +219,10 @@ func TestPairingRevokeBackupSwapRegionNotReload(t *testing.T) {
 		file    string
 		anchors []string
 	}{
-		{"web/ui/pages/tills.html", []string{
+		{"web/ui/partials/tills_tab_add.html", []string{
 			`id="tills-pairing-card" data-ut-refresh="#tills-pairing-card"`,
+		}},
+		{"web/ui/partials/tills_tab_others.html", []string{
 			`id="tills-roster" data-ut-refresh="#tills-roster"`,
 		}},
 		{"web/ui/partials/pending_pairings.html", []string{

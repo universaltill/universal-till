@@ -126,7 +126,7 @@ func TestTillsPage_RendersLocaleFormattedTimestamps(t *testing.T) {
 		t.Fatalf("seed till: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/tills?lang=de-DE", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others&lang=de-DE", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1015,7 +1015,7 @@ func TestSyncJoin_ErrorsAreLocalized(t *testing.T) {
 func TestTillsPage_RequiresManager(t *testing.T) {
 	mux, _ := newSyncAPITestDeps(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("expected a redirect for a non-manager, got %d", rec.Code)
@@ -1032,7 +1032,7 @@ func TestTillsPage_ListsEnrolledTills(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1053,7 +1053,7 @@ func TestTillsPage_ShowsPrimaryTillWhenThisDeviceIsThePrimary(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1080,7 +1080,7 @@ func TestTillsPage_ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica(t *test
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1120,7 +1120,7 @@ func TestTillsPage_TagsThisTillWithinSyncedRosterOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 	if !strings.Contains(body, "Back Counter") || !strings.Contains(body, "Till 3") {
@@ -1152,7 +1152,7 @@ func TestTillsPage_HidesRevokeButtonOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
 	mux.ServeHTTP(rec, req)
 	if strings.Contains(rec.Body.String(), "/revoke") {
 		t.Fatalf("a replica must not offer a revoke action: %s", rec.Body.String())
@@ -1203,7 +1203,7 @@ func TestTillsPage_HidesAddTillCardOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 	if strings.Contains(body, "/api/sync/enroll-token") {
@@ -1393,7 +1393,7 @@ func TestTillsPage_ListFailureIsLocalized(t *testing.T) {
 		t.Fatalf("drop tills: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/tills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -1538,13 +1538,44 @@ func enrollWithName(t *testing.T, mux *http.ServeMux, name string) *httptest.Res
 	return rec
 }
 
+// enrollWithNameApproved enrols with a token a manager approved for approvedFor
+// (a pending_pairings row carrying the token), as the approve flow does.
+func enrollWithNameApproved(t *testing.T, mux *http.ServeMux, dp *common.Deps, name, approvedFor string) *httptest.ResponseRecorder {
+	t.Helper()
+	code := issueEnrolCode(t, mux, "http://192.168.1.10:8080")
+	_, tok, err := decodeEnrollCode(code)
+	if err != nil {
+		t.Fatalf("decode enrol code: %v", err)
+	}
+	pr := data.NewPairingRepo(dp.Db)
+	id, err := pr.CreatePendingRequestWithRole(context.Background(), approvedFor, strings.Repeat("a", 64), data.TillRoleAdditional, "", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pr.ApproveWithRole(context.Background(), id, tok, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	enrollBody, _ := json.Marshal(map[string]string{"token": tok, "name": name})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestSyncEnroll_RejectsDuplicateSiblingName(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling")); err != nil {
+	sibling, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling"))
+	if err != nil {
 		t.Fatalf("seed sibling till: %v", err)
+	}
+	// ut-docs#7057: only a till seen just now counts as a different LIVE
+	// device; a stale one is replaced (TestSyncEnroll_SameNameStaleTillIsReplaced).
+	if err := tillsRepo.TouchLastSeen(ctx, sibling); err != nil {
+		t.Fatalf("touch sibling: %v", err)
 	}
 
 	for _, name := range []string{"Till 2", "till 2"} { // exact + case-insensitive
@@ -1928,5 +1959,90 @@ func TestSyncPromote_PromotedTillAdvertisesOwnDiscoveryID(t *testing.T) {
 	}
 	if rid, err := discovery.ReportedTillID(ctx, repo); err != nil || rid != "cloud-till-T" {
 		t.Fatalf("ReportedTillID = %q err=%v, want the kept cloud id cloud-till-T", rid, err)
+	}
+}
+
+// ut-docs#7057: re-pairing a name that is already enrolled, from a till not
+// seen lately, replaces the enrolment (same id, same receipt prefix, no
+// rename, no duplicate row) instead of failing name_taken.
+func TestSyncEnroll_SameNameStaleTillIsReplaced(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	oldID, _, oldPrefix, err := tillsRepo.EnrolTillPrefix(ctx, "Bar tablet", hashBearer("old-bearer"), data.TillRoleAdditional, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := enrollWithNameApproved(t, mux, dp, "bar tablet", "Bar tablet")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-pairing a stale enrolment: status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			TillID  string `json:"till_id"`
+			Bearer  string `json:"bearer"`
+			Prefix  string `json:"receipt_prefix"`
+			Replace bool   `json:"replaced"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Data.TillID != oldID || out.Data.Prefix != oldPrefix || !out.Data.Replace {
+		t.Fatalf("answer = %+v, want till %s, prefix %s, replaced true", out.Data, oldID, oldPrefix)
+	}
+	list, _ := tillsRepo.ListTills(ctx)
+	if len(list) != 1 {
+		t.Fatalf("tills = %d (%+v), want exactly 1: a replace never adds a row", len(list), list)
+	}
+	if _, ok, _ := tillsRepo.TillByBearerHashAt(ctx, hashBearer("old-bearer"), time.Now()); ok {
+		t.Fatal("the old device's bearer still works after it was replaced")
+	}
+	if _, ok, _ := tillsRepo.TillByBearerHashAt(ctx, hashBearer(out.Data.Bearer), time.Now()); !ok {
+		t.Fatal("the new bearer does not resolve")
+	}
+}
+
+// ut-docs#7057 review: a replace needs a manager's approval of THIS name. A
+// typed code, or a token approved for another device name, never takes over an
+// enrolled till; a satellite's name over plain HTTP is refused outright.
+func TestSyncEnroll_ReplaceNeedsApprovalOfThatName(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	oldID, _, _, err := tillsRepo.EnrolTillPrefix(ctx, "Bar tablet", hashBearer("old-bearer"), data.TillRoleAdditional, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := enrollWithName(t, mux, "Bar tablet"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a code with no approval replaced a till: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := enrollWithNameApproved(t, mux, dp, "Bar tablet", "Phone 3"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a token approved for another name replaced a till: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok, _ := tillsRepo.TillByBearerHashAt(ctx, hashBearer("old-bearer"), time.Now()); !ok {
+		t.Fatal("the enrolled till lost its bearer without an approved replace")
+	}
+	// A seen-lately till is never replaced, approved or not.
+	if err := tillsRepo.TouchLastSeen(ctx, oldID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := enrollWithNameApproved(t, mux, dp, "Bar tablet", "Bar tablet"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a live till was replaced: %d", rec.Code)
+	}
+}
+
+func TestSyncEnroll_ReplaceOfSatelliteNameOverPlainHTTPIsRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if _, _, _, err := data.NewTillsRepo(dp.Db).EnrolTillPrefix(ctx, "Kiosk", hashBearer("k"), data.TillRoleSatellite, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := enrollWithNameApproved(t, mux, dp, "Kiosk", "Kiosk")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a satellite's enrolment was replaced over plain HTTP: %s", rec.Body.String())
 	}
 }

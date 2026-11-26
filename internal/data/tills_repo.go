@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -147,24 +148,12 @@ FROM tills ORDER BY enrolled_at DESC`)
 	return out, rows.Err()
 }
 
-// NameTaken reports whether an enrolled replica already uses this name,
-// case-insensitively (ut-docs#1264).
-//
-// The fold is done in Go, deliberately, not as `lower(name) = lower(?)` in
-// SQL (independent review finding): SQLite's built-in lower() only folds
-// ASCII, so the SQL form silently misses "Ünite" vs "ünite" or "Café" vs
-// "CAFÉ" — real collisions on the tr/fa/ar installs this product ships —
-// AND it would disagree with the strings.EqualFold check the enrolment
-// handler applies to the primary's own name, making the same pair of names
-// a duplicate against the primary but not against a sibling. A shop has a
-// handful of tills, so reading the column is cheap.
-func (r *TillsRepo) NameTaken(ctx context.Context, name string) (bool, error) {
-	return r.NameTakenExcept(ctx, name, "")
-}
-
-// NameTakenExcept is NameTaken skipping the row whose id is exceptID (none
+// NameTakenExcept reports whether a name is taken (case-insensitively, as
+// enrolment compares it), skipping the row whose id is exceptID (none
 // when blank): a joined till's synced roster holds its own row, which its
-// own rename must not collide with (ut-docs#3308).
+// own rename must not collide with (ut-docs#3308). The fold is done in Go
+// (strings.EqualFold), not SQL lower(), which only folds ASCII and would miss
+// "Ünite" vs "ünite" on the tr/fa/ar installs.
 func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) (bool, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM tills`)
 	if err != nil {
@@ -237,4 +226,77 @@ func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 		return fmt.Errorf("delete till: %w", err)
 	}
 	return nil
+}
+
+// SeenWithin reports whether the till was last seen no longer ago than d
+// before now (a till never seen is not).
+func (t TillRow) SeenWithin(now time.Time, d time.Duration) bool {
+	seen, err := time.Parse(time.RFC3339, t.LastSeenAt)
+	return err == nil && now.Sub(seen) <= d
+}
+
+// TillByName finds an enrolled till by name, trimmed and case-insensitive
+// (the same fold NameTaken uses).
+func (r *TillsRepo) TillByName(ctx context.Context, name string) (TillRow, bool, error) {
+	list, err := r.ListTills(ctx)
+	if err != nil {
+		return TillRow{}, false, fmt.Errorf("till by name: %w", err)
+	}
+	for _, t := range list {
+		if strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(name)) {
+			return t, true, nil
+		}
+	}
+	return TillRow{}, false, nil
+}
+
+// ErrTillStillLive: the till to replace was seen too recently to be gone.
+var ErrTillStillLive = errors.New("till is still live")
+
+// ReplaceEnrolment re-enrols an existing till on a new device (ut-docs#7057,
+// ut-docs#5058): same till id, name and receipt prefix, a new bearer, the old
+// bearer and its TLS pin gone, in one transaction. An unknown id is an error,
+// and so is a till seen since liveSince: the check is inside the UPDATE, so a
+// device that came back between the caller's look and this write is not
+// taken over (ErrTillStillLive).
+func (r *TillsRepo) ReplaceEnrolment(ctx context.Context, id, bearerHash, role string, liveSince time.Time) error {
+	if !ValidTillRole(role) {
+		return fmt.Errorf("replace enrolment: invalid role %q", role)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("replace enrolment: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := tx.ExecContext(ctx, `
+UPDATE tills SET bearer_hash = ?, role = ?, bearer_issued_at = ?, bearer_prev_hash = NULL, bearer_prev_expires_at = NULL, last_seen_at = ?
+WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`, bearerHash, role, now, now, id, liveSince.UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("replace enrolment: update: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var one int
+		if qerr := tx.QueryRowContext(ctx, `SELECT 1 FROM tills WHERE id = ?`, id).Scan(&one); qerr == nil {
+			return ErrTillStillLive
+		}
+		return fmt.Errorf("replace enrolment: till %s not found", id)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM till_tls_pinned WHERE till_id = ?`, id); err != nil {
+		return fmt.Errorf("replace enrolment: clear pin: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("replace enrolment: commit: %w", err)
+	}
+	return nil
+}
+
+// ReceiptPrefixOf returns the receipt prefix a till was granted ("" if none).
+func (r *TillsRepo) ReceiptPrefixOf(ctx context.Context, id string) (string, error) {
+	var p string
+	err := r.db.QueryRowContext(ctx, `SELECT receipt_prefix FROM tills WHERE id = ?`, id).Scan(&p)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("receipt prefix of till: %w", err)
+	}
+	return p, nil
 }

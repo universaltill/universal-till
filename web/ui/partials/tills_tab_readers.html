@@ -1,0 +1,14 @@
+{{/* Tab "Card readers" (ut-docs#7057): the three fragments of ut-docs#6538,
+     unchanged. Phones pair to the main till only; each fragment renders its
+     own card (a flag-off answer is 204: no empty card). */}}
+<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.readers" }}</h2>
+{{ if not .SyncPrimary }}
+<div id="tills-pairing-card" data-ut-refresh="#tills-pairing-card">
+<div hx-get="/ui/tills/reader-settings" hx-trigger="load" hx-swap="outerHTML"></div>
+<div hx-get="/ui/tills/reader-requests" hx-trigger="load" hx-swap="outerHTML"></div>
+<div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
+</div>
+<p class="muted">{{ T "tills.readers.footer" }}</p>
+{{ else }}
+<div class="card"><p>{{ printf (T "tills.readers.on_additional") .PrimaryTillName }}</p></div>
+{{ end }}

@@ -1,0 +1,5 @@
+{{ if eq .Tab "others" }}{{ template "tills_tab_others.html" . }}
+{{ else if eq .Tab "add" }}{{ template "tills_tab_add.html" . }}
+{{ else if eq .Tab "readers" }}{{ template "tills_tab_readers.html" . }}
+{{ else if eq .Tab "settings" }}{{ template "tills_tab_settings.html" . }}
+{{ else }}{{ template "tills_tab_this.html" . }}{{ end }}

@@ -966,13 +966,21 @@ func TestReaderSectionsLayout(t *testing.T) {
 			t.Errorf("app.css lacks %q", want)
 		}
 	}
-	page, err := os.ReadFile(repoFile("web", "ui", "pages", "tills.html"))
+	add, err := os.ReadFile(repoFile("web", "ui", "partials", "tills_tab_add.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pc := string(page)
-	if i, j := strings.Index(pc, `id="tills-pairing-card"`), strings.Index(pc, "/ui/tills/reader-requests"); j < i || strings.Index(pc[i:j], "\n  </div>") < 0 {
-		t.Error("the reader sections must sit after, not inside, the pairing card")
+	rd, err := os.ReadFile(repoFile("web", "ui", "partials", "tills_tab_readers.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ut-docs#7057: the reader sections have their own tab, so they can never
+	// sit inside the pairing card of the Add a till tab.
+	if strings.Contains(string(add), "/ui/tills/reader-requests") {
+		t.Error("the reader sections must not live inside the Add a till tab")
+	}
+	if !strings.Contains(string(rd), "/ui/tills/reader-requests") {
+		t.Error("the Card readers tab must load the reader requests")
 	}
 }
 

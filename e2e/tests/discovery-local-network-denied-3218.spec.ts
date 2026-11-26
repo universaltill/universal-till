@@ -18,7 +18,7 @@ test('Tills page explains a refused Local Network permission', async ({ page }) 
   await page.route('**/api/sync/discover-primaries', (route) => route.fulfill(denied));
 
   await page.setViewportSize({ width: 390, height: 844 }); // a phone, where this happens
-  await page.goto('/tills');
+  await page.goto('/tills?tab=add&need=join');
   const btn = page.locator('#discover-btn');
   await btn.click();
 
