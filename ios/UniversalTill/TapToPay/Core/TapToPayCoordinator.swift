@@ -23,6 +23,12 @@ final class TapToPayCoordinator {
     /// A requires_confirmation confirm is retried once only if this much
     /// time is left before the soft deadline.
     static let confirmRetryFloorMs: Int64 = 5_000
+    /// After a cancel (operator or deadline) the SDK gets this long to complete
+    /// the cancel and end the collect; then the attempt ends cancelled anyway
+    /// (#6538: a cancel callback that never fires must not pin the tap screen
+    /// and the lock). Safe: a collect is only ever confirmed while no cancel was
+    /// asked for, so nothing is charged after this.
+    static let cancelGraceMs: Int64 = 5_000
 
     let provider: String
     private let reader: PaymentReader
@@ -181,6 +187,7 @@ final class TapToPayCoordinator {
         var cancelable: ReaderCancelable?
         var cancelReason: String?          // timeout | operator, once a cancel was asked for
         var cancelInFlight = false
+        var cancelTimer: TimerToken?
         var collectOutcome: Result<ReaderIntent, ReaderError>?
         var confirmRetried = false
         var cloudMismatch = false          // session_create answered another amount or currency
@@ -288,6 +295,7 @@ final class TapToPayCoordinator {
         guard !a.finished else { return }
         a.finished = true
         a.timer?.invalidate()
+        a.cancelTimer?.invalidate()
         if current === a { current = nil }
         a.completion(result)
     }
@@ -385,6 +393,14 @@ final class TapToPayCoordinator {
     private func requestCancel(_ a: Attempt, reason: String) {
         guard a.cancelReason == nil else { return }
         a.cancelReason = reason
+        // Bounded: if the SDK never completes the cancel, or never ends the
+        // collect afterwards, the attempt still ends cancelled (#6538). A
+        // late collect result is ignored: the attempt is finished and nothing
+        // was confirmed.
+        a.cancelTimer = clock.schedule(atMs: clock.nowMs() + Self.cancelGraceMs, on: queue) { [weak self, weak a] in
+            guard let self, let a, self.live(a) else { return }
+            self.finish(a, .cancelled(a.cancelReason ?? reason))
+        }
         guard let c = a.cancelable else { return }
         a.cancelInFlight = true
         c.cancel { [weak self] _ in
