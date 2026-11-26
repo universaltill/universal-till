@@ -2471,102 +2471,13 @@ utSellCamera(function(){
 // tapping it explains why instead of the button silently being absent.
 (function(){
   if (!window.utScan) return;
-  // The decoder outlives any one sell page (ut-docs#3807): fetched once per
-  // document, whichever page bound it.
+  // The decoder lives in qr-scan.js (shared with the setup wizard's pairing
+  // scan, ut-docs#3428) and outlives any one sell page (ut-docs#3807). It is
+  // cached per document there; `detector` is this page's handle on it.
   var detector = null;
-  var detectorPromise = null;
-  // Formats this product's wedge scanners actually read (ut-docs#423's
-  // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
-  // self-order use later. An explicit list keeps decode behaviour the
-  // same across browsers rather than however each one's default differs.
-  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'];
-  var DECODER_DIR = '/public/vendor/barcode-detector/';
-  // Content version of the decoder (ponyfill.js; the wasm is pinned to it by
-  // web/vendor_barcode_decoder_test.go), so both get immutable caching and
-  // an upgrade changes the URL instead of being refetched on every load.
-  // Read from the overlay's data-decoder-v at bind time.
-  var DECODER_QS = '';
-
-  function nativeDetector(){
-    // typeof-check, not `'BarcodeDetector' in window`: a test stubbing the
-    // property to undefined must still read as unsupported.
-    if (typeof window.BarcodeDetector !== 'function') return null;
-    try {
-      return new window.BarcodeDetector({ formats: FORMATS });
-    } catch (e) {
-      return null; // throws if the browser supports none of FORMATS
-    }
-  }
-
-  function loadVendoredDetector(){
-    return new Promise(function(resolve, reject){
-      function build(){
-        var api = window.BarcodeDetectionAPI;
-        // The ponyfill defaults to fetching its wasm from a CDN; point it at
-        // the copy this till serves itself (offline-first, no third party).
-        // prepareZXingModule resolves only once the wasm is instantiated, so
-        // a missing/broken file surfaces here, not as a silent per-frame
-        // failure later.
-        api.prepareZXingModule({
-          overrides: { locateFile: function(path){ return DECODER_DIR + path + DECODER_QS; } },
-          fireImmediately: true
-        }).then(function(){
-          resolve(new api.BarcodeDetector({ formats: FORMATS }));
-        }, function(err){
-          // Forget the failed instance so the next tap fetches it again.
-          try { api.purgeZXingModule(); } catch (e) { /* nothing to purge */ }
-          reject(err);
-        });
-      }
-      if (window.BarcodeDetectionAPI) { build(); return; }
-      var s = document.createElement('script');
-      s.src = DECODER_DIR + 'ponyfill.js' + DECODER_QS;
-      s.onload = function(){
-        if (window.BarcodeDetectionAPI) { build(); return; }
-        s.remove();
-        reject(new Error('decoder missing'));
-      };
-      s.onerror = function(){
-        s.remove(); // let the next tap retry with a fresh <script>
-        reject(new Error('decoder failed to load'));
-      };
-      document.head.appendChild(s);
-    });
-  }
-
-  // Chromium exposes BarcodeDetector even where the platform service behind
-  // it is missing (e.g. Android without Play services); then every detect()
-  // rejects and scanning would spin forever. getSupportedFormats() resolves
-  // to [] in that case, so only a native detector that reads at least one of
-  // FORMATS is trusted; otherwise the vendored decoder is used.
-  function usableNativeDetector(){
-    var native = nativeDetector();
-    if (!native) return Promise.resolve(null);
-    var probe = window.BarcodeDetector.getSupportedFormats;
-    if (typeof probe !== 'function') return Promise.resolve(native);
-    return Promise.resolve().then(function(){ return probe.call(window.BarcodeDetector); })
-      .then(function(formats){
-        var ok = (formats || []).some(function(f){ return FORMATS.indexOf(f) !== -1; });
-        return ok ? native : null;
-      }, function(){ return null; });
-  }
-
   function getDetector(){
-    if (detector) return Promise.resolve(detector);
-    if (!detectorPromise) {
-      detectorPromise = usableNativeDetector()
-        .then(function(native){ return native || loadVendoredDetector(); })
-        .then(function(d){ detector = d; return d; }, function(err){
-          detectorPromise = null;
-          throw err;
-        });
-    }
-    return detectorPromise;
+    return window.utGetBarcodeDetector().then(function(d){ detector = d; return d; });
   }
-
-  // The same lazy decoder, for other camera surfaces (the plugin settings
-  // page's one-time key code scan, ut-docs#6960).
-  window.utGetBarcodeDetector = getDetector;
 
   utSellCamera(function(){
     var openBtn = document.getElementById('barcode-scan-open');
@@ -2580,7 +2491,7 @@ utSellCamera(function(){
     var stream = null;
     var rafID = null;
     var candidate = null; // last decoded value, awaiting a matching read
-    if (msgs.decoderV) DECODER_QS = '?v=' + encodeURIComponent(msgs.decoderV);
+    if (msgs.decoderV && window.utQrScan) window.utQrScan.setDecoderVersion(msgs.decoderV);
 
     openBtn.hidden = false;
 

@@ -18,7 +18,9 @@ var HeadAssets = []string{
 	"public/ut-motion.js", // ut-docs#2972: the shared motion code, loaded first
 	"public/vendor/htmx.min.js",
 	"public/vendor/alpine.min.js",
+	"public/qr-scan.js", // ut-docs#3428: shared QR/barcode detector + pairing-QR parser, loaded before app.js
 	"public/app.js",
+	"public/join-scan.js",          // ut-docs#3428: Scan QR code button on the join screens
 	"public/card-reader-picker.js", // ut-docs#6566: the "Which reader?" picker behaviour
 	"public/till-confirm.js",       // ut-docs#5524: the in-page hx-confirm dialog
 	"public/osk.js",
