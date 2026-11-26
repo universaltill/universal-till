@@ -718,19 +718,22 @@ func TestReaderEligible_Table(t *testing.T) {
 	cases := []struct {
 		kind, transport string
 		pos, kiosk      bool
+		method          string
 	}{
-		{"cloud", "internet", true, true},
-		{"phone", "internet", true, true},
-		{"sdk", "bluetooth", false, false},
-		{"sdk", "usb", false, false},
-		{"external", "none", true, false}, // ut-docs#6755: own terminal: cashier surfaces yes, kiosk never
-		{"weird", "internet", false, false},
-		{"cloud", "bluetooth", false, false},
-		{"cloud", "serial", false, false},
-		{"tap_to_pay", "internet", false, false},
+		{"cloud", "internet", true, true, ""},
+		{"phone", "internet", true, true, ""},
+		{"sdk", "bluetooth", false, false, ""},
+		{"sdk", "usb", false, false, ""},
+		{"external", "none", true, false, data.PaymentMethodCardExternal},   // ut-docs#6755: own terminal: cashier surfaces yes, kiosk never
+		{"external", "none", false, false, "demopay"},                       // ut-docs#6755: external row on a plugin method fails closed
+		{"cloud", "internet", false, false, data.PaymentMethodCardExternal}, // card_external only on an external row
+		{"weird", "internet", false, false, ""},
+		{"cloud", "bluetooth", false, false, ""},
+		{"cloud", "serial", false, false, ""},
+		{"tap_to_pay", "internet", false, false, ""},
 	}
 	for _, c := range cases {
-		row := data.CardReader{Kind: c.kind, Transport: c.transport}
+		row := data.CardReader{Kind: c.kind, Transport: c.transport, MethodKey: c.method}
 		if got := readerEligible(row, readerSourcePOS); got != c.pos {
 			t.Errorf("%s/%s pos = %v, want %v", c.kind, c.transport, got, c.pos)
 		}
