@@ -13,7 +13,7 @@ for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 740 }]) {
   test(`tills: main till row shows the scan's Till ID at ${vp.width}x${vp.height}`, async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize(vp);
-    await page.goto('/tills');
+    await page.goto('/tills?tab=others');
 
     const line = page.getByTestId('tills-main-discovery-id');
     await expect(line).toHaveCount(1);

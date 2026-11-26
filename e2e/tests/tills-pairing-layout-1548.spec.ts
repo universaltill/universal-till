@@ -45,7 +45,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
       try {
         await page.setViewportSize(vp);
         const assertClean = watchConsole(page);
-        await page.goto('/tills');
+        await page.goto('/tills?tab=add&need=join');
         await page.waitForSelector('.tills-join');
         // Fail loudly rather than silently measuring the empty state again
         // if the partial, its poll, or the seed endpoint ever regresses.
@@ -74,7 +74,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
 
   test('discover and paste-a-code are two tabs sharing one till-name field, not two stacked sections', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/tills');
+    await page.goto('/tills?tab=add&need=join');
     await page.waitForSelector('.tills-join');
 
     // Exactly one shared till-name field for the whole join component —
@@ -108,7 +108,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
 
   test('an empty required till-name field shows a persistent red border + message, not just a submit-time bubble', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/tills');
+    await page.goto('/tills?tab=add&need=join');
     await page.waitForSelector('.tills-join');
 
     const nameInput = page.locator('#pairing-till-name');

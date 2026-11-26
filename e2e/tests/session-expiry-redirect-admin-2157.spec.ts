@@ -112,7 +112,7 @@ test.describe('admin pages redirect to /login on a session-expired 401 instead o
 
   test('tills.html discover-primaries redirects', async ({ page }) => {
     await ensureOperator(page);
-    await page.goto('/tills');
+    await page.goto('/tills?tab=add&need=join');
     await revokeSessionThenAssertRedirect(page, async () => {
       await page.locator('#discover-btn').click({ timeout: 2000 });
     });

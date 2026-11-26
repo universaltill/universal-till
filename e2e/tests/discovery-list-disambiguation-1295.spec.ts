@@ -27,7 +27,7 @@ test('discovery list shows a distinguishing address when two candidates share a 
     }),
   );
 
-  await page.goto('/tills');
+  await page.goto('/tills?tab=add&need=join');
 
   const btn = page.locator('#discover-btn');
   await expect(btn).toBeEnabled();
@@ -89,7 +89,7 @@ test('discovery list address handles an IPv6 candidate without truncating it', a
     }),
   );
 
-  await page.goto('/tills');
+  await page.goto('/tills?tab=add&need=join');
   await page.locator('#discover-btn').click();
 
   const item = page.locator('#discover-results li');

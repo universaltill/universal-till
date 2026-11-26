@@ -31,7 +31,7 @@ test.describe('join refused for sales brings the tick box (ut-docs#4560)', () =>
       await page.setViewportSize(vp);
       // The refusal is a deliberate 409; the browser logs every 4xx.
       const assertClean = watchConsole(page, /status of 409/);
-      await page.goto('/tills');
+      await page.goto('/tills?tab=add&need=join');
       await page.waitForSelector('.tills-join');
       // Whatever other specs left on this shared till, put the page in the
       // state the card is about: rendered with no tick box, then a sale.
