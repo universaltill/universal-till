@@ -1596,5 +1596,12 @@
   "pay.attention.charged_no_sale.journal_failed": {"description": "Warning: the charged-no-sale outcome was saved but the list entry was not closed; the manager chooses the button again.", "review": "standard"},
   "pay.attention.tap_says_paid": {"description": "Refusal on the card: Not charged was chosen but the payment service reports the payment as paid.", "review": "standard"},
   "pay.attention.tap_says_not_paid": {"description": "Refusal on the card: Charged was chosen but the payment service reports no payment.", "review": "standard"},
-  "pay.attention.tap_reason_required": {"description": "Refusal on the card: the payment service could not confirm the payment (unreachable or still processing), so a reason is required to record the outcome.", "review": "standard"}
+  "pay.attention.tap_reason_required": {"description": "Refusal on the card: the payment service could not confirm the payment (unreachable or still processing), so a reason is required to record the outcome.", "review": "standard"},
+  "journal.type.sale": {"description": "Label on a journal entry (sale detail page) that is an ordinary sale.", "review": "standard", "max_length": 16},
+  "journal.type.refund": {"description": "Label on a journal entry (sale detail page) that is a refund: a return paid back to the customer.", "review": "standard", "max_length": 16},
+  "journal.refund_status.refunded": {"description": "Status chip in the sales journal on a sale whose whole total has been refunded. Not the same word as the Refund label on the refund itself.", "review": "standard", "max_length": 24},
+  "journal.refund_status.partly": {"description": "Status chip in the sales journal on a sale of which only part has been refunded; the amounts follow beside it.", "review": "standard", "max_length": 24},
+  "journal.refund_status.pending": {"description": "Warning chip in the sales journal: a card refund for this sale was sent but its outcome is not confirmed yet.", "review": "standard", "max_length": 24},
+  "journal.refund_status.pending_explain": {"description": "Sale detail sentence under the Refund pending chip: tells the cashier not to start a new refund, to tap Refund again on the refund screen to settle it, and, if it still shows after a till restart, to ask a manager to check Payments needing attention in Settings. Keep the menu names identical to the Settings labels.", "review": "standard"},
+  "journal.refunded_amount": {"description": "Journal line beside a refund chip: how much of the sale total has been refunded so far.", "review": "standard", "placeholders": ["amount refunded so far, with currency", "the sale's total, with currency"]}
 }
