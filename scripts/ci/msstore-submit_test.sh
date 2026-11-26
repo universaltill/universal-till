@@ -19,16 +19,17 @@ cat >"$W/bin/curl" <<'C'
 #!/usr/bin/env bash
 # Records the call (never the header file contents) and answers per MOCK_STATUS.
 out=""; hdr=""; args="$*"
-while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -H) case "$2" in @*) hdr=${2#@};; esac; shift 2;; *) shift;; esac; done
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -H) case "$2" in @*) hdr=${2#@};; esac; shift 2;; --data-binary) cp "${2#@}" "$MOCK_BODY"; shift 2;; *) shift;; esac; done
 echo "$args" >>"$MOCK_LOG"
 grep -q 'Authorization: Bearer SECRET-TOKEN-VALUE' "$hdr" || { echo "no auth header" >>"$MOCK_LOG"; }
 case "$args" in *"X-Seller-Account-Id: 1234567"*) ;; *) echo "no seller header" >>"$MOCK_LOG";; esac
+case "$args" in *blob.core.windows.net*) printf '%s' "${MOCK_BLOB:-blob-bytes}" >"$out"; printf 200; exit 0;; esac
 case "$args" in *"/status"*) echo '{"responseData":{"isReady":true}}' >"$out";; *) echo '{}' >"$out";; esac
 if [ -n "${MOCK_FAIL_ON:-}" ] && [[ "$args" == *"$MOCK_FAIL_ON"* ]]; then printf 500; else printf 200; fi
 C
 chmod +x "$W/bin/"*
-D=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-export PATH="$W/bin:$PATH" MOCK_LOG="$W/log" UT_MSSTORE_TEST=1 MSSTORE_ROOT="$T" REPO=o/r MSSTORE_APP_ID=XP9ABCDEF123 MSSTORE_SELLER_ID=1234567 MSSTORE_TOKEN_FILE="$W/tok" MOCK_RELSTATE="false false" MOCK_DIGEST=$D EXPECT_SHA256=$D MSSTORE_POLL_SECONDS=0
+D=6d98e8b6420256639e35f3b5e821e1b564efc124a5c842a9b91f490ea6efd663
+export PATH="$W/bin:$PATH" MOCK_LOG="$W/log" MOCK_BODY="$W/body.copy" UT_MSSTORE_TEST=1 MSSTORE_ROOT="$T" REPO=o/r MSSTORE_APP_ID=XP9ABCDEF123 MSSTORE_SELLER_ID=1234567 MSSTORE_TOKEN_FILE="$W/tok" MOCK_RELSTATE="false false" MOCK_DIGEST=$D EXPECT_SHA256=$D MSSTORE_POLL_SECONDS=0
 S="$T/scripts/ci/msstore-submit.sh"
 fails=0
 t() { # t <want-rc> <name> [args]
@@ -56,6 +57,9 @@ mkdir -p "$T/store-release"; echo "no card" >"$T/store-release/microsoft.opened"
 t 1 "refuses an opening file without a card"
 echo "opened by ut-docs#6408" >"$T/store-release/microsoft.opened"
 t 0 "opened + published + valid URL sets the package"
+MOCK_BLOB=tampered t 1 "refuses a blob that is not the verified installer"
+! grep -qE -- '-X (PUT|POST)' "$W/log" && echo "ok   - no write when the blob differs" || { echo "FAIL - wrote a tampered blob" >&2; fails=$((fails+1)); }
+t 0 "opened + published + valid URL sets the package (again, for the PUT assertion)"
 grep -q -- '-X PUT' "$W/log" && grep -q -- '--data-binary' "$W/log" && echo "ok   - package PUT sent" || { echo "FAIL - no PUT" >&2; fails=$((fails+1)); }
 ! grep -q '/commit' "$W/log" && ! grep -q '/submit' "$W/log" && echo "ok   - no commit or submit by default" || { echo "FAIL - committed" >&2; fails=$((fails+1)); }
 ! grep -rq 'SECRET-TOKEN-VALUE' "$W/log" "$W/out" && echo "ok   - token never on a command line or in output" || { echo "FAIL - token leaked" >&2; fails=$((fails+1)); }
@@ -63,8 +67,12 @@ COMMIT=true t 0 "COMMIT=true commits and submits"
 grep -q '/packages/commit' "$W/log" && grep -q -- '-X POST.*/submit' "$W/log" && echo "ok   - commit and submit sent" || { echo "FAIL - commit/submit" >&2; fails=$((fails+1)); }
 EXPECT_SHA256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb t 1 "refuses when the asset changed since verification"
 EXPECT_SHA256="" t 1 "refuses without the verified digest"
-t 1 "refuses a /latest/ URL" v1.2.3 "https://github.com/o/r/releases/latest/download/unitill-pos-setup-1.2.3.exe"
-t 1 "refuses another repo's URL" v1.2.3 "https://github.com/evil/r/releases/download/v1.2.3/unitill-pos-setup-1.2.3.exe"
+[ "$(jq -r '.packages[0].packageUrl' "$W/body.copy" 2>/dev/null)" = "https://unitillinstallers.blob.core.windows.net/installers/windows/v1.2.3/unitill-pos-setup-1.2.3.exe" ] && echo "ok   - PUT body packageUrl is the blob URL" || { echo "FAIL - packageUrl is not the blob URL" >&2; fails=$((fails+1)); }
+t 1 "refuses the redirecting GitHub release URL" v1.2.3 "https://github.com/o/r/releases/download/v1.2.3/unitill-pos-setup-1.2.3.exe"
+t 1 "refuses a /latest/ URL" v1.2.3 "https://unitillinstallers.blob.core.windows.net/installers/windows/latest/unitill-pos-setup-1.2.3.exe"
+t 1 "refuses another storage account" v1.2.3 "https://evil.blob.core.windows.net/installers/windows/v1.2.3/unitill-pos-setup-1.2.3.exe"
+t 1 "refuses another container" v1.2.3 "https://unitillinstallers.blob.core.windows.net/other/windows/v1.2.3/unitill-pos-setup-1.2.3.exe"
+t 1 "refuses another tag's blob" v1.2.3 "https://unitillinstallers.blob.core.windows.net/installers/windows/v1.2.4/unitill-pos-setup-1.2.3.exe"
 t 1 "refuses a bad tag" latest
 MOCK_RELSTATE="true false" t 1 "refuses a draft release"
 MOCK_RELSTATE="false true" t 1 "refuses a prerelease"

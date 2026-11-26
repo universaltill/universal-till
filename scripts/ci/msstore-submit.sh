@@ -23,8 +23,9 @@
 #     card (ut-docs#N): the owner's opening PR adds it (ut-docs#6408), together
 #     with the store-release:allow marker the store guard demands;
 #   - on a tag that is not vX.Y.Z, a release that is not published (not draft,
-#     not prerelease), or a package URL that is not this repo's versioned
-#     release-asset URL (never /latest/, never another host or repo);
+#     not prerelease), or a package URL that is not the versioned, non-redirecting
+#     publish-installer blob URL (INSTALLER_BASE/windows/vX.Y.Z/..., never the
+#     redirecting GitHub URL, never /latest/, never another account or container);
 #   - on ANY non-2xx API answer (the token is never echoed, the body is not
 #     printed beyond the status).
 set -euo pipefail
@@ -51,9 +52,6 @@ fi
 version="${BASH_REMATCH[1]}"
 tag="v${version}"
 name="unitill-pos-setup-${version}.exe"
-want_url="https://github.com/${REPO}/releases/download/${tag}/${name}"
-url="${2:-$want_url}"
-[ "$url" = "$want_url" ] || fail "package URL must be exactly ${want_url}"
 
 app="${MSSTORE_APP_ID:-}"
 [[ "$app" =~ ^[A-Za-z0-9]{6,32}$ ]] || fail "MSSTORE_APP_ID is missing or malformed"
@@ -83,6 +81,11 @@ ep() { # ep KEY -> value from the endpoints data file (not sourced: data only)
   [ -n "$v" ] || fail "endpoint $1 missing"
   printf '%s' "$v"
 }
+installer_base="$(ep INSTALLER_BASE)"
+[[ "$installer_base" =~ ^https://[a-z0-9.-]+\.blob\.core\.windows\.net/[a-z0-9-]+$ ]] || fail "INSTALLER_BASE must be an Azure blob container URL"
+want_url="${installer_base}/windows/${tag}/${name}"
+url="${2:-$want_url}"
+[ "$url" = "$want_url" ] || fail "package URL must be exactly ${want_url}"
 base="$(ep API_BASE)"
 [[ "$base" =~ ^https://[a-z0-9.-]+$ ]] || fail "API_BASE must be an https origin"
 
@@ -114,6 +117,11 @@ fi
 
 jq -n --arg url "$url" --arg doc "$docurl" \
   '{packages:[{packageUrl:$url,languages:["en-gb"],architectures:["X64"],isSilentInstall:false,installerParameters:"/S",genericDocUrl:$doc,packageType:"exe"}]}' >"$tmp/body.json"
+# The Store fetches the BLOB, not the GitHub asset: re-hash the bytes it will get.
+curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/blob" "$url" || fail "cannot download ${url} to re-verify it"
+blob_sha="$(sha256sum "$tmp/blob" 2>/dev/null | cut -d' ' -f1 || true)"
+[ -n "$blob_sha" ] || blob_sha="$(shasum -a 256 "$tmp/blob" | cut -d' ' -f1)"
+[ "$blob_sha" = "${EXPECT_SHA256:-}" ] || fail "the blob at ${url} is not the verified installer (sha256 ${blob_sha}, verified ${EXPECT_SHA256:-none})"
 api PUT "$(path PACKAGES_PATH)" "$tmp/body.json"
 echo "package set: ${url} (x64, exe, /S, en-gb)"
 

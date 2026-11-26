@@ -7,7 +7,11 @@
 # Microsoft Store private audience / package flight. Going public is a
 # separate owner call on its own card, never an edit to a workflow input.
 # This guard makes "no automated path to a public release" a check, not
-# prose (ut-docs reference/store-distribution.md).
+# prose (ut-docs reference/store-distribution.md). Exception, by marker: the
+# owner opened the Microsoft Store for pipeline submission (ut-docs#6408,
+# 2026-11-26; store-release/microsoft.opened + the store-release:allow marker
+# in msstore-submit.yml, rule msstore-submit-switch). Google Play (#6411) and
+# the App Store (#6414) stay closed.
 #
 # Scans the files a release can run from: .github/workflows/*.yml|yaml,
 # .github/actions/** (composite actions), scripts/** (.sh .go .rb .py .js

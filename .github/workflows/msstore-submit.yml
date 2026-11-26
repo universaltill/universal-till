@@ -12,10 +12,16 @@
 #           ut-infra), through a federated Entra credential (no client secret),
 #           via scripts/ci/msstore-submit.sh. dry_run=true is a READ-ONLY probe
 #           of the Store API (proves token, seller id, product id; changes
-#           nothing). dry_run=false writes, and the script is held shut until the owner's opening card (ut-docs#6408) adds
-#           store-release/microsoft.opened: this workflow deliberately carries
-#           NO `store-release:allow` marker yet, and the store guard fails if
-#           that file ever appears without one.
+#           nothing). dry_run=false writes. The package URL is the
+#           publish-installer blob (HTTP 200, no redirect), not the GitHub URL.
+#
+# The owner opened the Microsoft Store for pipeline submission (ut-docs#6408,
+# order 2026-11-26): store-release/microsoft.opened plus the marker below. The
+# owner's act per release is the required-reviewer approval of the
+# `msstore-submit` environment. Called by promote-release.yml (workflow_call);
+# release.yml dispatches verify_only=true after the installer blob is published.
+#
+# store-release:allow ut-docs#6408 owner opened the Microsoft Store for pipeline submission (order 2026-11-26)
 name: msstore-submit
 
 on:
@@ -26,7 +32,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: "Read-only probe of the Store API; false = live package update (needs store-release/microsoft.opened)"
+        description: "Read-only probe of the Store API; false = live package update"
         required: true
         type: boolean
         default: true
@@ -40,12 +46,49 @@ on:
         required: true
         type: string
         default: "2"
+      verify_only:
+        description: "Run only the verify job: no Store call, no environment approval"
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to submit, vX.Y.Z (must be published)"
+        required: true
+        type: string
+      dry_run:
+        description: "Read-only probe of the Store API; false = live package update"
+        required: false
+        type: boolean
+        default: true
+      commit:
+        description: "Commit the submission after setting the package (otherwise it stays a draft)"
+        required: false
+        type: boolean
+        default: false
+      soak_minutes:
+        description: "Soak window in minutes over which the URL is fetched 3 times"
+        required: false
+        type: string
+        default: "2"
+      verify_only:
+        description: "Run only the verify job: no Store call, no environment approval"
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      ready:
+        description: "true when verify proved the release is ready to submit"
+        value: ${{ jobs.verify.outputs.ready }}
+      sha256:
+        description: "sha256 of the verified installer"
+        value: ${{ jobs.verify.outputs.sha256 }}
+      tag:
+        description: "Normalised release tag vX.Y.Z"
+        value: ${{ jobs.verify.outputs.tag }}
 
 permissions: {}
-
-concurrency:
-  group: msstore-submit
-  cancel-in-progress: false
 
 jobs:
   verify:
@@ -62,6 +105,16 @@ jobs:
       tag: ${{ steps.verify.outputs.tag }}
       sha256: ${{ steps.verify.outputs.sha256 }}
     steps:
+      - name: Store-reaching runs only from main
+        # A direct dispatch from a branch must not reach the submit job (the
+        # environment's main-only deployment policy is a second line, not the
+        # only one). verify_only never touches the Store, so any ref may run it.
+        if: ${{ !inputs.verify_only }}
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [ "$REF" = "refs/heads/main" ] || { echo "::error::a Store-reaching run (probe or live) must run from main, got '$REF'"; exit 1; }
       - name: Check the inputs
         run: |
           set -euo pipefail
@@ -70,6 +123,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # tags: the installer.nsi of the release is read with git show
+      - name: Gates for a Store-reaching run (main, latest release, environment protection)
+        # Same fail-closed checks as promote-release, so a direct dispatch cannot skip them.
+        if: ${{ !inputs.verify_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROBE_STORE: "true"
+        run: VERSION="${TAG#v}" bash scripts/ci/promote-preflight.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -115,10 +177,15 @@ jobs:
 
   submit:
     needs: verify
-    if: ${{ needs.verify.outputs.ready == 'true' }}
+    if: ${{ needs.verify.outputs.ready == 'true' && !inputs.verify_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: msstore-submit
+    # Only the Store-reaching job is serialised: a verify (release.yml) or a
+    # promote parked at its approval must not block or cancel the others.
+    concurrency:
+      group: msstore-submit-${{ inputs.tag }}
+      cancel-in-progress: false
     permissions:
       id-token: write # OIDC for azure/login; job-scoped
       contents: read
@@ -132,6 +199,15 @@ jobs:
       MSSTORE_SELLER_ID: ${{ vars.MSSTORE_SELLER_ID }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags for the post-approval gate re-check
+      - name: Re-check the gates after the approval (a newer release may exist now)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROBE_STORE: "true"
+        run: VERSION="${TAG#v}" bash scripts/ci/promote-preflight.sh
       - name: Azure login (OIDC, federated credential, no secret)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
