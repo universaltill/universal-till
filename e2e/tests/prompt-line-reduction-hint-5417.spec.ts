@@ -51,7 +51,7 @@ async function setup(page: Page) {
   await createCashier(page);
   await loginAsCashier(page);
   // ut-docs#5416: New sale on a priced basket needs a manager PIN from a cashier.
-  await page.request.post('/api/pos/reset', { form: { override_pin: MANAGER_PIN } });
+  await page.request.post('/api/pos/reset', { headers: { 'HX-Request': 'true' }, form: { override_pin: MANAGER_PIN } });
   await page.goto('/');
   await page.waitForSelector('.pos-container');
   await page.locator('.scan-row input[name="code"]').fill(SKU);
@@ -85,7 +85,7 @@ async function lowerQtyToOne(page: Page) {
 test.describe('line reduction hint survives the resync (ut-docs#5417)', () => {
   test.afterEach(async ({ page }) => {
     // ut-docs#5416: New sale on a priced basket needs a manager PIN from a cashier.
-    await page.request.post('/api/pos/reset', { form: { override_pin: MANAGER_PIN } });
+    await page.request.post('/api/pos/reset', { headers: { 'HX-Request': 'true' }, form: { override_pin: MANAGER_PIN } });
   });
 
   test('hint stays, qty box is restored, Cancel clears the hint', async ({ page }) => {

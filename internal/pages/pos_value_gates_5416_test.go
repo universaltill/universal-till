@@ -76,7 +76,7 @@ func approve(t *testing.T, e gateEnv, path string, prompt *httptest.ResponseReco
 func TestPOSLine_DiscountRaise_CashierPromptedNothingChanged(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 2)
-	rec := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestPOSLine_DiscountRaise_CashierPromptedNothingChanged(t *testing.T) {
 func TestPOSLine_DiscountRaise_ManagerPINAppliesElevatedAudit(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 2)
-	prompt := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
+	prompt := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
 	rec := approve(t, e, "/api/pos/line", prompt, gatePIN)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("approved retry: %d prompt=%v", rec.Code, isElevationPrompt(rec))
@@ -132,7 +132,7 @@ func TestPOSLine_DiscountLower_FreeAndAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, to := range []string{"20", "0"} {
-		rec := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {to}}, e.cashier)
+		rec := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {to}}, e.cashier)
 		if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 			t.Fatalf("lowering to %s: %d prompt=%v", to, rec.Code, isElevationPrompt(rec))
 		}
@@ -156,7 +156,7 @@ func TestPOSLine_SameDiscountStepper_NotGated(t *testing.T) {
 		{"key": {key}, "qty": {"5"}, "discount": {"30"}},
 		{"key": {key}, "qty": {"5"}, "discount": {"30"}, "from_discount": {"30"}},
 	} {
-		rec := postForm(e.mux, "/api/pos/line", f, e.cashier)
+		rec := postFormHtmx(e.mux, "/api/pos/line", f, e.cashier)
 		if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 			t.Fatalf("%v: %d prompt=%v", f, rec.Code, isElevationPrompt(rec))
 		}
@@ -169,7 +169,7 @@ func TestPOSLine_SameDiscountStepper_NotGated(t *testing.T) {
 func TestPOSLine_DiscountRetryStaleFromDiscount_409NoAudit(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 2)
-	prompt := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
+	prompt := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.cashier)
 	// Another screen sets a discount while the prompt is open.
 	if err := e.dp.Engine.UpdateLineByKey(key, 2, 5); err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestPOSLine_ReduceAndRaise_ApproverNeedsBoth_OnePINAttempt(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 3)
 	form := url.Values{"key": {key}, "qty": {"1"}, "discount": {"10"}}
-	prompt := postForm(e.mux, "/api/pos/line", form, e.cashier)
+	prompt := postFormHtmx(e.mux, "/api/pos/line", form, e.cashier)
 	if !isElevationPrompt(prompt) {
 		t.Fatalf("want one prompt, got %d", prompt.Code)
 	}
@@ -242,7 +242,7 @@ func TestPOSLine_ZeroPriceOrVoucherDiscount_NotGated(t *testing.T) {
 	e.dp.Engine.AddLineWithModifiers(pos.BasketLine{SKU: "GV", ItemID: "gv", Name: "Voucher", PriceCents: 1000,
 		NoMerge: true, GiftVoucher: &pos.GiftVoucherLine{Code: "GV-1"}}, 1, nil)
 	for _, l := range e.dp.Engine.Basket().Lines {
-		rec := postForm(e.mux, "/api/pos/line", url.Values{"key": {l.LineKey}, "qty": {"1"}, "discount": {"5"}}, e.cashier)
+		rec := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {l.LineKey}, "qty": {"1"}, "discount": {"5"}}, e.cashier)
 		if isElevationPrompt(rec) {
 			t.Fatalf("%s: zero-price and voucher lines are never gated", l.Name)
 		}
@@ -255,7 +255,7 @@ func TestPOSLine_ZeroPriceOrVoucherDiscount_NotGated(t *testing.T) {
 func TestPOSLine_DiscountTooLarge_NotGatedNotAudited(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 1)
-	rec := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "discount": {"999999"}}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "discount": {"999999"}}, e.cashier)
 	if isElevationPrompt(rec) {
 		t.Fatal("a discount the engine refuses is not gated")
 	}
@@ -270,7 +270,7 @@ func TestPOSLine_DiscountTooLarge_NotGatedNotAudited(t *testing.T) {
 func TestPOSLine_ManagerDiscount_NoPromptAudited(t *testing.T) {
 	e := newGateEnv(t)
 	key := e.seedLine(t, 2)
-	rec := postForm(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.manager)
+	rec := postFormHtmx(e.mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}, e.manager)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("manager: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -330,7 +330,7 @@ func TestPOSDiscount_LowerFree(t *testing.T) {
 	e.seedLine(t, 2)
 	e.dp.Engine.SetDiscount(50)
 	for _, to := range []string{"20", "0"} {
-		rec := postForm(e.mux, "/api/pos/discount", url.Values{"discount": {to}}, e.cashier)
+		rec := postFormHtmx(e.mux, "/api/pos/discount", url.Values{"discount": {to}}, e.cashier)
 		if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 			t.Fatalf("lowering to %s: %d prompt=%v", to, rec.Code, isElevationPrompt(rec))
 		}
@@ -487,7 +487,7 @@ func TestPOSReset_PricedBasket_CashierPromptedNothingCleared(t *testing.T) {
 	e := newGateEnv(t)
 	e.seedLine(t, 2)
 	e.dp.Engine.SetTable("tbl-5416", "T1")
-	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -513,7 +513,7 @@ func TestPOSReset_Elevated_ClearsRecordsClearedBasketAndElevatedAudit(t *testing
 	e := newGateEnv(t)
 	e.seedLine(t, 2)
 	e.dp.Engine.SetTable("tbl-5416", "T1")
-	prompt := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	prompt := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	rec := approve(t, e, "/api/pos/reset", prompt, gatePIN)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("approved: %d prompt=%v", rec.Code, isElevationPrompt(rec))
@@ -550,7 +550,7 @@ func TestPOSReset_PlainRequest_DoesNotRetarget(t *testing.T) {
 func TestPOSReset_StaleRetry_409NothingCleared(t *testing.T) {
 	e := newGateEnv(t)
 	e.seedLine(t, 2)
-	prompt := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	prompt := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	if _, err := e.dp.Engine.Scan("PLAIN"); err != nil { // a scan lands while the prompt is open
 		t.Fatal(err)
 	}
@@ -571,13 +571,13 @@ func TestPOSReset_StaleRetry_409NothingCleared(t *testing.T) {
 
 func TestPOSReset_EmptyOrZeroValue_Free(t *testing.T) {
 	e := newGateEnv(t)
-	if rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
+	if rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("empty basket: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
 	if _, err := e.dp.Engine.Scan("FREE"); err != nil {
 		t.Fatal(err)
 	}
-	if rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
+	if rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier); rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("zero-value basket: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
 	if len(e.dp.Engine.Basket().Lines) != 0 {
@@ -597,7 +597,7 @@ func TestPOSReset_PricedBasketDiscountedToZero_CashierPrompted(t *testing.T) {
 	if !e.dp.Engine.Snapshot().Total.IsZero() {
 		t.Fatalf("setup: total = %d, want 0", e.dp.Engine.Snapshot().Total.Minor())
 	}
-	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -624,7 +624,7 @@ func TestPOSReset_OnlyFreeLines_ClearsWithoutPrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("free lines: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -639,14 +639,14 @@ func TestPOSReset_OnlyFreeLines_ClearsWithoutPrompt(t *testing.T) {
 func TestPOSReset_ResumedHeld_ReparkNotGated(t *testing.T) {
 	e := newGateEnv(t)
 	e.seedLine(t, 2)
-	if rec := postForm(e.mux, "/api/pos/hold", url.Values{}, e.cashier); rec.Code != http.StatusOK {
+	if rec := postFormHtmx(e.mux, "/api/pos/hold", url.Values{}, e.cashier); rec.Code != http.StatusOK {
 		t.Fatalf("hold: %d %s", rec.Code, rec.Body.String())
 	}
 	id := heldID(t, e.dp)
-	if rec := postForm(e.mux, "/api/pos/resume", url.Values{"id": {id}}, e.cashier); rec.Code != http.StatusOK {
+	if rec := postFormHtmx(e.mux, "/api/pos/resume", url.Values{"id": {id}}, e.cashier); rec.Code != http.StatusOK {
 		t.Fatalf("resume: %d %s", rec.Code, rec.Body.String())
 	}
-	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("re-park: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -661,7 +661,7 @@ func TestPOSReset_ResumedHeld_ReparkNotGated(t *testing.T) {
 func TestPOSReset_Manager_NoPromptPlainAudit(t *testing.T) {
 	e := newGateEnv(t)
 	e.seedLine(t, 2)
-	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.manager)
+	rec := postFormHtmx(e.mux, "/api/pos/reset", url.Values{}, e.manager)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("manager: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -687,7 +687,7 @@ func TestPOSGates_AuthOff_NeverPrompt(t *testing.T) {
 		{"/api/pos/line", url.Values{"key": {key}, "qty": {"2"}, "discount": {"10"}}},
 		{"/api/pos/discount", url.Values{"discount": {"15"}}},
 	} {
-		rec := postForm(mux, c.path, c.form, nil)
+		rec := postFormHtmx(mux, c.path, c.form, nil)
 		if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 			t.Fatalf("%s: %d prompt=%v", c.path, rec.Code, isElevationPrompt(rec))
 		}
@@ -699,7 +699,7 @@ func TestPOSGates_AuthOff_NeverPrompt(t *testing.T) {
 		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
 	}
 	e.seedLine2(t)
-	if rec := postForm(mux, "/api/pos/reset", url.Values{}, nil); rec.Code != http.StatusOK || isElevationPrompt(rec) {
+	if rec := postFormHtmx(mux, "/api/pos/reset", url.Values{}, nil); rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("reset: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
 	if len(dp.Engine.Basket().Lines) != 0 {
@@ -745,7 +745,7 @@ func TestPOSLine_ReduceAndRaise_SessionHoldsOnlyOneAction_Prompted(t *testing.T)
 			}
 			key := e.seedLine(t, 3)
 			form := url.Values{"key": {key}, "qty": {"1"}, "discount": {"10"}}
-			rec := postForm(e.mux, "/api/pos/line", form, e.cashier)
+			rec := postFormHtmx(e.mux, "/api/pos/line", form, e.cashier)
 			if !isElevationPrompt(rec) {
 				t.Fatalf("holding only %s must still be prompted, got %d: %s", held, rec.Code, rec.Body.String())
 			}

@@ -2194,6 +2194,27 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// gate scan reads them). A reduce-and-raise post checks both in
 			// ONE PIN verification, so the approver must hold both and a
 			// wrong PIN counts once.
+			// A non-htmx client cannot answer the PIN prompt: refuse it before
+			// the PIN is looked at, as /api/pos/discount (ut-docs#6858).
+			if r.Header.Get("HX-Request") == "" {
+				switch {
+				case reduction && raise:
+					if !canPerform(d, r, "void_comp_waste") || !canPerform(d, r, "price_override") {
+						writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+						return
+					}
+				case reduction:
+					if !canPerform(d, r, "void_comp_waste") {
+						writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+						return
+					}
+				default:
+					if !canPerform(d, r, "price_override") {
+						writeForbiddenJSON(w, locale, "pos.error.discount_not_permitted")
+						return
+					}
+				}
+			}
 			pin := r.Form.Get("override_pin")
 			switch {
 			case reduction && raise:
@@ -2341,8 +2362,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		from := d.Engine.SaleDiscount()
 		to := money.FromMinor(discount)
-		w.Header().Set("HX-Retarget", "#basket")
-		w.Header().Set("HX-Reswap", "outerHTML")
+		// Only the approval retry (posted from the elevation dialog, which
+		// targets #shrinkage-hint) is steered back to the basket (ut-docs#6858,
+		// as /api/pos/reset).
+		if r.Form.Get("override_pin") != "" || r.Form.Get("from_discount") != "" {
+			w.Header().Set("HX-Retarget", "#basket")
+			w.Header().Set("HX-Reswap", "outerHTML")
+		}
+		saleChanged := func() {
+			b := d.Engine.Basket()
+			b.LineChangedKey = "sale"
+			basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			_ = basketView.Render(w, b)
+		}
 		if v := strings.TrimSpace(r.Form.Get("from_discount")); v != "" {
 			fromDisc, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || fromDisc < 0 {
@@ -2350,12 +2384,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if fromDisc != from.Minor() {
-				b := d.Engine.Basket()
-				b.LineChangedKey = "sale"
-				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.WriteHeader(http.StatusConflict)
-				_ = basketView.Render(w, b)
+				saleChanged()
 				return
 			}
 		}
@@ -2364,9 +2393,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// A non-htmx client cannot answer the PIN prompt: refuse it as
 			// the tender path does (JSON 403) rather than a 200 HTML prompt.
 			if r.Header.Get("HX-Request") == "" && !canPerform(d, r, "price_override") {
-				writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
-					"code": "forbidden", "message": httpx.T(locale, "pos.error.discount_not_permitted"),
-				}})
+				writeForbiddenJSON(w, locale, "pos.error.discount_not_permitted")
 				return
 			}
 			elev = checkOrElevate(d, r, "price_override", r.Form.Get("override_pin"))
@@ -2384,7 +2411,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		d.Engine.SetDiscount(to)
+		if saleDiscountTestHook != nil {
+			saleDiscountTestHook()
+		}
+		// Compare-and-set (ut-docs#6858): a promo scan that landed since the
+		// read above is never silently overwritten, and nothing is audited.
+		if err := d.Engine.SetDiscountIf(from, to); err != nil { // only ErrLineChanged
+			saleChanged()
+			return
+		}
 		if to != from {
 			auditValueGate(r.Context(), repo, r, elev, "pos_discount", "sale", "sale_discount",
 				map[string]any{"from": from.Minor(), "to": discount})
@@ -2616,6 +2651,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var elev elevationCheck
 		if priced {
+			// A non-htmx client cannot answer the PIN prompt: refuse it before
+			// the PIN is looked at, as /api/pos/discount (ut-docs#6858).
+			if r.Header.Get("HX-Request") == "" && !canPerform(d, r, "void_comp_waste") {
+				writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+				return
+			}
 			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
 			if elev.Outcome == needsElevation {
 				w.Header().Set("HX-Retarget", "#shrinkage-hint")
@@ -2722,13 +2763,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// /api/pos/discount does. A JSON API cannot sit through a PIN round
 		// trip: a session without price_override is refused here, before any
 		// payment, sale row or fiscal call. Equal or lower is accepted.
-		if in.Discount > d.Engine.SaleDiscount().Minor() && !canPerform(d, r, "price_override") {
-			writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
-				"code": "forbidden", "message": httpx.T(httpx.ResolveLocale(w, r), "pos.error.discount_not_permitted"),
-			}})
+		// One read (ut-docs#6858): the gate and the audit `from` use the
+		// same value.
+		engineDiscount := d.Engine.SaleDiscount().Minor()
+		if in.Discount > engineDiscount && !canPerform(d, r, "price_override") {
+			writeForbiddenJSON(w, httpx.ResolveLocale(w, r), "pos.error.discount_not_permitted")
 			return
 		}
-		engineDiscount := d.Engine.SaleDiscount().Minor()
+		if tenderDiscountTestHook != nil {
+			tenderDiscountTestHook()
+		}
 
 		offline := false
 		offlineSet := false
@@ -4541,11 +4585,31 @@ func isISO4217Code(c string) bool {
 	return true
 }
 
+// writeForbiddenJSON answers a non-HTMX caller that lacks a gated permission
+// and so cannot answer a PIN prompt (ut-docs#5416, #6858).
+func writeForbiddenJSON(w http.ResponseWriter, locale, key string) {
+	writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
+		"code": "forbidden", "message": httpx.T(locale, key),
+	}})
+}
+
 // lineSnapshotTestHook (tests only, ut-docs#5417) runs in /api/pos/line
 // between reading the line and applying the change, so a test can land a
 // concurrent writer in exactly that window. Tests that set it must not run
 // in parallel.
 var lineSnapshotTestHook func()
+
+// saleDiscountTestHook (tests only, ut-docs#6858) runs in /api/pos/discount
+// between the gate's read of the sale discount and the compare-and-set apply,
+// so a test can land a promo scan in exactly that window. Tests that set it
+// must not run in parallel.
+var saleDiscountTestHook func()
+
+// tenderDiscountTestHook (tests only, ut-docs#6858) runs in /api/pos/tender
+// right after the discount gate, so a test can change the engine's sale
+// discount between the gate and the audit. Tests that set it must not run in
+// parallel.
+var tenderDiscountTestHook func()
 
 // maskTxnRef keeps only the last 4 characters of a provider reference for
 // logs (ut-docs#6606), like the plugins' maskRef.

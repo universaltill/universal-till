@@ -2185,7 +2185,8 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 
 // ErrLineChanged (ut-docs#5417): the line is gone or its qty/discount is no
 // longer the one the caller read (or, for ResetAndSnapshotIf, the basket is
-// no longer the one the caller saw); nothing was changed.
+// no longer the one the caller saw, or the sale discount for SetDiscountIf);
+// nothing was changed.
 var ErrLineChanged = errors.New("basket line changed since it was read")
 
 // UpdateLineByKey sets qty/discount for the single line matching key
@@ -2243,6 +2244,10 @@ func (s *Service) updateLineAtLocked(i int, qty float64, discount money.Money) e
 func (s *Service) SetDiscount(discount money.Money) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.setDiscountLocked(discount)
+}
+
+func (s *Service) setDiscountLocked(discount money.Money) {
 	if discount.IsNegative() {
 		discount = 0
 	}
@@ -2250,6 +2255,23 @@ func (s *Service) SetDiscount(discount money.Money) {
 	s.discountValue = discount
 	s.discountPercentBP = 0
 	s.recomputeTotals()
+}
+
+// SetDiscountIf is SetDiscount as a compare-and-set (ut-docs#6858): it applies
+// to only if the current computed sale discount (the value SaleDiscount
+// returns: a percent promo resolved to its amount) still equals from, the
+// value the caller's gate decided against. Otherwise ErrLineChanged and
+// nothing changes. Compared under s.mu after recomputeTotals, so a promo scan
+// between the caller's read and this call is never silently overwritten.
+func (s *Service) SetDiscountIf(from, to money.Money) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recomputeTotals()
+	if s.basket.Discount != from {
+		return ErrLineChanged
+	}
+	s.setDiscountLocked(to)
+	return nil
 }
 
 // SaleDiscount returns the current sale-level discount.
