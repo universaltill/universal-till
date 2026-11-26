@@ -1,11 +1,16 @@
 package pages
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // ut-docs#6648: the cashier picks which payment (leg) of a split-bill sale a
@@ -149,7 +154,8 @@ func TestRefundLegChoice_NettedLegRefusesSecondRefund(t *testing.T) {
 func TestRefundLegChoice_AllKeepsPaymentOrder(t *testing.T) {
 	rig := newChoiceRig(t)
 	rig.sell(t, `[{"method":"demopay","amount":150},{"method":"demopay","amount":90}]`)
-	rec := rig.postRefundLeg(t, rig.receiptNo(t, 1), 2, "all", "demopay")
+	// Tester: 120 of 240 so the order shows (reverse order would give [30 90]).
+	rec := rig.postRefundLeg(t, rig.receiptNo(t, 1), 1, "all", "demopay")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -157,8 +163,11 @@ func TestRefundLegChoice_AllKeepsPaymentOrder(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("hook calls = %d, want 1", len(got))
 	}
-	if a := legAmounts(t, got[0]); fmt.Sprint(a) != "[150 90]" {
-		t.Errorf("leg amounts = %v, want [150 90]", a)
+	if a := legAmounts(t, got[0]); fmt.Sprint(a) != "[120]" {
+		t.Errorf("leg amounts = %v, want [120] (first leg first)", a)
+	}
+	if refs := originalRefs(t, got[0]); fmt.Sprint(refs) != "[pi_1]" {
+		t.Errorf("original refs = %v, want [pi_1]", refs)
 	}
 }
 
@@ -270,5 +279,44 @@ func TestAllocateRefundToLeg(t *testing.T) {
 		if ok != c.ok || fmt.Sprint(got) != fmt.Sprint(c.want) {
 			t.Errorf("%s: got %v %v, want %v %v", c.name, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+// Tester (ut-docs#6648): both leg refusals sit BEFORE fiscal.sign.start, so a
+// refused refund never opens a TSE-side transaction (ut-docs#1519). The valid
+// refund at the end proves the counter sees a start on this path.
+func TestRefundLegChoice_RefusalsOpenNoFiscalStart(t *testing.T) {
+	rig := newChoiceRig(t)
+	var starts atomic.Int32
+	t.Cleanup(func() { plugins.SharedBus(rig.dp.Db).ResetSubscribers() })
+	subscribeFiscalSignStartHandler(t, rig.dp, "com.test.fiscal-start-6648", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var p map[string]any
+		_ = json.Unmarshal(ev.Payload, &p)
+		if p["sale_type"] == "return" {
+			starts.Add(1)
+		}
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-6648","tx_revision":1}`), nil
+	})
+	rig.sell(t, `[{"method":"demopay","amount":150},{"method":"demopay","amount":90}]`)
+	receipt := rig.receiptNo(t, 1)
+	ids := legPaymentIDs(t, rig, receipt)
+	rig.dp.WaitForAsyncWork()
+	starts.Store(0)
+	if rec := rig.postRefundLeg(t, receipt, 1, ids[1], "demopay"); rec.Code != http.StatusConflict {
+		t.Fatalf("leg_exhausted code = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := rig.postRefundLeg(t, receipt, 1, "nope", "demopay"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("leg_unknown code = %d: %s", rec.Code, rec.Body.String())
+	}
+	rig.dp.WaitForAsyncWork()
+	if n := starts.Load(); n != 0 {
+		t.Fatalf("fiscal.sign.start fired %d time(s) for refused refunds, want 0", n)
+	}
+	if rec := rig.postRefundLeg(t, receipt, 1, ids[0], "demopay"); rec.Code != http.StatusOK {
+		t.Fatalf("valid refund code = %d: %s", rec.Code, rec.Body.String())
+	}
+	rig.dp.WaitForAsyncWork()
+	if n := starts.Load(); n != 1 {
+		t.Fatalf("fiscal.sign.start fired %d time(s) for the valid refund, want 1 (counter not wired?)", n)
 	}
 }
