@@ -802,6 +802,7 @@
   "diagnostics.chip_label": "Diagnostic mode on",
   "diagnostics.chip_title": "Diagnostic mode is on — this till is sending technical events to Universal Till support",
   "elevation.approved": "Approved and saved.",
+  "elevation.error_approval_changed": "This approval doesn't match the request any more. Check what is shown above and enter the PIN again.",
   "elevation.error_insufficient_role": "This PIN doesn't have permission for this action",
   "elevation.error_invalid_pin": "Invalid PIN",
   "elevation.error_locked_out": "Too many attempts, try again shortly",

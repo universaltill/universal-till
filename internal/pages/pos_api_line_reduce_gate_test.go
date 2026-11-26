@@ -72,7 +72,15 @@ func TestLineHandler_CashierWrongPINRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}, "override_pin": {"000000"}}, &auth.User{ID: blockedID, Role: "cashier"})
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	// ut-docs#7085: a PIN only counts on a prompt the till issued, so ask first.
+	prompt := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"-1"}}, cashier)
+	if !isElevationPrompt(prompt) {
+		t.Fatalf("want prompt, got %d", prompt.Code)
+	}
+	retry := promptHiddenFields(t, prompt.Body.String())
+	retry.Set("override_pin", "000000")
+	rec := postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("wrong PIN: want prompt, got %d", rec.Code)
 	}
@@ -89,7 +97,15 @@ func TestLineHandler_ManagerPINApprovesReductionAndAudits(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 
-	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "override_pin": {"445566"}}, &auth.User{ID: blockedID, Role: "cashier"})
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	// ut-docs#7085: the PIN rides on the prompt the till issued for these values.
+	prompt := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
+	if !isElevationPrompt(prompt) {
+		t.Fatalf("want prompt, got %d", prompt.Code)
+	}
+	retry := promptHiddenFields(t, prompt.Body.String())
+	retry.Set("override_pin", "445566")
+	rec := postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if isElevationPrompt(rec) || rec.Code != http.StatusOK {
 		t.Fatalf("approved: got %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}

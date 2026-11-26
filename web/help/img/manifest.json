@@ -442,7 +442,10 @@
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
     },
     "internal/pages/elevation.go": {
-      "sha256": "65ccb54a8734f403adb5aae7d1e7a5426e032fec220010aa7fedcbd94579ee2f"
+      "sha256": "795eed88d7f088bad42367be3cb096b93eb9e73355fb7843d87487b89ec922b7"
+    },
+    "internal/pages/elevation_approval.go": {
+      "sha256": "0bc3a7c9d1ca07df2af8389e35e13e957c29e1ec27f45f6ed382183610867cc9"
     },
     "internal/pages/engine_config.go": {
       "sha256": "d7f79a1aecccc2d0146c102ffe28fcb84708d14077ddfdd55d42882f8b87339f"

@@ -139,8 +139,15 @@ func TestRemoveHandler_CashierValidPINElevates(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 
-	form := url.Values{"key": {key}, "reason": {"waste"}, "override_pin": {"445566"}}
-	rec := postForm(mux, "/api/pos/remove", form, &auth.User{ID: blockedID, Role: "cashier"})
+	// ut-docs#7085: the PIN rides on the prompt the till issued for these values.
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	prompt := postFormHtmx(mux, "/api/pos/remove", url.Values{"key": {key}, "reason": {"waste"}}, cashier)
+	if !isElevationPrompt(prompt) {
+		t.Fatalf("want prompt, got %d: %s", prompt.Code, prompt.Body.String())
+	}
+	form := promptHiddenFields(t, prompt.Body.String())
+	form.Set("override_pin", "445566")
+	rec := postFormHtmx(mux, "/api/pos/remove", form, cashier)
 	if isElevationPrompt(rec) {
 		t.Fatalf("expected the PIN to clear the gate, got an elevation prompt: %d %s", rec.Code, rec.Body.String())
 	}

@@ -119,14 +119,17 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 	return verifyElevationPIN(dp, r, actorID, pin, action)
 }
 
-// checkOrElevateAll is checkOrElevate for a request that needs several
-// actions at once (ut-docs#5416: one post that both lowers a line's qty and
-// raises its discount). allowed only if the session holds EVERY action;
-// otherwise ONE PIN verification, whose approver must hold every action too
-// (errApproverInsufficientRole if any is missing). The PIN is checked once,
-// so a wrong PIN counts one failed attempt toward the shared lockout, not one
-// per action.
-func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...string) elevationCheck {
+// checkOrElevateBound checks the session holds every action, else the
+// manager PIN, and the PIN only counts for the
+// exact request the prompt summarised (ut-docs#7085). binding is the
+// approvalBinding of the values the caller computed from THIS request; the
+// returned token (non-empty when Outcome == needsElevation) must be rendered
+// in the prompt as the hidden "approval" field. A missing, used, expired,
+// other-user or edited approval is refused BEFORE the PIN lookup, so it
+// neither ticks the shared lockout nor writes audit/shrinkage rows. A wrong
+// PIN re-renders the same token, so retyping works; the token is consumed
+// only when the elevated action may proceed.
+func checkOrElevateBound(dp *common.Deps, r *http.Request, binding string, actions ...string) (elevationCheck, string) {
 	actorID := getSessionUserID(r)
 	all := true
 	for _, a := range actions {
@@ -136,9 +139,24 @@ func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...
 		}
 	}
 	if all {
-		return elevationCheck{Outcome: allowed, ActorID: actorID}
+		return elevationCheck{Outcome: allowed, ActorID: actorID}, ""
 	}
-	return verifyElevationPIN(dp, r, actorID, pin, actions...)
+	pin := r.Form.Get("override_pin")
+	tok := r.Form.Get("approval")
+	if pin == "" {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID}, elevationApprovals.mint(binding)
+	}
+	if !elevationApprovals.valid(tok, binding) {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(binding)
+	}
+	check := verifyElevationPIN(dp, r, actorID, pin, actions...)
+	if check.Outcome != elevated {
+		return check, tok
+	}
+	if !elevationApprovals.consume(tok, binding) {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(binding)
+	}
+	return check, ""
 }
 
 // checkStepUp is checkOrElevate's step-up sibling (ut-docs#1841, ADR-0087):
@@ -250,6 +268,8 @@ func elevationErrorKey(err error) string {
 		return "elevation.error_locked_out"
 	case errors.Is(err, auth.ErrInvalidPIN):
 		return "elevation.error_invalid_pin"
+	case errors.Is(err, errApprovalStale):
+		return "elevation.error_approval_changed"
 	case errors.Is(err, errAuthServiceUnavailable), errors.Is(err, errStepUpCrossOrigin):
 		return "elevation.error_unavailable"
 	case errors.Is(err, errStepUpSessionNotPermitted):
