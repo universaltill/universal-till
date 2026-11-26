@@ -277,6 +277,8 @@ func endedResultKey(status string) string {
 		return "settings.move.declined"
 	case "locked":
 		return "settings.move.locked"
+	case "region_mismatch":
+		return "settings.move.refused_region"
 	case "moved", "done":
 		return "settings.move.result_done"
 	case "failed", "unavailable":

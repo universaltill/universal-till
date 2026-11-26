@@ -337,6 +337,10 @@ func TestNewShop_ConfirmedWipesAndRegistersFirstTime(t *testing.T) {
 	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'new_shop_registered' AND actor_id = ?`, mgrUser.ID).Scan(&approver); err != nil || approver == 0 {
 		t.Fatalf("no audit row naming the approver: %d (%v)", approver, err)
 	}
+	var blocked int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'new_shop_registered' AND blocked_actor_id IS NOT NULL`).Scan(&blocked); err != nil || blocked == 0 {
+		t.Fatalf("no audit row with blocked_actor_id (the PIN path): %d (%v)", blocked, err)
+	}
 	nb := c.body(1)
 	if nb["device_id"] == old || nb["expect_store_id"] != nil {
 		t.Fatalf("second register body: %v", nb)
@@ -630,6 +634,9 @@ func TestNewShop_CrossOriginRefused(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "Registered as a new shop") || enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
 		t.Fatalf("cross-origin request wiped: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "Approval isn&#39;t available on this device right now.") {
+		t.Fatalf("cross-origin: no refusal text: %s", rec.Body.String())
+	}
 }
 
 func TestNewShop_CashierWithManagerPINRefused(t *testing.T) {
@@ -640,6 +647,9 @@ func TestNewShop_CashierWithManagerPINRefused(t *testing.T) {
 	body := postForm(mux, "/api/enrol/new-shop", newShopForm(pin), &cashUser).Body.String()
 	if strings.Contains(body, "Registered as a new shop") || enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
 		t.Fatalf("cashier wiped the till: %s", body)
+	}
+	if !strings.Contains(body, "Manager or admin required") {
+		t.Fatalf("cashier: no refusal text: %s", body)
 	}
 }
 

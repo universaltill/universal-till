@@ -423,6 +423,9 @@ func TestMoveApprove_RegionMismatchIsTerminal(t *testing.T) {
 	if enroll.Effective(d.Cfg).Marketplace.StoreID != mvStore {
 		t.Fatal("a refused approval moved the till")
 	}
+	if _, ok := enroll.PendingMoveByID(d.Cfg, mvID); ok {
+		t.Fatal("a terminal region refusal left the move pending on the till")
+	}
 }
 
 func TestMoveRefusalKeys_Region(t *testing.T) {
