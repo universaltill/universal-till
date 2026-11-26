@@ -56,6 +56,8 @@ type moveStubCloud struct {
 	bad     int
 	// pairRefuse, when set, is the 409 code the move request gets.
 	pairRefuse string
+	// decideRefuse, when set, is the 409 code the move-approvals endpoint answers.
+	decideRefuse string
 }
 
 func newMoveStubCloud(t *testing.T) *moveStubCloud {
@@ -77,6 +79,11 @@ func newMoveStubCloud(t *testing.T) *moveStubCloud {
 			c.bad++
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "approval_invalid"}})
+			return
+		}
+		if c.decideRefuse != "" {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": c.decideRefuse}})
 			return
 		}
 		c.decided = append(c.decided, req["decision"])
@@ -382,5 +389,48 @@ func TestEnrolPair_MoveRefusalIsTranslatedAndChangesNothing(t *testing.T) {
 	}
 	if m := enroll.Effective(d.Cfg).Marketplace; m.StoreID != mvStore || m.MerchantToken != mvToken {
 		t.Fatal("a refused move changed the identity")
+	}
+}
+
+// ut-docs#6424: move_region_mismatch has its own text, at pairing and at approval.
+func TestEnrolPair_MoveRegionMismatchIsTranslatedAndChangesNothing(t *testing.T) {
+	mux, d, cloud := moveApprovalDeps(t)
+	registerSettings(mux, d)
+	cloud.mu.Lock()
+	cloud.pairRefuse = "move_region_mismatch"
+	cloud.mu.Unlock()
+	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}, "confirm_replace": {"1"}}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "different regions") || strings.Contains(body, "move_region_mismatch") {
+		t.Fatalf("refusal = %s", body)
+	}
+	if m := enroll.Effective(d.Cfg).Marketplace; m.StoreID != mvStore || m.MerchantToken != mvToken {
+		t.Fatal("a refused move changed the identity")
+	}
+}
+
+func TestMoveApprove_RegionMismatchIsTerminal(t *testing.T) {
+	mux, d, cloud := moveApprovalDeps(t)
+	cloud.mu.Lock()
+	cloud.decideRefuse = "move_region_mismatch"
+	cloud.mu.Unlock()
+	rec := postMove(mux, &mgrUser, "decision=approve&target_name="+mvName+"&override_pin="+mvPIN)
+	body := rec.Body.String()
+	if !strings.Contains(body, "different regions") || !strings.Contains(body, `id="move-actions" hx-swap-oob="true" hidden`) ||
+		strings.Contains(body, "Try again") || strings.Contains(body, "move_region_mismatch") {
+		t.Fatalf("approve answer = %s", body)
+	}
+	if enroll.Effective(d.Cfg).Marketplace.StoreID != mvStore {
+		t.Fatal("a refused approval moved the till")
+	}
+}
+
+func TestMoveRefusalKeys_Region(t *testing.T) {
+	if got := moveRefusalKey("move_region_mismatch"); got != "settings.move.refused_region" {
+		t.Fatalf("moveRefusalKey = %q", got)
+	}
+	got, terminal := moveDecisionErrorKey(&enroll.MoveRefusedError{Code: "move_region_mismatch"})
+	if got != "settings.move.refused_region" || !terminal {
+		t.Fatalf("moveDecisionErrorKey = %q, %v", got, terminal)
 	}
 }

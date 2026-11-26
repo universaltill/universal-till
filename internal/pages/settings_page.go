@@ -1351,7 +1351,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// gate as new-shop (Fable review M2): a healthy till or one of a
 		// claimed shop never reaches the cloud from here.
 		if !tillLockedOutAnonymous(r.Context(), d) {
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, reconnectRefusalKey(r.Context(), d))))
 			return
 		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
@@ -1386,7 +1386,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
 		if !tillLockedOutAnonymous(r.Context(), d) {
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, reconnectRefusalKey(r.Context(), d))))
 			return
 		}
 		if r.Form.Get("confirm_new_shop") != "1" {
@@ -1402,8 +1402,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			})
 			return
 		}
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
+		// Irreversible and the panel is manager-only: a step-up, so even a
+		// manager session proves a PIN and the request is same-origin (L3).
+		elev := checkStepUp(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome != elevated {
 			renderElevationPrompt(w, r, "/api/enrol/new-shop", "#new-shop-msg",
 				httpx.T(locale, "elevation.summary.enrol_new_shop"),
 				[]elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}}, elev)
@@ -1442,7 +1444,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// The wipe ran (StartAsNewStore does it first): say so, then why.
 			reason := ""
 			if err != nil {
-				if msg := reconnectResultHTML(locale, err); msg != "" {
+				// "Nothing changed. Try again later" would be false after a wipe
+				// that will retry by itself: those two add no reason.
+				msg := reconnectResultHTML(locale, err)
+				generic := msg == html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_server_error")) ||
+					msg == html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_failed"))
+				if msg != "" && !generic {
 					reason = " " + msg
 				}
 			}

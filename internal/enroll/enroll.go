@@ -435,6 +435,14 @@ var ErrUpdateNeeded = errors.New("the cloud asked for a key proof this till cann
 // main or standalone till, and Reconnect only to a registered one.
 var ErrReconnectUnavailable = errors.New("this till cannot reconnect or start a new shop this way")
 
+// ErrReconnectOtherShop: the cloud answered a Reconnect for a different shop
+// than the one the till asked to rejoin. Not a cloud code, so it is no
+// *RegisterHTTPError; nothing was persisted (ut-docs#6424 T1).
+var ErrReconnectOtherShop = errors.New("reconnect: the cloud answered for a different shop than the one this till asked to rejoin")
+
+// IsReconnectOtherShop reports whether err is ErrReconnectOtherShop.
+func IsReconnectOtherShop(err error) bool { return errors.Is(err, ErrReconnectOtherShop) }
+
 // keyRefusedError: the cloud knows another key for this device and refused the
 // signed proof (or the till has no key to sign with).
 type keyRefusedError struct{ cause error }
@@ -465,6 +473,12 @@ func IsStoreNotReusable(err error) bool {
 
 // IsRateLimited: the cloud's limiter answered 429. Not a block.
 func IsRateLimited(err error) bool { return httpCode(err, http.StatusTooManyRequests, "") }
+
+// IsServerError: the cloud answered with a 5xx (it was reached, it failed).
+func IsServerError(err error) bool {
+	var he *RegisterHTTPError
+	return errors.As(err, &he) && he.Status >= 500
+}
 
 // KeyRefusedAt is when the cloud refused this till's key proof; zero when it
 // has not (or the value is unreadable). Local only.
@@ -1212,8 +1226,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	// A cloud that ignored expect_store_id (older build, failed device lookup)
 	// may answer with a different store; never adopt it.
 	if expectStoreID != "" && d.StoreID != expectStoreID {
-		return &RegisterHTTPError{Status: http.StatusConflict, Code: StoreNotReusableCode,
-			Body: "the cloud answered for a different shop than the one this till asked to rejoin"}
+		return ErrReconnectOtherShop
 	}
 
 	log := logging.L()
