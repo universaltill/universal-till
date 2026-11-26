@@ -13,7 +13,8 @@
     {{ else if eq .state "not_in_plan" }}{{ T "backup.cloud.state_not_in_plan" }}
     {{ else }}{{ T "backup.cloud.state_waiting" }}{{ end }}
   </p>
-  {{ if .reason }}<p class="muted" data-testid="backup-cloud-reason">{{ if eq .reason "disk" }}{{ T "backup.cloud.err.disk" }}{{ else if eq .reason "network" }}{{ T "backup.cloud.err.network" }}{{ else if eq .reason "server" }}{{ T "backup.cloud.err.server" }}{{ else if eq .reason "rate_limited" }}{{ T "backup.cloud.err.rate_limited" }}{{ else if eq .reason "cloud_backup_not_in_plan" }}{{ T "backup.cloud.err.cloud_backup_not_in_plan" }}{{ else if eq .reason "subscription_inactive" }}{{ T "backup.cloud.err.subscription_inactive" }}{{ else if eq .reason "not_main_till" }}{{ T "backup.cloud.err.not_main_till" }}{{ else if eq .reason "too_large" }}{{ T "backup.cloud.err.too_large" }}{{ else if eq .reason "not_enabled" }}{{ T "backup.cloud.err.not_enabled" }}{{ else }}{{ T "backup.cloud.err.other" }}{{ end }}</p>{{ end }}
+  {{ if .reason }}<p class="muted" data-testid="backup-cloud-reason">{{ .reasonText }}</p>{{ end }}
+  {{ if .reasonLink }}<div class="set-row set-below"><a class="btn secondary" href="{{ .reasonLink }}" data-testid="backup-cloud-reason-link">{{ T "backup.cloud.err.open_registration" }}</a></div>{{ end }}
   {{ if .msg }}<p role="status" data-testid="backup-cloud-notice">{{ .msg }}</p>{{ end }}
   <p class="muted">{{ T "backup.cloud.privacy" }}</p>
   {{ if .entitled }}
