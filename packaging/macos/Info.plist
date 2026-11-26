@@ -37,7 +37,7 @@
   <!-- The AI plugin scans items with the camera; macOS requires a usage
        description or it blocks (crashes) the request. -->
   <key>NSCameraUsageDescription</key>
-  <string>Universal Till uses the camera to scan items and barcodes.</string>
+  <string>Universal Till uses the camera to scan items, barcodes and pairing QR codes.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Universal Till may use the microphone for voice features.</string>
   <!-- The till browses and advertises on the shop LAN (internal/discovery:

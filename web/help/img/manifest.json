@@ -123,7 +123,7 @@
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
     },
     "multitill": {
-      "en": "3e594ecb2c1d5f7cacf84a762ed89c2998260d12a2cd61214986f97e9edc475c",
+      "en": "23ba6f82ec0bafa1651ca820cbc5257696359bc508376fdce3970f61752e18c9",
       "fa": "268fe26a9cef33ac32276707b3a7b8cc848dedb14e945162d0da7d59c43047a8",
       "ar": "57c2dc97d3fb535c17c0f23900f5a398ba10b0f54b9dc66c7a2f8a9dafa6689c",
       "tr": "b6c50a109b42607b1afd80944976ba0ad0f1898b3403d38d31313113983ec51c"
@@ -823,10 +823,10 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "4c4b3eeea3761a13f36869eb71ecbe6bc0cb2a7c8987034f9f30747cb9a87161"
+      "sha256": "10906e2e7a2bfcd71367ad0625c50125e107e79a2c20e648d18900efa63aa663"
     },
     "web/public/app.js": {
-      "sha256": "5a0518d301f684e740c2974bed06f63b6aba3b2d00d8cc2206d6dc2b861063e9"
+      "sha256": "aa34895662d3549e0b48bcca5f93be7e51bc3793c22eb04fce09581e9bea822d"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1473,6 +1473,9 @@
     "web/public/input-heartbeat.js": {
       "sha256": "25cfd829fc5ee93b35ae9f5c3a0d373284818dd41af648d0ac2adc96fdb2b79d"
     },
+    "web/public/join-scan.js": {
+      "sha256": "57407a00df51976dcc278dfb99ee924a1f2941b9438991f91100134ca9892004"
+    },
     "web/public/licenses.txt": {
       "sha256": "f6da2e0564c835773c1db5fc969d4e080a43b6c8d363ea27eddaf86251c2783b"
     },
@@ -1490,6 +1493,9 @@
     },
     "web/public/photo-cutout.js": {
       "sha256": "ca4e9491fe4e9fdac6183afccc459b1532a7de09e475ebecec9582a16849159b"
+    },
+    "web/public/qr-scan.js": {
+      "sha256": "1c9cb172be73678bed95ddb42a29e169b1c9f827a2208164341ba4d98c6482c2"
     },
     "web/public/radiogroup.js": {
       "sha256": "8f5dd58a9c27af8c0f212debc0755aded500d61555599b16d8dc5b0e0d751778"
@@ -1582,7 +1588,7 @@
       "sha256": "d285b1538e9b0808756b7c3be69e7b7fc79d11341b330ddbcc7dcf1c57765289"
     },
     "web/ui/layouts/base.html": {
-      "sha256": "dc6cef2a30e69f8cfecedc8ff3753a1fcff8e700f580a1d0f682936e05e88bca"
+      "sha256": "312d9bd1424884244f80b24d2dc79e3bf73ef57869e3428474638a31a4c257d1"
     },
     "web/ui/pages/about.html": {
       "sha256": "445d92b016b4043f1b32eefeca34d9c677b28108662407afc2c90ac3ddac81e2"
@@ -1771,7 +1777,7 @@
       "sha256": "4be4d9b158383d1777439ef01f3211683c75c50b04182b61caffb37c091255e3"
     },
     "web/ui/pages/setup.html": {
-      "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
+      "sha256": "28e9b30748d061eb75d8e395b8c3e4464007a9ac57cd2cb6bb3a577df810702f"
     },
     "web/ui/pages/shifts.html": {
       "sha256": "a235f99409566dfb432e53b15c647f696296ebbcd27ffbcd971e0644b96aa91a"
@@ -1789,7 +1795,7 @@
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
     },
     "web/ui/pages/tills.html": {
-      "sha256": "93b3b63de5bd24ccc652622352fc00060b17e627ee62d919603d938a1a2643f6"
+      "sha256": "2d09af2140d7234aab6f9c1a3e1803da556da2eb8e56de605c1b8c5c7a55954b"
     },
     "web/ui/pages/translations.html": {
       "sha256": "669732ceb602e1b75cb8d829b7c8bb10c998da311be19b93319fd6efec319d79"

@@ -8587,3 +8587,9 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
   .tills-merged tr { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; background: var(--surface); }
   .tills-merged .btn { inline-size: 100%; }
 }
+/* ut-docs#3428: scanned pairing code on the join forms. The code is a long
+   base64url string: keep it on one truncated line (never a wall of text) and
+   read left-to-right in RTL. The chip and Clear wrap on narrow screens. */
+.join-scanned { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
+.join-scanned[hidden] { display: none; }
+input[data-scanned] { direction: ltr; text-overflow: ellipsis; }

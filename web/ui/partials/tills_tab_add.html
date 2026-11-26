@@ -135,12 +135,38 @@
         {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
              address; both are typed here. The address is ignored when the
              full (long) code is pasted instead, so it stays optional. */}}
+        {{/* ut-docs#3428: scan the main till's pairing QR. Fill-then-confirm: a scan only fills the code below and shows the host; shared binder web/public/join-scan.js. */}}
+        <button type="button" class="btn secondary" id="tills-join-scan" data-join-scan data-testid="join-scan-btn">{{ T "scan.pair.button" }}</button>
         <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required></label>
         <label>{{ T "tills.join_address" }} <input type="text" name="address" dir="ltr" placeholder="{{ T "tills.join_address_ph" }}" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
+        <div id="tills-join-scanned" class="join-scanned" hidden>
+          <span class="tag ok" data-join-scanned-text></span>
+          <button type="button" class="btn secondary" id="tills-join-scan-clear" data-join-scan-clear>{{ T "tills.join_scan.clear" }}</button>
+        </div>
+        <p id="tills-join-scan-next" class="muted" aria-live="polite" data-join-scan-next></p>
         <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
         <p class="small muted" data-testid="tills-join-outcome">{{ T "tills.join.outcome.additional" }}</p>
         <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
       </form>
+      <div id="tills-join-scan-overlay" class="ai-identify-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tills-join-scan-title"
+           data-decoder-v="{{ assetv "public/vendor/barcode-detector/ponyfill.js" }}"
+           data-msg-permission-denied="{{ T "scan.pair.permission_denied" }}"
+           data-msg-no-camera="{{ T "scan.pair.no_camera" }}"
+           data-msg-busy="{{ T "scan.camera.camera_busy" }}"
+           data-msg-not-ut="{{ T "scan.pair.not_ut_code" }}"
+           data-msg-scanning="{{ T "scan.pair.scanning" }}"
+           data-msg-scanned-from="{{ T "scan.pair.scanned_from" }}"
+           data-msg-scanned-next="{{ T "scan.pair.scanned_next" }}">
+        <div class="ai-identify-panel">
+          <h3 id="tills-join-scan-title">{{ T "scan.pair.title" }}</h3>
+          <video id="tills-join-scan-video" class="camera-overlay-video" autoplay playsinline muted></video>
+          <div id="tills-join-scan-status" class="ai-identify-status" aria-live="polite"></div>
+          <div class="ai-identify-controls">
+            <button type="button" class="btn secondary" id="tills-join-scan-close">{{ T "scan.pair.close" }}</button>
+            <button type="button" class="btn secondary" id="tills-join-scan-type">{{ T "scan.pair.type_instead" }}</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   {{ else }}
