@@ -211,7 +211,7 @@ jobs:
         # (ut-docs#643/#753/#776): a release build must not fail on the
         # same timeout-margin false alarm the main CI workflow was just
         # fixed for.
-        run: go test $(go list ./... | grep -v '/internal/plugins$') && go test -timeout 20m ./internal/plugins
+        run: go test -timeout 20m $(go list ./... | grep -v '/internal/plugins$') && go test -timeout 20m ./internal/plugins
 
   # Code signing (ut-docs#2480, ut-docs#2610): the Windows binaries are signed
   # by .goreleaser.yaml's post-build hook (packaging/windows/sign-exe.sh)
