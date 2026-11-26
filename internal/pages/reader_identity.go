@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paybroker"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/readerlink"
 )
 
@@ -221,30 +222,42 @@ func withdrawReader(w http.ResponseWriter, r *http.Request, d *common.Deps, c da
 var errNoReaderMethod = errors.New("no single reader-capable payment method")
 
 // resolveReaderMethod is the payment method a paired phone takes taps for: the
-// one active payment method whose plugin declares the readers hook. Zero or
-// several is refused (the manager configures one first); core never names a
-// provider.
+// one active payment method whose plugin declares the readers hook. A phone is
+// a TAP reader, so when several methods declare the hook (a shop with a
+// server-driven card method, a second provider and a Tap to Pay entry, the
+// normal case, ut-docs#6538 live test 2026-11-26) the single entry that is
+// marked as a tap entry (config {"tap":true}, plugins.IsTapEntryConfig) is the
+// method. Zero, or several with no single tap entry, is refused (the manager
+// configures one first); core never names a provider.
 func resolveReaderMethod(ctx context.Context, d *common.Deps) (method, pluginID string, err error) {
 	plug := data.NewPluginRepo(d.Db)
 	entries, err := plug.ListPaymentEntries(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	found := 0
+	type hit struct{ method, pluginID string }
+	var all, taps []hit
 	for _, e := range entries {
 		ok, herr := plug.HasActiveHook(ctx, e.PluginID, readersHook(e.EntryKey))
 		if herr != nil {
 			return "", "", herr
 		}
-		if ok {
-			found++
-			method, pluginID = e.EntryKey, e.PluginID
+		if !ok {
+			continue
+		}
+		h := hit{e.EntryKey, e.PluginID}
+		all = append(all, h)
+		if plugins.IsTapEntryConfig(e.ConfigJSON) {
+			taps = append(taps, h)
 		}
 	}
-	if found != 1 {
-		return "", "", errNoReaderMethod
+	switch {
+	case len(all) == 1:
+		return all[0].method, all[0].pluginID, nil
+	case len(taps) == 1:
+		return taps[0].method, taps[0].pluginID, nil
 	}
-	return method, pluginID, nil
+	return "", "", errNoReaderMethod
 }
 
 // uniqueReaderName makes the phone's name unique among active readers by

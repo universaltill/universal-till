@@ -109,7 +109,7 @@
   {{ with .registerBlocked }}
   <div class="set-gap-s register-blocked" data-testid="register-blocked" role="status">
     <p>⏸ {{ .notice }}</p>
-    <p class="muted">{{ .help }}</p>
+    {{ with .help }}<p class="muted">{{ . }}</p>{{ end }}
   </div>
   {{ end }}
   {{/* ut-docs#5145 (H2): a registered till of an ownerless shop whose cloud

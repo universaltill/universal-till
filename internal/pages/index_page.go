@@ -85,7 +85,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// for it.
 		// ut-docs#4626: the option text is the method's translated Name
 		// (the same `T .Name` the Pay grid renders), not its raw id.
-		methods := append([]data.PaymentMethod(nil), payMethods...)
+		// ut-docs#6755: a split leg cannot do the Paid/Declined step, so the
+		// own-terminal method is not offered here.
+		methods := withoutExternalCardMethod(payMethods)
 		// The Pay grid (its first button is the one-tap preferred method) gets the list WITHOUT
 		// voucher-type methods: those buttons tender "everything owed" in
 		// one tap with no further input, and a voucher redemption needs a

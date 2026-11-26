@@ -380,6 +380,44 @@ ORDER BY j.seq LIMIT ?`, args...)
 	return out, rows.Err()
 }
 
+// PendingRefundSales returns the original sale ids (among saleIDs) that have a
+// refund leg whose newest state is unknown or warned: the provider may have
+// paid the customer back but the outcome is not settled (ut-docs#7064). One
+// sargable range scan over the refund key prefix (the open legs are a small
+// manager attention list), parsed in Go, capped at legJournalScanMax.
+func (r *PaymentLegJournalRepo) PendingRefundSales(ctx context.Context, saleIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(saleIDs) == 0 {
+		return out, nil
+	}
+	want := make(map[string]bool, len(saleIDs))
+	for _, id := range saleIDs {
+		want[id] = true
+	}
+	// ';' is ':' + 1, so [prefix, upper) is exactly the keys starting "refund:".
+	upper := strings.TrimSuffix(LegRefundKeyPrefix, ":") + ";"
+	rows, err := r.db.QueryContext(ctx, `
+SELECT j.request_id FROM payment_leg_journal j
+WHERE j.request_id >= ? AND j.request_id < ?
+  AND j.state IN ('unknown','warned')
+  AND NOT EXISTS (SELECT 1 FROM payment_leg_journal n WHERE n.request_id = j.request_id AND n.seq > j.seq)
+ORDER BY j.seq DESC LIMIT ?`, LegRefundKeyPrefix, upper, legJournalScanMax)
+	if err != nil {
+		return nil, fmt.Errorf("list pending refund legs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan pending refund leg: %w", err)
+		}
+		if id, ok := RefundLegOriginalSale(key); ok && want[id] {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
 // ListCurrent returns, per leg, the newest row when its state is one of
 // states, oldest first, at most limit rows (capped at legJournalScanMax):
 // the manager's attention list (ut-docs#6653 slice 3).

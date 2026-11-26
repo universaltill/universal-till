@@ -15,20 +15,26 @@
   var catchUp = false; /* nudge once the next open succeeds (closed while hidden) */
   var retryAt = 0;
 
-  /* True while a manager is mid-approval in #pending-pairings: focus inside,
-     a typed PIN, or a role changed from its rendered default. An outerHTML
-     swap would wipe it, so the 30s poll and the push both skip while busy
-     and catch up on the next tick (UX condition, ut-docs#2743). */
+  /* True while a manager is mid-approval in #pending-pairings or in the Card
+     reader requests box #reader-requests (ut-docs#6538, which polls every 3s
+     behind this same guard): focus inside, a typed PIN, or a role changed
+     from its rendered default. An outerHTML swap would wipe it, so the poll
+     and the push both skip while busy and catch up on the next tick (UX
+     condition, ut-docs#2743; the reader box was missing from this check,
+     ut-docs#7057, so a half-typed PIN there was wiped every 3 seconds). */
+  var GUARDED = ['pending-pairings', 'reader-requests'];
   window.utPairingBusy = function () {
-    var el = document.getElementById('pending-pairings');
-    if (!el) return false;
-    if (el.matches(':focus-within')) return true;
-    var pins = el.querySelectorAll('input[name=manager_pin]');
-    for (var i = 0; i < pins.length; i++) if (pins[i].value) return true;
-    var sels = el.querySelectorAll('select[name=role]');
-    for (var j = 0; j < sels.length; j++) {
-      for (var k = 0; k < sels[j].options.length; k++) {
-        if (sels[j].options[k].selected !== sels[j].options[k].defaultSelected) return true;
+    for (var g = 0; g < GUARDED.length; g++) {
+      var el = document.getElementById(GUARDED[g]);
+      if (!el) continue;
+      if (el.matches(':focus-within')) return true;
+      var pins = el.querySelectorAll('input[name=manager_pin]');
+      for (var i = 0; i < pins.length; i++) if (pins[i].value) return true;
+      var sels = el.querySelectorAll('select[name=role]');
+      for (var j = 0; j < sels.length; j++) {
+        for (var k = 0; k < sels[j].options.length; k++) {
+          if (sels[j].options[k].selected !== sels[j].options[k].defaultSelected) return true;
+        }
       }
     }
     return false;

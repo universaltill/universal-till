@@ -1100,6 +1100,14 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
                    margin-block: .2rem 0; margin-inline: 0; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
+/* ut-docs#7064: refund link / status chip under a journal receipt number. */
+.journal-refund { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center;
+                  margin-block-start: .2rem; font-size: .8rem; }
+.journal-refund a { display: inline-block; padding-block: .5rem; }
+@media (pointer: coarse) {
+  .journal-refund a { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
+}
+body.kiosk .journal-refund a { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 /* .catalog-form-head: see the .item-form-modal block below (ut-docs#1956
    made it the dialog's pinned action bar). */
 
@@ -8430,6 +8438,10 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
   .card-reader-actions { flex-direction: column; }
   .card-reader-actions .card-reader-confirm, .card-reader-actions .card-reader-back { flex-basis: auto; inline-size: 100%; }
 }
+.card-reader-external { flex: 1 1 100%; display: grid; gap: .6rem; text-align: start; }
+.card-reader-external[hidden] { display: none; }
+.card-reader-external label { display: grid; gap: .25rem; }
+.card-reader-external input { min-block-size: 48px; }
 /* Settings page */
 .card-reader-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
                             padding-block: .6rem; border-block-end: 1px solid var(--border); }

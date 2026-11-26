@@ -277,6 +277,8 @@ func endedResultKey(status string) string {
 		return "settings.move.declined"
 	case "locked":
 		return "settings.move.locked"
+	case "region_mismatch":
+		return "settings.move.refused_region"
 	case "moved", "done":
 		return "settings.move.result_done"
 	case "failed", "unavailable":
@@ -310,6 +312,8 @@ func moveDecisionErrorKey(err error) (string, bool) {
 			return "settings.move.result_done", true
 		case "move_failed", "move_unavailable":
 			return "settings.move.result_failed", true
+		case "move_region_mismatch":
+			return "settings.move.refused_region", true
 		case "move_key_quarantined":
 			if refused.UsableFrom != "" {
 				return "settings.move.result_quarantined", false
@@ -370,6 +374,8 @@ func moveRefusalKey(code string) string {
 		return "settings.move.refused_target_unavailable"
 	case "move_source_unavailable":
 		return "settings.move.refused_source_unavailable"
+	case "move_region_mismatch":
+		return "settings.move.refused_region"
 	case "move_pending":
 		return "settings.move.refused_pending"
 	case "move_declined_recently":

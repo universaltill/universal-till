@@ -530,6 +530,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		methods = withoutTapEntries(r.Context(), d, methods) // ut-docs#6455 G-6: a kiosk never offers a tap entry
+		methods = withoutExternalCardMethod(methods)         // ut-docs#6755: nor the shop's own terminal
 		renderKioskPaymentPicker(w, r, eng, methods, "")
 	})
 
@@ -594,6 +595,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		methods = withoutTapEntries(r.Context(), d, methods) // ut-docs#6455 G-6: a kiosk never offers a tap entry
+		methods = withoutExternalCardMethod(methods)         // ut-docs#6755: nor the shop's own terminal
 		methodValid := false
 		for _, m := range methods {
 			if m.ID == method {
