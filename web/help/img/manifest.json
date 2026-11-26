@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "1656912b66c54cb05dc7abce16f1c9cd185a24fc44797d40112e56a09d72434c",
+      "en": "8ae9a7eb3621c19c83cc510659ae71f4caac17a2902e35b829e9e28abb5a3248",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -556,7 +556,7 @@
       "sha256": "6fe2cd55b6ec24c4bc486b6140b68ba6eadf6d213c1f35a954c7c1448e58122e"
     },
     "internal/pages/move_approval.go": {
-      "sha256": "67fc8711c1b384cc564bdf6d599a81c727e75edd7c861046146049a3b6064a51"
+      "sha256": "90bb7658b78c71dd3e5e089700b7cae31ae9d417e9930b3b9be5eb633b8673e5"
     },
     "internal/pages/my_display_page.go": {
       "sha256": "eb104d5a4fe8d8ada77cc68c6f5e668883f14a9ba141e7d1b8dd39071a59c378"
@@ -655,7 +655,7 @@
       "sha256": "bb0aea14621ecc0c7651e203d793cde9c1a7f132df41324ad8b493ab23a0494a"
     },
     "internal/pages/register_blocked.go": {
-      "sha256": "703a12dfda7c8fc8a72fe08f2a29377c46a26f7454fa3ea17267ef70d6e38d8f"
+      "sha256": "9914bf4ace63b360106df64412394b696dabb45c9e18e5b06bed9b77fed2f806"
     },
     "internal/pages/register_follows_till.go": {
       "sha256": "5331fc90ae4979fb09002afa5819d8a58e13c04680b647378c689f077a09a495"
@@ -682,7 +682,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "b8f8a61ef6115781078ac966aa1d9c9ee241783868c4ba09d41d75e55bf395eb"
+      "sha256": "a9bcdc801ff626a227eac3847340a852104938c56dbbd9b309f9b2d3f77c7416"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -1765,7 +1765,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "763cfc0819f4decf55d4619fabdcb573fa098fcf67d5453c0f11444ca56c17b9"
+      "sha256": "4be4d9b158383d1777439ef01f3211683c75c50b04182b61caffb37c091255e3"
     },
     "web/ui/pages/setup.html": {
       "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"

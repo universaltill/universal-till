@@ -3,6 +3,8 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +18,9 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -231,7 +235,13 @@ func TestReconnect_OutcomeTexts(t *testing.T) {
 		"rate limited": {func(w http.ResponseWriter) { pageCode(w, 429, "rate_limited", nil) }, []string{"Too many tries. Wait a few minutes and try again."}},
 		"update needed": {func(w http.ResponseWriter) { pageCode(w, 409, "key_required", nil) },
 			[]string{"software is too old to prove its identity", "Update this till"}},
-		"server error": {func(w http.ResponseWriter) { http.Error(w, "boom", 500) }, []string{"Selling is not affected"}},
+		"server error": {func(w http.ResponseWriter) { http.Error(w, "boom", 500) }, []string{"The cloud could not do this right now", "Selling is not affected"}},
+		"503":          {func(w http.ResponseWriter) { http.Error(w, "boom", 503) }, []string{"The cloud could not do this right now"}},
+		"unmapped 4xx": {func(w http.ResponseWriter) { pageCode(w, 400, "bad_request", nil) }, []string{"The cloud could not do this right now"}},
+		"other shop": {func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"store_id":"store-OTHER","merchant_id":"m-o","token":"tok-other"}}`))
+		}, []string{"answer was for a different shop", "device ID and key fingerprint above"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			mux, d, _ := newLockedOutTill(t, func(_ int, _ map[string]any, w http.ResponseWriter) { tc.answer(w) })
@@ -242,7 +252,19 @@ func TestReconnect_OutcomeTexts(t *testing.T) {
 					t.Fatalf("body lacks %q: %s", w, body)
 				}
 			}
-			for _, raw := range []string{"RAWBODY", "key_required", "device_live", "store_not_reusable", "boom"} {
+			for _, no := range []string{"Could not reach the cloud"} {
+				if name != "other shop" && strings.Contains(body, no) && (name == "server error" || name == "503" || name == "unmapped 4xx") {
+					t.Fatalf("body says %q for an answered request: %s", no, body)
+				}
+			}
+			if name == "other shop" {
+				for _, no := range []string{"claimed or removed", "Reconnected."} {
+					if strings.Contains(body, no) {
+						t.Fatalf("other-shop answer shows %q: %s", no, body)
+					}
+				}
+			}
+			for _, raw := range []string{"RAWBODY", "key_required", "device_live", "store_not_reusable", "boom", "store-OTHER", "bad_request"} {
 				if strings.Contains(body, raw) {
 					t.Fatalf("raw cloud text %q rendered: %s", raw, body)
 				}
@@ -306,9 +328,18 @@ func TestNewShop_ConfirmedWipesAndRegistersFirstTime(t *testing.T) {
 	orig := clearAuthLockout
 	clearAuthLockout = func() { cleared.Add(1) }
 	t.Cleanup(func() { clearAuthLockout = orig })
-	rec := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser)
+	pin := seedNewShopManagerPIN(t, d)
+	rec := postForm(mux, "/api/enrol/new-shop", newShopForm(pin), &mgrUser)
 	if !strings.Contains(rec.Body.String(), "Registered as a new shop. This till has a new device ID.") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+	var approver int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'new_shop_registered' AND actor_id = ?`, mgrUser.ID).Scan(&approver); err != nil || approver == 0 {
+		t.Fatalf("no audit row naming the approver: %d (%v)", approver, err)
+	}
+	var blocked int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'new_shop_registered' AND blocked_actor_id IS NOT NULL`).Scan(&blocked); err != nil || blocked == 0 {
+		t.Fatalf("no audit row with blocked_actor_id (the PIN path): %d (%v)", blocked, err)
 	}
 	nb := c.body(1)
 	if nb["device_id"] == old || nb["expect_store_id"] != nil {
@@ -333,7 +364,7 @@ func TestNewShop_RegisteredButSigningKeyFetchFailedTellsTheTruth(t *testing.T) {
 	orig := clearAuthLockout
 	clearAuthLockout = func() { cleared.Add(1) }
 	t.Cleanup(func() { clearAuthLockout = orig })
-	rec := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/new-shop", newShopForm(seedNewShopManagerPIN(t, d)), &mgrUser)
 	body := rec.Body.String()
 	if c.calls.Load() != 2 || enroll.CurrentStatus().DeviceID == old || !enroll.CurrentStatus().Registered {
 		t.Fatalf("precondition: calls %d, registered %v", c.calls.Load(), enroll.CurrentStatus().Registered)
@@ -348,7 +379,7 @@ func TestNewShop_RegisteredButSigningKeyFetchFailedTellsTheTruth(t *testing.T) {
 
 func TestNewShop_FailureIsTheOrdinaryNotRegisteredState(t *testing.T) {
 	mux, d, _ := newLockedOutTill(t, func(_ int, _ map[string]any, w http.ResponseWriter) { http.Error(w, "boom", 500) })
-	rec := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/new-shop", newShopForm(seedNewShopManagerPIN(t, d)), &mgrUser)
 	if !strings.Contains(rec.Body.String(), "This till is no longer in the old shop and is not registered yet. It will try again by itself.") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
@@ -370,16 +401,29 @@ func TestKeyRefusedShowsTheBlockedChipForANotRegisteredTill(t *testing.T) {
 	if !strings.Contains(body, `data-cloud-auth="blocked"`) || !strings.Contains(body, "different key") {
 		t.Fatalf("chip = %s", body)
 	}
+	// ut-docs#6424 (L1): the Settings notice offers no action that does not exist here.
+	settings := strings.ToLower(getAs(mux, "/settings", &mgrUser).Body.String())
+	i := strings.Index(settings, `data-testid="register-blocked"`)
+	if i < 0 {
+		t.Fatalf("no register-blocked notice: %s", settings)
+	}
+	notice := settings[i:]
+	if j := strings.Index(notice, "</div>"); j >= 0 {
+		notice = notice[:j]
+	}
+	if !strings.Contains(notice, "it will not register it") || strings.Contains(notice, "register as a new shop") || strings.Contains(notice, "reconnect sooner") {
+		t.Fatalf("settings notice for a not-registered key-refused till: %s", notice)
+	}
 }
 
 // ut-docs#5145 (v2 L1): "Register as a new shop" is refused by the server
 // unless the till is in the anonymous lock-out; a refusal wipes and audits
 // nothing.
-func newShopRefusedAndNothingChanged(t *testing.T, mux *http.ServeMux, d *common.Deps, c *lockoutCloud, wantCalls int32) {
+func newShopRefusedAndNothingChanged(t *testing.T, mux *http.ServeMux, d *common.Deps, c *lockoutCloud, wantCalls int32, wantRefusalText bool) {
 	t.Helper()
 	before := enroll.CurrentStatus()
 	tok, _, _ := d.Settings.Get(t.Context(), "marketplace.token")
-	rec := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/new-shop", newShopForm(seedNewShopManagerPIN(t, d)), &mgrUser)
 	body := rec.Body.String()
 	after := enroll.CurrentStatus()
 	tok2, _, _ := d.Settings.Get(t.Context(), "marketplace.token")
@@ -396,18 +440,21 @@ func newShopRefusedAndNothingChanged(t *testing.T, mux *http.ServeMux, d *common
 	if strings.Contains(body, "no longer in the old shop") || strings.Contains(body, "Registered as a new shop") {
 		t.Fatalf("report claims a reset: %s", body)
 	}
+	if wantRefusalText && (!strings.Contains(body, "only works for a till that lost its cloud sign-in") || strings.Contains(body, "Replicas and tills")) {
+		t.Fatalf("refusal text: %s", body)
+	}
 }
 
 func TestNewShop_RefusedOnAHealthyTill(t *testing.T) {
 	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
 	cloudAuthChipStatus = func() cloudsync.AuthChip { return cloudsync.AuthChip{} }
-	newShopRefusedAndNothingChanged(t, mux, d, c, 1)
+	newShopRefusedAndNothingChanged(t, mux, d, c, 1, true)
 }
 
 func TestNewShop_RefusedOnAClaimedShop(t *testing.T) {
 	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
 	claimStore(t, d)
-	newShopRefusedAndNothingChanged(t, mux, d, c, 1)
+	newShopRefusedAndNothingChanged(t, mux, d, c, 1, true)
 }
 
 func TestNewShop_RefusedOnANotRegisteredTill(t *testing.T) {
@@ -418,7 +465,7 @@ func TestNewShop_RefusedOnANotRegisteredTill(t *testing.T) {
 	if enroll.CurrentStatus().Registered {
 		t.Fatal("precondition: registered")
 	}
-	newShopRefusedAndNothingChanged(t, mux, d, nil, 0)
+	newShopRefusedAndNothingChanged(t, mux, d, nil, 0, true)
 }
 
 // Refused before the wipe on a legitimately locked-out till (not configured):
@@ -426,7 +473,7 @@ func TestNewShop_RefusedOnANotRegisteredTill(t *testing.T) {
 func TestNewShop_RefusalBeforeTheWipeIsNotReportedOrAudited(t *testing.T) {
 	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
 	d.Cfg.Marketplace.EndpointURL = ""
-	newShopRefusedAndNothingChanged(t, mux, d, c, 1)
+	newShopRefusedAndNothingChanged(t, mux, d, c, 1, false)
 }
 
 // Fable review M2 (2026-11-16): Reconnect is hidden AND server-refused outside
@@ -447,6 +494,9 @@ func reconnectRefusedAndNothingChanged(t *testing.T, mux *http.ServeMux, d *comm
 	if strings.Contains(rec.Body.String(), "Reconnected.") {
 		t.Fatalf("claims a reconnect: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "only works for a till that lost its cloud sign-in") || strings.Contains(rec.Body.String(), "Replicas and tills") {
+		t.Fatalf("refusal text: %s", rec.Body.String())
+	}
 }
 
 func TestReconnect_RefusedOnAHealthyTill(t *testing.T) {
@@ -459,4 +509,159 @@ func TestReconnect_RefusedOnAClaimedShop(t *testing.T) {
 	mux, d, c := newLockedOutTill(t, okRegister("tok-new"))
 	claimStore(t, d)
 	reconnectRefusedAndNothingChanged(t, mux, d, c)
+}
+
+// ut-docs#6424 (L5): an endpoint that cannot be reached is the one case that
+// says "Could not reach the cloud".
+func TestReconnect_UnreachableSaysCouldNotReach(t *testing.T) {
+	mux, d, _ := newLockedOutTill(t, okRegister("tok-new"))
+	dead := httptest.NewServer(http.NewServeMux())
+	deadURL := dead.URL
+	dead.Close()
+	d.Cfg.Marketplace.EndpointURL = deadURL + "/api"
+	body := postForm(mux, "/api/enrol/reconnect", reconnectForm(), &mgrUser).Body.String()
+	if !strings.Contains(body, "Could not reach the cloud") || strings.Contains(body, "could not do this right now") {
+		t.Fatalf("body = %s", body)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "marketplace.token"); v != "tok-old" {
+		t.Fatalf("token = %q", v)
+	}
+}
+
+// ut-docs#6424 (L5): busy and not-configured keep their own texts.
+func TestReconnectResultHTML_BusyAndNotConfigured(t *testing.T) {
+	if got := reconnectResultHTML("en", fmt.Errorf("%w: slot held", enroll.ErrAttemptBusy)); got != html.EscapeString(httpx.T("en", "settings.enrol.busy")) {
+		t.Fatalf("busy = %q", got)
+	}
+	if got := reconnectResultHTML("en", enroll.ErrNotConfigured); got != html.EscapeString(httpx.T("en", "settings.enrol.not_configured")) {
+		t.Fatalf("not configured = %q", got)
+	}
+}
+
+// ut-docs#6424 (T1): the other-shop answer persists nothing and audits nothing.
+func TestReconnect_OtherShopWritesNoAudit(t *testing.T) {
+	mux, d, _ := newLockedOutTill(t, func(_ int, _ map[string]any, w http.ResponseWriter) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"store_id":"store-OTHER","merchant_id":"m-o","token":"tok-other"}}`))
+	})
+	postForm(mux, "/api/enrol/reconnect", reconnectForm(), &mgrUser)
+	if enroll.CurrentStatus().StoreID != "store-t" {
+		t.Fatalf("store = %q", enroll.CurrentStatus().StoreID)
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'reconnected'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("reconnected audit rows = %d (%v)", n, err)
+	}
+}
+
+// ut-docs#6424 (D6): a replica or an env-pinned identity keeps "unavailable"
+// and the cloud is not called.
+func TestReconnect_RefusedOnAReplicaOrEnvPinnedSaysUnavailable(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("x"))
+	cfg := &config.Config{}
+	cfg.Marketplace.MerchantToken = "pinned-by-env"
+	enroll.Init(t.Context(), cfg, d.Settings, &sync.WaitGroup{})
+	check := func(label string) {
+		t.Helper()
+		for _, p := range []string{"/api/enrol/reconnect", "/api/enrol/new-shop"} {
+			body := postForm(mux, p, url.Values{"confirm_new_shop": {"1"}}, &mgrUser).Body.String()
+			if !strings.Contains(body, "Replicas and tills") || strings.Contains(body, "only works for a till") {
+				t.Fatalf("%s %s: body = %s", label, p, body)
+			}
+		}
+		if c.calls.Load() != 1 {
+			t.Fatalf("%s: cloud called %d times", label, c.calls.Load())
+		}
+	}
+	check("env-pinned")
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	_ = d.Settings.Set(t.Context(), "sync.primary_url", "http://main.local")
+	check("replica")
+}
+
+// ut-docs#6424 (L3): the new-shop wipe is a step-up: a manager session needs a PIN too.
+func seedNewShopManagerPIN(t *testing.T, d *common.Deps) string {
+	t.Helper()
+	hash, err := auth.HashPIN(mvPIN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.NewAuthRepo(d.Db).SetUserPIN(t.Context(), mgrUser.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+	return mvPIN
+}
+
+func newShopForm(pin string) url.Values {
+	return url.Values{"confirm_new_shop": {"1"}, "override_pin": {pin}}
+}
+
+func TestNewShop_ManagerWithoutPINGetsThePrompt(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
+	seedNewShopManagerPIN(t, d)
+	old := enroll.CurrentStatus().DeviceID
+	body := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser).Body.String()
+	if !isElevationBody(body) || !strings.Contains(body, `name="confirm_new_shop"`) {
+		t.Fatalf("no elevation prompt carrying the confirm: %s", body)
+	}
+	if enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
+		t.Fatalf("changed without a PIN: calls %d", c.calls.Load())
+	}
+}
+
+func TestNewShop_WrongPINChangesNothing(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
+	seedNewShopManagerPIN(t, d)
+	old := enroll.CurrentStatus().DeviceID
+	body := postForm(mux, "/api/enrol/new-shop", newShopForm("000000"), &mgrUser).Body.String()
+	if !isElevationBody(body) || !strings.Contains(body, httpx.T("en", "elevation.error_invalid_pin")) {
+		t.Fatalf("no invalid-PIN prompt: %s", body)
+	}
+	if enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
+		t.Fatal("changed on a wrong PIN")
+	}
+}
+
+func TestNewShop_CrossOriginRefused(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
+	pin := seedNewShopManagerPIN(t, d)
+	old := enroll.CurrentStatus().DeviceID
+	req := httptest.NewRequest(http.MethodPost, "/api/enrol/new-shop", strings.NewReader(newShopForm(pin).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(req, mgrUser))
+	if strings.Contains(rec.Body.String(), "Registered as a new shop") || enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
+		t.Fatalf("cross-origin request wiped: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Approval isn&#39;t available on this device right now.") {
+		t.Fatalf("cross-origin: no refusal text: %s", rec.Body.String())
+	}
+}
+
+func TestNewShop_CashierWithManagerPINRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, d, c := newLockedOutTill(t, okRegister("tok-fresh"))
+	pin := seedNewShopManagerPIN(t, d)
+	old := enroll.CurrentStatus().DeviceID
+	body := postForm(mux, "/api/enrol/new-shop", newShopForm(pin), &cashUser).Body.String()
+	if strings.Contains(body, "Registered as a new shop") || enroll.CurrentStatus().DeviceID != old || c.calls.Load() != 1 {
+		t.Fatalf("cashier wiped the till: %s", body)
+	}
+	if !strings.Contains(body, "Manager or admin required") {
+		t.Fatalf("cashier: no refusal text: %s", body)
+	}
+}
+
+func isElevationBody(body string) bool {
+	return strings.Contains(body, "override_pin")
+}
+
+// ut-docs#6424 (UX): after a wipe, a server error adds no "Nothing changed".
+func TestNewShop_WipedThenServerErrorDoesNotSayNothingChanged(t *testing.T) {
+	mux, d, _ := newLockedOutTill(t, func(_ int, _ map[string]any, w http.ResponseWriter) { http.Error(w, "boom", 500) })
+	body := postForm(mux, "/api/enrol/new-shop", newShopForm(seedNewShopManagerPIN(t, d)), &mgrUser).Body.String()
+	if !strings.Contains(body, "no longer in the old shop") || strings.Contains(body, "Nothing changed") || strings.Contains(body, "Try again later") {
+		t.Fatalf("body = %s", body)
+	}
 }
