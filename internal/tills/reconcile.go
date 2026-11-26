@@ -140,7 +140,13 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 			}
 		} else if s.CloudOK && !cloudUnmatchable {
 			r.State = StateLocalOnly
-			r.LongUnseen = unseenFor(l.LastSeenAt, now) >= staleAfter
+			// A till that never connected counts from when it was enrolled, so a
+			// tablet added minutes ago is not "long unseen".
+			seen := l.LastSeenAt
+			if seen == "" {
+				seen = l.EnrolledAt
+			}
+			r.LongUnseen = unseenFor(seen, now) >= staleAfter
 			r.Actions = []Action{ActionRemove}
 		}
 		add(r)
@@ -194,6 +200,10 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 // as unseen for a very long time.
 func unseenFor(lastSeen string, now time.Time) time.Duration {
 	t, err := time.Parse(time.RFC3339, lastSeen)
+	if err != nil {
+		// SQLite's datetime('now') default, which enrolled_at carries (UTC).
+		t, err = time.Parse("2006-01-02 15:04:05", lastSeen)
+	}
 	if err != nil {
 		return 1<<63 - 1
 	}

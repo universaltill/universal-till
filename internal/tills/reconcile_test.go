@@ -128,6 +128,24 @@ func TestMerge_StaleRowOffersRemoveAndKnowsAge(t *testing.T) {
 	}
 }
 
+// A tablet enrolled minutes ago that has not connected yet is not "long
+// unseen"; one enrolled days ago and never seen is (SQLite datetime layout).
+func TestMerge_NeverSeenCountsFromEnrolment(t *testing.T) {
+	fresh := testNow.Add(-5 * time.Minute).Format("2006-01-02 15:04:05")
+	oldE := testNow.Add(-3 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	rows := Merge(Source{CloudOK: true, Self: SelfInfo{ID: "self", Name: "C", Role: RoleMain},
+		Local: []data.TillRow{
+			{ID: "new", Name: "New", Role: data.TillRoleAdditional, EnrolledAt: fresh},
+			{ID: "ghost", Name: "Ghost", Role: data.TillRoleAdditional, EnrolledAt: oldE},
+		}}, testNow, stale)
+	if rowByID(t, rows, "new").LongUnseen {
+		t.Fatal("a till enrolled 5 minutes ago must not be LongUnseen")
+	}
+	if !rowByID(t, rows, "ghost").LongUnseen {
+		t.Fatal("a till enrolled 3 days ago and never seen must be LongUnseen")
+	}
+}
+
 func TestMerge_ReplacedStateOnSelfOnly(t *testing.T) {
 	rows := Merge(Source{CloudOK: true, Self: SelfInfo{ID: "self", Name: "C", Role: RoleMain},
 		Replaced: &enroll.Replaced{By: "New", At: "t"},

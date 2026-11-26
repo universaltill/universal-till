@@ -534,7 +534,7 @@ func refusePlainSyncWhenClosed(w http.ResponseWriter, r *http.Request, repo *dat
 
 // replaceLiveWindow is how recently a till must have been seen for a pair
 // request with its name to count as a different live device (ut-docs#7057).
-const replaceLiveWindow = 15 * time.Minute
+const replaceLiveWindow = 24 * time.Hour
 
 // plainClosureRefusedWarned and plainClosureCheckFailedWarned make
 // refusePlainSyncWhenClosed log its first refusal, and a failing closure
@@ -748,6 +748,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				writeSatelliteRefusal(w)
 				return
 			}
+			// A replace keeps the enrolled till's own role (ut-docs#7057): a
+			// satellite's name over plain HTTP would hand it a bearer in clear.
+			if ex, same, terr := repo.TillByName(r.Context(), strings.TrimSpace(in.Name)); terr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", terr)
+				return
+			} else if same && ex.Role == data.TillRoleSatellite {
+				writeSatelliteRefusal(w)
+				return
+			}
 		}
 		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
 		// rate-limited per source and spends the shop-wide failure budget;
@@ -797,8 +806,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		replaceID := ""
 		if sameName && !strings.EqualFold(name, primaryName) && !existing.SeenWithin(time.Now(), replaceLiveWindow) {
-			replaceID = existing.ID
-			sameName = false
+			// Only a manager's approval of THIS name unlocks a replace: a typed
+			// code, or a token approved for another device name, never does.
+			approvedName, approved, aerr := pairingRepo.NameForToken(r.Context(), presented)
+			if aerr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", aerr)
+				return
+			}
+			if approved && strings.EqualFold(strings.TrimSpace(approvedName), name) {
+				replaceID = existing.ID
+				sameName = false
+			}
 		}
 		nameTaken := sameName
 		if strings.EqualFold(name, primaryName) || nameTaken {

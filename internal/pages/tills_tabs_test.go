@@ -121,7 +121,7 @@ func TestTillsRevokeStale_RemovesOnlyStaleAndAudits_RefusesWhenCloudUnknown(t *t
 	if l, _ := repo.ListTills(ctx); len(l) != 2 {
 		t.Fatalf("a recently seen till was bulk-removed: %d left", len(l))
 	}
-	if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = NULL WHERE id = ?`, stale); err != nil {
+	if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = NULL, enrolled_at = datetime('now', '-3 days') WHERE id = ?`, stale); err != nil {
 		t.Fatal(err)
 	}
 	if rec := post(stale); rec.Code != http.StatusNoContent {

@@ -280,9 +280,10 @@ func (r *TillsRepo) ReplaceEnrolment(ctx context.Context, id, bearerHash, role s
 		return fmt.Errorf("replace enrolment: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(ctx, `
-UPDATE tills SET bearer_hash = ?, role = ?, bearer_issued_at = ?, bearer_prev_hash = NULL, bearer_prev_expires_at = NULL, last_seen_at = NULL
-WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`, bearerHash, role, time.Now().UTC().Format(time.RFC3339), id, liveSince.UTC().Format(time.RFC3339))
+UPDATE tills SET bearer_hash = ?, role = ?, bearer_issued_at = ?, bearer_prev_hash = NULL, bearer_prev_expires_at = NULL, last_seen_at = ?
+WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`, bearerHash, role, now, now, id, liveSince.UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("replace enrolment: update: %w", err)
 	}

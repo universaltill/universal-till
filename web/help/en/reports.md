@@ -369,12 +369,12 @@ A bottle-deposit (Pfandrückgabe) payout is recorded against **this till's
 own register's** open shift — even when another register's shift is open
 at the same time, it never lands on the other drawer. On a shop with more
 than one register, the till has to know which register it is first: set
-"Cash register for payouts" in Settings → Tills, or the payout is refused with
+"Cash register for payouts" in Settings → Tills & devices, or the payout is refused with
 a message pointing you there.
 
 Opening a new shift shows a register picker too. On a shop with more than
 one register it now defaults to this till's own register (set under
-Settings → Tills), so opening a shift on the till you're standing at
+Settings → Tills & devices), so opening a shift on the till you're standing at
 normally needs no picking — you can still choose a different register
 from the list for the rare case a shift needs opening on one.
 
