@@ -164,3 +164,56 @@ func getTillsTab(t *testing.T, mux *http.ServeMux, role, tab string) *httptest.R
 	mux.ServeHTTP(rec, req)
 	return rec
 }
+
+// T7 / AC15 (ut-docs#7097): a till not in the account and unseen for 30 days is
+// an "Old entry" with its Remove button; one seen last week stays "Not in your
+// account"; both are removable, and the bulk button offers the old entry.
+func TestTillsOthers_OldEntryLabelAndRemove(t *testing.T) {
+	mux, dp := tillsTabsMux(t, []enroll.Device{{DeviceID: "dev-keep-me", TillID: "keep-me", Name: "Keep"}}, nil)
+	ctx := context.Background()
+	repo := data.NewTillsRepo(dp.Db)
+	oldID, err := repo.InsertTill(ctx, "Ghost tablet", hashBearer("g"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	weekID, err := repo.InsertTill(ctx, "Week tablet", hashBearer("w"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, ago := range map[string]time.Duration{oldID: 31 * 24 * time.Hour, weekID: 7 * 24 * time.Hour} {
+		if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-ago).UTC().Format(time.RFC3339), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := tabsGet(mux, "/ui/tills/tab/others").Body.String()
+	row := func(id string) string {
+		i := strings.Index(body, `id="till-row-`+id+`"`)
+		if i < 0 {
+			t.Fatalf("no row %s: %s", id, body)
+		}
+		r := body[i:]
+		return r[:strings.Index(r, "</tr>")]
+	}
+	oldRow, weekRow := row(oldID), row(weekID)
+	if !strings.Contains(oldRow, `data-state="old_entry"`) || !strings.Contains(oldRow, "Old entry") || !strings.Contains(oldRow, "/api/sync/tills/"+oldID+"/revoke") {
+		t.Fatalf("31-day row: %s", oldRow)
+	}
+	if strings.Contains(weekRow, "Old entry") || !strings.Contains(weekRow, `data-state="local_only"`) || !strings.Contains(weekRow, "/api/sync/tills/"+weekID+"/revoke") {
+		t.Fatalf("7-day row: %s", weekRow)
+	}
+	if !strings.Contains(body, `data-testid="tills-remove-stale-all"`) || !strings.Contains(body, `name="id" value="`+oldID+`"`) {
+		t.Fatalf("bulk remove must offer the old entry: %s", body)
+	}
+	// The bulk endpoint removes the old entry.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": {oldID}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke-stale: %d %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tills WHERE id = ?`, oldID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("old entry still enrolled: n=%d err=%v", n, err)
+	}
+}

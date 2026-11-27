@@ -278,7 +278,7 @@ func TestJoinNoticeUI_WarnsAndRequiresConfirmWhenTillHasSales(t *testing.T) {
 	body := getJoinNotice(t, mux).Body.String()
 	for _, want := range []string{
 		`<p class="join-notice-warning" id="join-notice-warning">`,
-		"This till already has sales.",
+		"This device already has its own sales and products",
 		`<input type="checkbox" id="join-notice-replace" name="replace_local_data" value="1" required hx-preserve aria-describedby="join-notice-warning">`,
 		`<label class="join-notice-label" for="join-notice-replace">`,
 	} {

@@ -122,7 +122,7 @@ func TestSettings_LockoutPanelAndFacts(t *testing.T) {
 	body := getAs(mux, "/settings", &mgrUser).Body.String()
 	fp, _ := tillKeyFingerprint()
 	for _, want := range []string{
-		`data-testid="reconnect-panel"`, "The cloud no longer accepts this till&#39;s sign-in. Selling is not affected.",
+		`data-testid="reconnect-panel"`, "This till is no longer connected to your shop. Selling works as normal.",
 		"Reconnect this till", "Register as a new shop", `data-testid="register-facts"`, deviceID, fp[:4] + " " + fp[4:8],
 	} {
 		if !strings.Contains(body, want) {
@@ -663,5 +663,26 @@ func TestNewShop_WipedThenServerErrorDoesNotSayNothingChanged(t *testing.T) {
 	body := postForm(mux, "/api/enrol/new-shop", newShopForm(seedNewShopManagerPIN(t, d)), &mgrUser).Body.String()
 	if !strings.Contains(body, "no longer in the old shop") || strings.Contains(body, "Nothing changed") || strings.Contains(body, "Try again later") {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+// T4 / AC10 (ut-docs#7097): a till whose data folder is in use on two machines
+// says so (chip + Settings notice) instead of re-arming a date for ever.
+func TestInUseElsewhereShowsTheBlockedChipAndNotice(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+	if err := d.Settings.Set(t.Context(), "till_identity.in_use_elsewhere_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if !strings.Contains(body, `data-cloud-auth="blocked"`) || !strings.Contains(body, "on two machines") {
+		t.Fatalf("manager chip = %s", body)
+	}
+	cash := getAs(mux, "/ui/cloud-auth-chip", &cashUser).Body.String()
+	if strings.Contains(cash, "two machines") || !strings.Contains(cash, `data-cloud-auth="blocked"`) {
+		t.Fatalf("cashier chip must be neutral: %s", cash)
+	}
+	settings := getAs(mux, "/settings", &mgrUser).Body.String()
+	if !strings.Contains(settings, `data-testid="register-blocked"`) || !strings.Contains(settings, "on two machines") {
+		t.Fatalf("settings notice missing: %s", settings)
 	}
 }

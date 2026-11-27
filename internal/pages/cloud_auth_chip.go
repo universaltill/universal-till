@@ -20,7 +20,7 @@ import (
 // owner:
 //
 //	device_revoked                          → "Removed from the shop's cloud account"
-//	token_retired / unauthorized, claimed   → "This till needs pairing again"
+//	token_retired / unauthorized, claimed   → "Needs a code to reconnect"
 //	token_retired / unauthorized, anonymous → "Cloud sign-in lost" (ut-docs#5145)
 //
 // device_revoked always gets its own words: only an owner can revoke, so
@@ -130,6 +130,19 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ADR-0222: the till is reconnecting by itself, or says in plain words
+		// why it cannot. From the first refused call, not the third. Checked
+		// before the register-refusal variants so the old "different key" text
+		// never shows beside the heal notice (review 2026-11-27).
+		locale := httpx.ResolveLocale(w, r)
+		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":   cloudAuthHeal,
+				"canManage": canPerform(d, r, "settings"),
+				"heal":      hv,
+			})(w, r)
+			return
+		}
 		// ut-docs#5145: a refused re-register (409 device_live) beats the 401
 		// variants: a till with no credential has no 401 streak, and must not be
 		// told to "Register as a new store" while the cloud refuses to. A local
@@ -141,6 +154,21 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 			hint := httpx.T(locale, "status.cloud_auth.blocked_hint_short")
 			if canManage {
 				hint = blockedHintText(locale, until)
+			}
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":     cloudAuthBlocked,
+				"canManage":   canManage,
+				"blockedHint": hint,
+			})(w, r)
+			return
+		}
+		// ut-docs#7097 (AC10): the same identity is live on another machine.
+		if registerInUseElsewhere(r.Context(), d) {
+			canManage := canPerform(d, r, "settings")
+			locale := httpx.ResolveLocale(w, r)
+			hint := httpx.T(locale, "status.cloud_auth.blocked_hint_short")
+			if canManage {
+				hint = httpx.T(locale, "status.cloud_auth.in_use_elsewhere_hint")
 			}
 			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
 				"variant":     cloudAuthBlocked,
@@ -161,17 +189,6 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				"variant":     cloudAuthBlocked,
 				"canManage":   canManage,
 				"blockedHint": hint,
-			})(w, r)
-			return
-		}
-		// ADR-0222: the till is reconnecting by itself, or says in plain words
-		// why it cannot. From the first refused call, not the third.
-		locale := httpx.ResolveLocale(w, r)
-		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {
-			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
-				"variant":   cloudAuthHeal,
-				"canManage": canPerform(d, r, "settings"),
-				"heal":      hv,
 			})(w, r)
 			return
 		}
