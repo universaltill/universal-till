@@ -32,7 +32,7 @@ import (
 
 // approvalRetryDelays are the waits between attempts after a failure
 // (network down, 5xx, a refused credential): slow, and after the last one it
-// goes on every approvalRetryTail, for ever (ADR-0217 T3: a till that could
+// goes on every approvalRetryTail, for ever (ADR-0222 T3: a till that could
 // not pin its key must still do so once it can, or it can never heal).
 // Guarded by approvalReport's mutex: kickApprovalKeyReport copies it under the
 // lock before its goroutine starts, so a report still running in the

@@ -174,7 +174,7 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 	}
 	m["IsReplaced"] = replaced
 	m["ReplacedBy"] = rep.By
-	// ADR-0217: the same sentence and one button as the status-bar chip.
+	// ADR-0222: the same sentence and one button as the status-bar chip.
 	hst := healChipStatus()
 	if hv, show := healChip(locale, hst, storeHasOwner(ctx, d.Settings)); show {
 		m["Heal"] = hv

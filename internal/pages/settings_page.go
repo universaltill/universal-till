@@ -1070,7 +1070,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"registerBlocked": registerBlockedView(r, d, locale),
 			"registerFacts":   registerFactsView(r, d, locale),
 			"reconnectPanel":  reconnectPanelView(r, d),
-			// ADR-0217: the same sentence as the status-bar chip, and the code
+			// ADR-0222: the same sentence as the status-bar chip, and the code
 			// field open when its button brought the person here.
 			"healNotice":    healNoticeView(r, d, locale),
 			"openReconnect": r.URL.Query().Get("reconnect") == "1" || healNeedsCode(healChipStatus()),

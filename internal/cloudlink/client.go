@@ -644,7 +644,7 @@ func (c *Client) Run(ctx context.Context) {
 				revokedFor = t.Bearer
 				c.setState(StateRevoked, WaitReasonNone)
 				logging.L().Warnf("cloudlink: the cloud refused this till's credential; not dialling until it changes")
-				// ADR-0217: evidence for the heal engine; it probes with a
+				// ADR-0222: evidence for the heal engine; it probes with a
 				// check-in before it rotates anything.
 				credheal.Report(credheal.Signal{Source: "link", Code: "unauthorized"})
 				// ut-docs#5058: one check-in now, so cloudsync learns why

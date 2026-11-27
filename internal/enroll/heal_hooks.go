@@ -12,7 +12,7 @@ import (
 
 // Hooks the self-heal engine (internal/credheal, which imports this package)
 // installs, so enrolment code can talk to it without an import cycle
-// (ADR-0217 §4.1). Both are optional and nil-safe: with no engine running
+// (ADR-0222 §4.1). Both are optional and nil-safe: with no engine running
 // (tests, the demo till) nothing happens.
 
 // deadCredentialHook: a caller in this package got a 401 envelope (source,
@@ -24,7 +24,7 @@ var deadCredentialHook atomic.Pointer[func(source, code, reason string, recover 
 // engine exists). SetDeadCredentialHook replays it once, so a till with a dead
 // credential and no cloud plan does not wait for the next retry 15 minutes
 // later; the engine probes with a real check-in first, so a stray 401 never
-// rotates anything (ADR-0217 as amended, ADR-0148).
+// rotates anything (ADR-0222 as amended, ADR-0148).
 var earlyDead struct {
 	sync.Mutex
 	set                  bool

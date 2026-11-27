@@ -10,7 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/credheal"
 )
 
-// ADR-0217 §4.7 / AC12: the heal engine's states are plain words in the status
+// ADR-0222 §4.7 / AC12: the heal engine's states are plain words in the status
 // bar, each with at most one link, and "check the internet" never shows for a
 // refused credential.
 

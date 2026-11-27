@@ -10,7 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// ADR-0217 §4.7 and the UX notes: the heal engine's states as plain words.
+// ADR-0222 §4.7 and the UX notes: the heal engine's states as plain words.
 // One view feeds four places so they never disagree: the status-bar chip
 // (Short as the words, Sentence as the title), the banner on Tills > This
 // till, the notice in Settings > Till registration and the Backups line.

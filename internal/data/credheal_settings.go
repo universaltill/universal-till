@@ -1,6 +1,6 @@
 package data
 
-// The self-heal engine's saved state (ADR-0217 §4.4, internal/credheal). All
+// The self-heal engine's saved state (ADR-0222 §4.4, internal/credheal). All
 // keys sit under "till_identity.", which is per till: never admin-synced to a
 // replica, never copied by a join snapshot (db.TillCloudIdentityPrefixes),
 // kept from a restore, and cleared by an identity reset. None holds a token,

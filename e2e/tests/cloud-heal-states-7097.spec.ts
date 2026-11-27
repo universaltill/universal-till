@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { PREBUILT_BIN, REPO_ROOT, isHealthy } from './worker-till';
 
-// ut-docs#7097 (ADR-0217, UX notes): a till whose cloud credential was
+// ut-docs#7097 (ADR-0222, UX notes): a till whose cloud credential was
 // refused says so in plain words, in ONE status-bar control (short words, a
 // dot, the button label) and the same sentence and button on Tills > This
 // till. The button lands on the code field, on screen at 1024x600 without

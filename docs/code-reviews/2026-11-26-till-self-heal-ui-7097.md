@@ -1,4 +1,4 @@
-# Till self-heal chip, messages, Tills page and help (ut-docs#7097, ADR-0217 slice T2)
+# Till self-heal chip, messages, Tills page and help (ut-docs#7097, ADR-0222 slice T2)
 
 Status: **stub, the Reviewer completes it** (a different-model pass over the
 diff is required by the pipeline; none has run on this code yet).

@@ -6176,7 +6176,7 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
-/* ADR-0217: the heal chip is one control (short words · button label). Visible pill stays
+/* ADR-0222: the heal chip is one control (short words · button label). Visible pill stays
    one text line; ::after widens the hit area to 44px like Sync now. A till that fixes itself is plain
    status text, not the amber pill: the words carry the state. */
 .statusbar .sb-cloud-auth[href] { position: relative; }

@@ -11,7 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/entitlement"
 )
 
-// ADR-0217 / ux-notes rule 6: one sentence per reason, the same words and the
+// ADR-0222 / ux-notes rule 6: one sentence per reason, the same words and the
 // same single button on Tills > This till, Settings > Till registration and
 // Settings > Backups as on the chip.
 

@@ -351,7 +351,7 @@ func TestClaimCode_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
 }
 
 // A dead credential answers 401: the message must say so, not "check the
-// internet connection" (ADR-0217 AC12; the chip shows the way back).
+// internet connection" (ADR-0222 AC12; the chip shows the way back).
 func TestClaimCode_DeadCredentialDoesNotBlameTheInternet(t *testing.T) {
 	mux, _, _ := claimCodeDeps(t, http.StatusUnauthorized, `{"data":null,"error":{"code":"unauthorized","message":"Unauthorized"}}`)
 	rec := postForm(mux, "/api/enrol/claim-code", url.Values{}, &mgrUser)

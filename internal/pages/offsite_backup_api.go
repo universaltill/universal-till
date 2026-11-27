@@ -100,7 +100,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 			state = "failing"
 			view["reason"] = get(data.OffsiteLastErrorKey)
 		}
-		// ADR-0217: while the heal engine owns the connection the line says so in
+		// ADR-0222: while the heal engine owns the connection the line says so in
 		// the same words as the chip: "reconnecting by itself" or a person step.
 		hasOwner := storeHasOwner(r.Context(), s.Settings)
 		if state != "not_in_plan" {
