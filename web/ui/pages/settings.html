@@ -51,6 +51,28 @@
        are parsed, so a slow kiosk never flashes the two-pane view first.
        The script at the bottom of the page owns every later change. */}}
   <script>(function () { var h = document.getElementById('settings-home'); if (!location.hash && h && h.querySelector('.settings-cat-tile')) { h.hidden = false; document.getElementById('settings-shell').hidden = true; } })();</script>
+  <script>
+  // ut-docs#7097: "Enter a code" lands on #pair-details, but the panels above
+  // swap in after the browser's own jump (as for #android-update below), so on
+  // a slow start the code field sits under the fold. Re-apply the jump every
+  // 300 ms (at most 8 s) until the field is on screen; any touch, key or wheel
+  // by the person stops it. Never focuses: the on-screen keyboard stays closed
+  // until the field is tapped.
+  (function () {
+    if (location.hash !== '#pair-details') return;
+    var tries = 0, timer = null;
+    var stop = function () { if (timer) { clearInterval(timer); timer = null; } };
+    ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (ev) { window.addEventListener(ev, stop, { once: true, passive: true }); });
+    timer = setInterval(function () {
+      var f = document.getElementById('pair-code');
+      if (++tries > 26) { stop(); return; }
+      if (!f || !f.offsetParent) return;
+      var r = f.getBoundingClientRect();
+      if (r.top >= 0 && r.bottom <= (window.innerHeight || document.documentElement.clientHeight)) { if (tries > 3) stop(); return; }
+      f.scrollIntoView({ block: 'center' });
+    }, 300);
+  })();
+  </script>
   <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
     <a class="settings-home-link" id="settings-home-link" href="#" hidden>{{ T "settings.home.back" }}</a>
     <h2 class="settings-cat-title" id="settings-cat-title" tabindex="-1" hidden></h2>
@@ -116,6 +138,12 @@
        sign-in was refused. Standing state (role=status), never a modal;
        selling is not affected. Two operator actions, Reconnect first and the
        quiet "new shop" last. Nothing here types text. */}}
+  {{ with .healNotice }}
+  <div class="set-gap-s register-blocked" data-testid="heal-notice" data-heal-reason="{{ .reason }}" role="status">
+    <p>⏸ {{ .sentence }}</p>
+    {{ if .button }}<a class="btn btn-touch" href="{{ .href }}" data-testid="heal-notice-action">{{ .button }}</a>{{ end }}
+  </div>
+  {{ end }}
   {{ with .reconnectPanel }}
   <div class="set-gap-s register-blocked" data-testid="reconnect-panel" role="status">
     <p>⏸ {{ T "settings.till_registration.lockout_notice" }}</p>
@@ -235,7 +263,7 @@
        registration state, and the POST is elevation-wired (ut-docs#867). -->
   {{/* ut-docs#6959: collapsed under "Reconnect" once the store is linked;
        open, as before, otherwise. */}}
-  {{ if .storeClaimed }}<details class="set-divider" id="pair-details">{{ else }}<div class="set-divider" id="pair-details">{{ end }}
+  {{ if .storeClaimed }}<details class="set-divider" id="pair-details"{{ if .openReconnect }} open{{ end }}>{{ else }}<div class="set-divider" id="pair-details">{{ end }}
     {{ if .storeClaimed }}
     <summary style="cursor:pointer;min-block-size:44px;padding-block:.6rem;font-weight:600">{{ T "settings.enrol.reconnect_title" }}</summary>
     {{ else }}

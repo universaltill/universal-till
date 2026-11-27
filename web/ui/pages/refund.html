@@ -65,11 +65,6 @@
           {{ range .Methods }}<option value="{{ . }}">{{ . }}</option>{{ end }}
         </select>
       </label>
-      {{ if .NeedsManagerPIN }}
-      <label>{{ T "refund.manager_pin" }}
-        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" required>
-      </label>
-      {{ end }}
     </div>
 
     {{ range .LegGroups }}
@@ -93,9 +88,8 @@
       <span class="muted">{{ T "refund.total" }}</span>
       <!-- ut-docs#1217 review N1: the live-update triggers live on each
            qty_N input (below in the table), not here -- scoping them that
-           way means typing a manager PIN never fires a preview request,
-           where a broad "from:closest form" listener would also fire (and
-           include the in-progress PIN) on every PIN keystroke. This
+           way avoids a broad "from:closest form" listener, which would
+           fire on every keystroke elsewhere in the form. This
            element only self-triggers once on load, to show a real total
            immediately (quantities default to the full refundable amount). -->
       <strong id="refund-total"
@@ -120,6 +114,8 @@ function isRefundPreviewRequest(ev) {
   return !!(ev.detail.requestConfig && ev.detail.requestConfig.path === '/api/refund/preview');
 }
 document.body.addEventListener('htmx:responseError', function (ev) {
+  // The manager-PIN prompt answers 200 with X-UT-Response: elevation-prompt,
+  // so it never reaches this handler (ut-docs#7134).
   // The preview request never answers non-2xx (it always writes 200,
   // even for an unknown/malformed in-flight edit -- see the preview
   // handler), so this branch is currently unreachable for it. Guarded

@@ -746,3 +746,46 @@ func TestRetrievePairRequest_GetByIDFailureIsLocalized(t *testing.T) {
 		t.Fatalf("raw SQL error leaked into the response: %q", body)
 	}
 }
+
+func postPairRequestFromDevice(t *testing.T, mux *http.ServeMux, name, commitment, deviceID, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"device_name": name, "commitment": commitment, "device_id": deviceID})
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-request", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = remoteAddr
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// T7 / AC16 (ut-docs#7097, #7057): three requests from one phone leave ONE
+// pending row, the newest; a malformed device id is refused and stores nothing.
+func TestPairRequest_OnePendingRowPerDevice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	const dev = "till-44444444-4444-4444-8444-444444444444"
+	var lastID string
+	for i := 1; i <= 3; i++ {
+		rec := postPairRequestFromDevice(t, mux, "Phone", commitOf("s"+string(rune('0'+i))), dev, "10.0.0.5:1234")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: %d %s", i, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		lastID = out.Data.ID
+	}
+	list, err := data.NewPairingRepo(dp.Db).ListPending(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != lastID {
+		t.Fatalf("pending = %+v, want exactly the third request %s", list, lastID)
+	}
+	if rec := postPairRequestFromDevice(t, mux, "Phone", commitOf("bad"), "x\ny", "10.0.0.6:1"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed device id: %d, want 400", rec.Code)
+	}
+}

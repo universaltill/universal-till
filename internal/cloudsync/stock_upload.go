@@ -127,6 +127,7 @@ func uploadCloudStock(ctx context.Context, cfg *config.Config, db *sql.DB) (fail
 		}
 		return true
 	case res.Stopped != "":
+		reportRefusal("stock", res.StopStatus, res.Stopped) // ADR-0222: only a 401 with an envelope code counts
 		if stockUploadWarned.CompareAndSwap(false, true) {
 			logging.L().Warnf("cloudsync: stock upload not accepted (%d %s); the changes wait", res.StopStatus, res.Stopped)
 		} else {
