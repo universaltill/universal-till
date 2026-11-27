@@ -327,3 +327,86 @@ func TestPairingRepo_GetByIDForPollReportsExpired(t *testing.T) {
 		t.Fatal("unknown id")
 	}
 }
+
+// T7 (ut-docs#7097, AC16): one pending request per requesting device. A new
+// request from the same device replaces its older pending one; other devices,
+// and requests that carry no device id (older tills), are untouched.
+func TestPairingRepo_OnePendingRequestPerDevice(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	const phone = "till-11111111-1111-4111-8111-111111111111"
+	const other = "till-22222222-2222-4222-8222-222222222222"
+	mk := func(name, commit, dev string) string {
+		t.Helper()
+		id, err := repo.CreatePendingRequestForDevice(ctx, name, commit, TillRoleAdditional, "", dev, 10*time.Minute)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		return id
+	}
+	mk("Phone", "c1", phone)
+	mk("Phone", "c2", phone)
+	last := mk("Phone", "c3", phone)
+	otherID := mk("Tablet", "c4", other)
+	legacy1 := mk("Old A", "c5", "")
+	legacy2 := mk("Old A", "c6", "")
+
+	list, err := repo.ListPending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, p := range list {
+		got[p.ID] = true
+	}
+	if len(list) != 4 || !got[last] || !got[otherID] || !got[legacy1] || !got[legacy2] {
+		t.Fatalf("pending = %+v, want exactly the newest phone request, the other device and both id-less requests", list)
+	}
+}
+
+// An already approved request of the same device is not touched by a new one.
+func TestPairingRepo_NewRequestKeepsAnApprovedOneOfTheSameDevice(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	const dev = "till-33333333-3333-4333-8333-333333333333"
+	first, err := repo.CreatePendingRequestForDevice(ctx, "Phone", "c1", TillRoleAdditional, "", dev, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Approve(ctx, first, "tok", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePendingRequestForDevice(ctx, "Phone", "c2", TillRoleAdditional, "", dev, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	row, _, ok, err := repo.GetByIDForPoll(ctx, first)
+	if err != nil || !ok || row.Status != "approved" {
+		t.Fatalf("approved row after a new request: ok=%v status=%q err=%v", ok, row.Status, err)
+	}
+}
+
+// T7 (ut-docs#7097): an enrolled till remembers the device id it joined with,
+// so a re-join under a new name finds its row.
+func TestTillsRepo_DeviceIDLookup(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "tills-device.db")
+	repo := NewTillsRepo(d.DB)
+	id, err := repo.InsertTill(ctx, "Phone", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const dev = "till-66666666-6666-4666-8666-666666666666"
+	if _, ok, err := repo.TillByDeviceID(ctx, dev); err != nil || ok {
+		t.Fatalf("before: ok=%v err=%v, want not found", ok, err)
+	}
+	if err := repo.SetDeviceID(ctx, id, dev); err != nil {
+		t.Fatal(err)
+	}
+	row, ok, err := repo.TillByDeviceID(ctx, dev)
+	if err != nil || !ok || row.ID != id {
+		t.Fatalf("after: %+v ok=%v err=%v, want row %s", row, ok, err, id)
+	}
+	if _, ok, _ := repo.TillByDeviceID(ctx, ""); ok {
+		t.Fatal("an empty device id must never match a row")
+	}
+}

@@ -75,14 +75,14 @@
         {{ end }}
       </td>
       {{ with .Link }}
-      <td>
+      <td data-live-cell>
         {{ if .Linked }}<span class="tag ok">{{ T "tills.link.up" }}</span>{{ else }}<span class="tag">{{ T "tills.link.down" }}</span>{{ end }}
         {{ if .HasReport }}
         <br><small class="muted">{{ if eq .QueueDepth 1 }}{{ printf (T "tills.queue_one") .QueueDepth }}{{ else }}{{ printf (T "tills.queue_other") .QueueDepth }}{{ end }}
           · {{ if .TLSPinned }}{{ T "tills.tls.pinned" }}{{ else }}{{ T "tills.tls.not_pinned" }}{{ end }}</small>
         {{ end }}
       </td>
-      <td>
+      <td data-live-cell>
         {{ if .Version }}<bdi>{{ .Version }}</bdi>{{ else }}—{{ end }}
         {{ if eq .VersionCmp "older" }}<br><small class="muted">{{ T "tills.version.older" }}</small>
         {{ else if eq .VersionCmp "newer" }}<br><small class="muted">{{ T "tills.version.newer" }}</small>
@@ -108,7 +108,7 @@
       </td>
       {{ end }}
       <td>{{ datetime .EnrolledAt }}</td>
-      <td>{{ if .LastSeenAt }}{{ datetime .LastSeenAt }}{{ else }}—{{ end }}</td>
+      <td data-live-cell>{{ if .LastSeenAt }}{{ datetime .LastSeenAt }}{{ else }}—{{ end }}</td>
       <td>
       {{/* ut-docs#405: revoke is a primary-authoritative write (ADR-0011
            §2) — .Tills syncs to every replica too, so this button must not

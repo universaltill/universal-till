@@ -181,6 +181,23 @@ const (
 // pairPollNow is the poll limiters' clock; a var so tests simulate minutes.
 var pairPollNow = time.Now
 
+// validRequesterDeviceID accepts "" (an older till) or a short single-line
+// id of letters, digits and dashes (the till's marketplace.device_id).
+func validRequesterDeviceID(id string) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
 func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, tokens *enrolTokens) {
 	repo := data.NewPairingRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
@@ -224,6 +241,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			// ut-docs#2781: the role the till asks to join as; absent
 			// (an older till) means an additional till.
 			Role string `json:"role"`
+			// ut-docs#7097 (AC16): the requester's own device id; a retry from
+			// the same device replaces its older pending request. Absent on an
+			// older till: nothing is replaced.
+			DeviceID string `json:"device_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -231,6 +252,11 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		in.DeviceName = strings.TrimSpace(in.DeviceName)
 		in.Commitment = strings.TrimSpace(strings.ToLower(in.Commitment))
+		in.DeviceID = strings.TrimSpace(in.DeviceID)
+		if !validRequesterDeviceID(in.DeviceID) {
+			http.Error(w, "device_id is not valid", http.StatusBadRequest)
+			return
+		}
 		if in.DeviceName == "" || len(in.Commitment) != 64 {
 			http.Error(w, "device_name and a valid sha256 commitment are required", http.StatusBadRequest)
 			return
@@ -261,8 +287,8 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		// The pin this till served on THIS connection ("" over plain
 		// HTTP) — what the joining till saw, unless something in between
 		// presented its own certificate (ut-docs#4091).
-		id, err := repo.CreatePendingRequestWithRole(r.Context(), in.DeviceName, in.Commitment, role,
-			lantls.ServedPin(r.Context()), pairingRequestTTL)
+		id, err := repo.CreatePendingRequestForDevice(r.Context(), in.DeviceName, in.Commitment, role,
+			lantls.ServedPin(r.Context()), in.DeviceID, pairingRequestTTL)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return

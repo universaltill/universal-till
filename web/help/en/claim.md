@@ -80,7 +80,8 @@ If the cloud refuses this till's credential three times in a row, or this till's
 - **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
 - **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
 - **Cloud sign-in lost**: the store has no owner account, so the till can't be paired. Tap the chip, then **Reconnect this till** in Settings → Till registration (same shop); only if that is refused, **Register as a new shop** (only the old fleet history is lost).
-- **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection.
+- **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection. A restored till never registers itself as a new shop; you choose what happens.
+- **Cloud reconnect paused** (with "in use on two machines" in Settings → Till registration): the same till data is running on two machines (a copied folder), so the cloud will not connect it again. Keep the data on one machine; the till retries once a day.
 
 A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
 

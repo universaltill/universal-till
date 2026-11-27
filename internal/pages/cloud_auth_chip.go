@@ -149,6 +149,21 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 			return
 		}
+		// ut-docs#7097 (AC10): the same identity is live on another machine.
+		if registerInUseElsewhere(r.Context(), d) {
+			canManage := canPerform(d, r, "settings")
+			locale := httpx.ResolveLocale(w, r)
+			hint := httpx.T(locale, "status.cloud_auth.blocked_hint_short")
+			if canManage {
+				hint = httpx.T(locale, "status.cloud_auth.in_use_elsewhere_hint")
+			}
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":     cloudAuthBlocked,
+				"canManage":   canManage,
+				"blockedHint": hint,
+			})(w, r)
+			return
+		}
 		// ut-docs#5145: the cloud knows another key for this unregistered till.
 		if registerKeyRefused(r.Context(), d) {
 			canManage := canPerform(d, r, "settings")
