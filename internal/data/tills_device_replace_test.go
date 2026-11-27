@@ -6,23 +6,19 @@ import (
 	"time"
 )
 
-// ut-docs#7098: ListTills carries the device id; BackfillDeviceID only fills an
-// empty one and never moves a claimed id (first claim wins).
-func TestTillsRepo_ListTillsCarriesDeviceIDAndBackfillFillsOnlyEmpty(t *testing.T) {
+// ut-docs#7098: ListTills carries the device id; SetDeviceID is first-claim-wins
+// (an id another row holds is not given twice).
+func TestTillsRepo_ListTillsCarriesDeviceIDFirstClaimWins(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "tills-backfill.db")
 	repo := NewTillsRepo(d.DB)
 	a, _ := repo.InsertTill(ctx, "Phone", "h1")
 	b, _ := repo.InsertTill(ctx, "Tablet", "h2")
-	if err := repo.BackfillDeviceID(ctx, a, "dev-A"); err != nil {
-		t.Fatal(err)
-	}
-	// already filled: a second, different id never replaces it
-	if err := repo.BackfillDeviceID(ctx, a, "dev-X"); err != nil {
+	if err := repo.SetDeviceID(ctx, a, "dev-A"); err != nil {
 		t.Fatal(err)
 	}
 	// dev-A is claimed by another row: b gets nothing
-	if err := repo.BackfillDeviceID(ctx, b, "dev-A"); err != nil {
+	if err := repo.SetDeviceID(ctx, b, "dev-A"); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}

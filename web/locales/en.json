@@ -5160,6 +5160,7 @@
   "tills.list.error.account_unavailable": "The account list could not be read, so nothing was removed.",
   "tills.list.error.pin_missing": "Enter a manager PIN to remove an entry. Nothing was removed.",
   "tills.list.error.pin_wrong": "That PIN is not right. Nothing was removed.",
+  "tills.list.error.cloud_remove_not_enabled": "Removing entries from your shop list is not switched on yet, so nothing was changed. This does not affect selling.",
   "tills.list.error.cloud_remove_failed": "Could not reach your shop list. Nothing was changed. Try again when the till is online.",
   "tills.list.error.remove_live": "%s is in use right now, so it was not removed.",
   "tills.list.error.not_listed": "That entry is not in the list any more. Nothing was removed.",

@@ -187,6 +187,11 @@ func TestCloudRemoveRequiresFreshListedRow(t *testing.T) {
 	if rec := post(manager3134, "dev-ghost", ""); rec.Code != http.StatusNotFound || calls != 0 {
 		t.Fatalf("flag off: %d calls=%d, want 404 and 0 calls", rec.Code, calls)
 	}
+	// flag off: a cashier with a wrong PIN gets 404, the PIN is never checked
+	// (no lockout attempt burned on a call that cannot work).
+	if rec := post(cashier3134, "dev-ghost", "0000"); rec.Code != http.StatusNotFound || calls != 0 {
+		t.Fatalf("flag off + wrong PIN: %d calls=%d, want 404 and 0 calls", rec.Code, calls)
+	}
 	if err := dp.Settings.Set(context.Background(), settingCloudRemove, "1"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,9 +206,16 @@ func TestCloudRemoveRequiresFreshListedRow(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || calls != 1 || !strings.Contains(rec.Body.String(), "Could not reach your shop list. Nothing was changed. Try again when the till is online.") {
 		t.Fatalf("offline: %d calls=%d body=%q", rec.Code, calls, rec.Body.String())
 	}
+	// cloud answers 404 not_enabled: plain words, marked as the operator's reason
+	callErr = enroll.ErrRemoveNotEnabled
+	rec = post(manager3134, "dev-ghost", "")
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("X-UT-Response") != "refused" ||
+		!strings.Contains(rec.Body.String(), "Removing entries from your shop list is not switched on yet, so nothing was changed.") {
+		t.Fatalf("not enabled: %d hdr=%q body=%q", rec.Code, rec.Header().Get("X-UT-Response"), rec.Body.String())
+	}
 	callErr = nil
-	if rec := post(cashier3134, "dev-ghost", perm3134MgrPIN); rec.Code != http.StatusNoContent || calls != 2 {
-		t.Fatalf("listed + manager PIN: %d calls=%d, want 204 and 2 calls", rec.Code, calls)
+	if rec := post(cashier3134, "dev-ghost", perm3134MgrPIN); rec.Code != http.StatusNoContent || calls != 3 {
+		t.Fatalf("listed + manager PIN: %d calls=%d, want 204 and 3 calls", rec.Code, calls)
 	}
 	if n := rowCount(t, dp, `SELECT COUNT(*) FROM audit_log WHERE action = 'till_cloud_removed' AND actor_id = 'mgr1'`); n != 1 {
 		t.Fatalf("audit rows till_cloud_removed by the PIN's manager = %d, want 1", n)

@@ -1774,6 +1774,7 @@
   "tills.list.error.account_unavailable": {"description": "Refusal when removing stale tills while the account list cannot be read.", "review": "standard", "max_length": 100},
   "tills.list.error.pin_missing": {"description": "Error under the manager PIN box on Other tills when a removal was tried with no PIN.", "review": "standard", "max_length": 80},
   "tills.list.error.pin_wrong": {"description": "Error under the manager PIN box on Other tills when the PIN was wrong or locked out.", "review": "standard", "max_length": 60},
+  "tills.list.error.cloud_remove_not_enabled": {"description": "Error on Other tills when removing an entry from the shop list was refused because the online list does not allow removals yet. Nothing was changed.", "review": "standard", "max_length": 130},
   "tills.list.error.cloud_remove_failed": {"description": "Error when removing an entry from the shop's online list failed (offline, server error). Nothing was changed.", "review": "standard", "max_length": 110},
   "tills.list.error.remove_live": {"description": "Error when removing an entry that was seen working a moment ago. The placeholder is its name.", "review": "standard", "placeholders": ["till name"], "max_length": 80},
   "tills.list.error.not_listed": {"description": "Error when a removal named an entry that is not in the freshly read shop list.", "review": "standard", "max_length": 80},

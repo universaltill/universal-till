@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/tills"
 )
@@ -90,16 +91,18 @@ func registerTillsCloudRemove(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	repo := data.NewTillsRepo(d.Db)
 	mux.HandleFunc("POST /api/sync/tills/cloud-remove", func(w http.ResponseWriter, r *http.Request) {
-		actor, ok := authorizeTillRemoval(w, r, d)
-		if !ok {
-			return
-		}
+		// Cheap checks first, so a replica or a flag-off till never burns
+		// manager PIN attempts (lockout counter) on a call that cannot work.
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "remove must be done on the primary till", http.StatusConflict)
 			return
 		}
 		if !cloudRemoveEnabled(r.Context(), d) {
 			common.LocalizedError(w, r, http.StatusNotFound, "tills.list.cloud_only.wait")
+			return
+		}
+		actor, ok := authorizeTillRemoval(w, r, d)
+		if !ok {
 			return
 		}
 		_ = r.ParseForm()
@@ -128,9 +131,11 @@ func registerTillsCloudRemove(mux *http.ServeMux, d *common.Deps) {
 		if err := tillsCloudRemoveCall(r.Context(), d.Cfg, deviceID); err != nil {
 			key := "tills.list.error.cloud_remove_failed"
 			if errors.Is(err, enroll.ErrRemoveNotEnabled) {
-				key = "tills.list.cloud_only.wait"
+				key = "tills.list.error.cloud_remove_not_enabled"
 			}
-			common.LocalizedError(w, r, http.StatusBadGateway, key)
+			// RefuseText marks the body as the operator's own reason, so the
+			// page shows it instead of the generic save-failed line.
+			httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), key), http.StatusBadGateway)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actor, "till", deviceID, "till_cloud_removed",

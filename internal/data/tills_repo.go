@@ -292,22 +292,6 @@ UPDATE tills SET device_id = ? WHERE id = ?
 	return nil
 }
 
-// BackfillDeviceID fills the device id of a till row that has none (ut-docs#7098):
-// a row enrolled before migration 118, whose device then matches by id on its
-// next contact. It never overwrites a stored id and, like SetDeviceID, is
-// first-claim-wins: an id another row already holds is not given twice.
-func (r *TillsRepo) BackfillDeviceID(ctx context.Context, id, deviceID string) error {
-	if deviceID == "" {
-		return nil
-	}
-	if _, err := r.db.ExecContext(ctx, `
-UPDATE tills SET device_id = ? WHERE id = ? AND COALESCE(device_id, '') = ''
-  AND NOT EXISTS (SELECT 1 FROM tills WHERE device_id = ? AND id <> ?)`, deviceID, id, deviceID, id); err != nil {
-		return fmt.Errorf("backfill till device id: %w", err)
-	}
-	return nil
-}
-
 // ReplaceEnrolmentDevice moves a till row's device id to the new device after a
 // manager approved "replace this old entry" (ut-docs#7098). It is used ONLY in
 // that approved branch (a self-asserted id never reaches it) and returns the

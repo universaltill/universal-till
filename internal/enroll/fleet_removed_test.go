@@ -97,3 +97,20 @@ func TestRemoveFromAccountNotEnabled(t *testing.T) {
 		t.Fatalf("err = %v, want ErrRemoveNotEnabled", err)
 	}
 }
+
+// New cloud, OLD till build: Fleet (the pre-#7098 reader, which knows nothing of
+// removed_tills) gets a devices list without the removed rows and the extra
+// field is ignored: a missing row is simply not present, never an error.
+func TestFleetOldReaderAgainstNewCloudPayload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"devices":[{"device_id":"d1","till_id":"t1","name":"mac-till"}],"removed_tills":[{"device_id":"d9","till_id":"t9","removed_at":"2026-11-25T19:48:00Z"}]},"error":null}`))
+	}))
+	defer srv.Close()
+	devs, err := Fleet(context.Background(), fleetTestCfg(srv.URL))
+	if err != nil {
+		t.Fatalf("old reader must not fail on the new payload: %v", err)
+	}
+	if len(devs) != 1 || devs[0].DeviceID != "d1" {
+		t.Fatalf("devices = %+v, want only d1 (removed d9 absent)", devs)
+	}
+}

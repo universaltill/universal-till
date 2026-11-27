@@ -279,3 +279,44 @@ func TestPendingCardNoSelectWithoutCandidates(t *testing.T) {
 		t.Fatalf("a select with nothing to pick:\n%s", body)
 	}
 }
+
+// Reviewer nit 2: if moving the device id to the replaced row fails (another
+// row holds it), the register must NOT be linked to the new device, so the till
+// row and the register link keep agreeing (both stay on the old device).
+func TestReplaceDeviceMoveFailureDoesNotLinkRegisterToNewDevice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+
+	tok, rec := pairRequestAndApprove(t, mux, dp, "phone till", devA, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve 1: %d %s", rec.Code, rec.Body.String())
+	}
+	first := parseEnrol(t, enrolForTest(t, mux, tok, "phone till", devA))
+	quietTill(t, dp, first.TillID)
+
+	tok, rec = pairRequestAndApprove(t, mux, dp, "iphone-till", devB, first.TillID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve 2: %d %s", rec.Code, rec.Body.String())
+	}
+	// Between the approval and the enrolment another row claims devB.
+	other, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "squatter", hashBearer("b-squatter"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.NewTillsRepo(dp.Db).SetDeviceID(t.Context(), other, devB); err != nil {
+		t.Fatal(err)
+	}
+	got := parseEnrol(t, enrolForTest(t, mux, tok, "iphone-till", devB))
+	if got.TillID != first.TillID || got.RegisterID != first.RegisterID {
+		t.Fatalf("enrol: till %s register %s, want %s / %s", got.TillID, got.RegisterID, first.TillID, first.RegisterID)
+	}
+	if n := rowCount(t, dp, `SELECT COUNT(*) FROM register_devices WHERE device_id = ?`, devB); n != 0 {
+		t.Fatalf("register links to the new device = %d, want 0 (device id move failed)", n)
+	}
+	if l := linkOf(t, dp, devA); l.RegisterID != first.RegisterID {
+		t.Fatalf("register must stay linked to the old device %s, link = %+v", devA, l)
+	}
+	if n := rowCount(t, dp, `SELECT COUNT(*) FROM audit_log WHERE action = 'till_device_move_failed' AND entity_id = ?`, first.TillID); n != 1 {
+		t.Fatalf("till_device_move_failed audit rows = %d, want 1", n)
+	}
+}

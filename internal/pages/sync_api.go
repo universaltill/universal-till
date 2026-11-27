@@ -921,13 +921,20 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
+		deviceMoveFailed := false
 		if in.DeviceID != "" && validRequesterDeviceID(in.DeviceID) {
 			if approvedReplace {
 				// The manager said this device IS that entry: the row's device
 				// id moves to it (the register link keeps the old id as
 				// superseded_by, see enrolRegister).
 				if _, err := repo.ReplaceEnrolmentDevice(r.Context(), tillID, in.DeviceID); err != nil {
+					// Keep the till row and the register link consistent: the row
+					// keeps its old device id, so the register is NOT linked to
+					// the new device (see linkDevice below).
+					deviceMoveFailed = true
 					logging.L().Warnf("sync: move device id to replaced till %s: %v", tillID, err)
+					_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_device_move_failed",
+						map[string]any{"name": name}, time.Now().UTC().Format(time.RFC3339), "")
 				}
 			} else if err := repo.SetDeviceID(r.Context(), tillID, in.DeviceID); err != nil {
 				logging.L().Warnf("sync: remember device id of enrolled till %s: %v", tillID, err)
@@ -981,7 +988,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			}
 		}
 		linkDevice := ""
-		if validRequesterDeviceID(in.DeviceID) {
+		if validRequesterDeviceID(in.DeviceID) && !deviceMoveFailed {
 			linkDevice = in.DeviceID
 		}
 		registerID, registerName, takenOver := enrolRegister(r.Context(), posRepo, replaceID, tillID, name, linkDevice, deviceProof)
