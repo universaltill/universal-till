@@ -1081,6 +1081,53 @@ func followStateInto(ctx context.Context, d *common.Deps, rows []data.PluginSync
 	}
 }
 
+// relistSource finds the stale record of a plugin the main re-listed (ut-docs#7034):
+// an Active record for row's plugin under a listing the main no longer lists, on
+// this till. Several candidates: newest UpdatedAt, then the smaller listing id.
+func relistSource(records map[string]plugins.InstallStatusRecord, inPrimary map[string]bool, row data.PluginSyncRow) (plugins.InstallStatusRecord, bool) {
+	var best plugins.InstallStatusRecord
+	found := false
+	for id, rec := range records {
+		if id == row.ListingID || inPrimary[id] || rec.State != plugins.InstallStateActive || rec.PluginID != row.PluginID {
+			continue
+		}
+		if !found || rec.UpdatedAt > best.UpdatedAt || (rec.UpdatedAt == best.UpdatedAt && rec.ListingID < best.ListingID) {
+			best, found = rec, true
+		}
+	}
+	if found && best.ListingID == "" {
+		return plugins.InstallStatusRecord{}, false
+	}
+	return best, found
+}
+
+// dropRelistedRecord deletes the stale record by listing id (ut-docs#7034).
+func dropRelistedRecord(ctx context.Context, store *plugins.InstallStatusStore, d *common.Deps, src plugins.InstallStatusRecord, pluginID string) {
+	if err := store.DeleteListing(ctx, src.ListingID, pluginID); err != nil {
+		logging.L().Warnf("plugin sync: drop stale record %s of relisted %s (will retry): %v", src.ListingID, pluginID, err)
+		return
+	}
+	clearBrokenRefetch(d, src.ListingID)
+}
+
+// rekeyRelisted re-keys a converged relisted plugin's record to the new
+// listing: save L2 first, delete the stale one only if that succeeded, so the
+// plugin always has an Active record (ut-docs#7034). Errors retry next tick.
+func rekeyRelisted(ctx context.Context, store *plugins.InstallStatusStore, d *common.Deps, row data.PluginSyncRow, src plugins.InstallStatusRecord, version string) {
+	name := src.PluginName
+	if name == "" {
+		name = row.PluginName
+	}
+	if err := store.Save(ctx, plugins.InstallStatusRecord{
+		ListingID: row.ListingID, PluginID: row.PluginID, PluginName: name,
+		CurrentVersion: version, State: plugins.InstallStateActive,
+	}); err != nil {
+		logging.L().Warnf("plugin sync: re-key %s to %s (will retry): %v", row.PluginID, row.ListingID, err)
+		return
+	}
+	dropRelistedRecord(ctx, store, d, src, row.PluginID)
+}
+
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
@@ -1148,11 +1195,11 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		}
 		// ut-docs#7012: the primary re-listed this plugin under a new listing
 		// id. Removing by PluginID would drop its settings and storage. The
-		// install loop below is a no-op for L2 at the same version (L2 gets
-		// no record until the version changes) and an in-place upgrade
-		// otherwise. The stale record is left alone (no per-listing delete
-		// exists; ClearForPlugin would also drop L2's record) and pruned
-		// once the primary drops the plugin entirely.
+		// install loop below is a no-op for L2 at the same version and an
+		// in-place upgrade otherwise. The stale record is left alone here;
+		// the install loop re-keys it to L2 (relistSource, ut-docs#7034) and
+		// deletes it by listing id (ClearForPlugin would also drop L2's
+		// record). Until then it keeps P prunable once the primary drops it.
 		if inPrimaryPlugin[rec.PluginID] {
 			continue
 		}
@@ -1214,6 +1261,9 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		if installed && version == row.Version && installState != data.PluginStateBroken {
 			clearBrokenRefetch(d, row.ListingID)
 			resolvePluginSyncListing(row.ListingID)
+			if src, ok := relistSource(records, inPrimary, row); ok {
+				rekeyRelisted(ctx, statusStore, d, row, src, version)
+			}
 			continue
 		}
 		if installed && installState == data.PluginStateBroken {
@@ -1240,6 +1290,24 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		if row.OwnedPaymentMethodIDs != nil {
 			adopt = *row.OwnedPaymentMethodIDs
 		}
+		// ut-docs#7034: a relisted plugin (P's Active record sits under a
+		// listing the main dropped) has no record under L2, so a failed or
+		// mismatched install would uninstall P or record a Failed L2. Pre-adopt
+		// L2 as a copy of the stale record first: the install then sees a prior
+		// good version and rolls back, and P always has an Active record.
+		src, relisted := relistSource(records, inPrimary, row)
+		if cur, ok := records[row.ListingID]; relisted && !(ok && cur.State == plugins.InstallStateActive && cur.PluginID == row.PluginID) {
+			adopted := src
+			adopted.ListingID, adopted.UpdatedAt = row.ListingID, ""
+			if adopted.PluginName == "" {
+				adopted.PluginName = row.PluginName
+			}
+			adopted.TargetVersion, adopted.MessageKey, adopted.Retryable = "", "", false
+			adopted.State = plugins.InstallStateActive
+			if err := statusStore.Save(ctx, adopted); err != nil {
+				logging.L().Warnf("plugin sync: adopt %s record for relisted %s: %v", row.ListingID, row.PluginID, err)
+			}
+		}
 		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version, inactive, adopt); err != nil {
 			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
 			// never be installed on a till, so there is nothing to follow —
@@ -1255,6 +1323,9 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		}
 		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
 			row.PluginName, row.ListingID, row.Version)
+		if relisted {
+			dropRelistedRecord(ctx, statusStore, d, src, row.PluginID)
+		}
 		resolvePluginSyncListing(row.ListingID)
 		changed = true
 	}
