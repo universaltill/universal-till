@@ -589,7 +589,7 @@
       "sha256": "d9146aeb01bc1ccb00362b802ad3f329463033fc2c1383817c7fa1ffa6032be1"
     },
     "internal/pages/operator_checkin.go": {
-      "sha256": "cb727d506d536324639f631e35965851d4c472d62c20c550f1ec55c89f9ef536"
+      "sha256": "9cee09d289901ada1b54bd3e3df7f4ccf23e4d7795607c421d85ece728ede240"
     },
     "internal/pages/order_status.go": {
       "sha256": "8c14fca40633ff746bc0c54df303e58c74f5f5fabf5bf56f0907137e5801b5da"
