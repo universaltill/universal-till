@@ -201,10 +201,10 @@
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
     },
     "tap-to-pay": {
-      "en": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
-      "fa": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
-      "ar": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08",
-      "tr": "a57a6980073c6e9fffe13f6c574bb6d75d8f6614a13c304379ce4ac55a838f08"
+      "en": "836ba7ee12f646a8078d3ae921c1aabcad1afc89acddfc329590076b30a85ce1",
+      "fa": "836ba7ee12f646a8078d3ae921c1aabcad1afc89acddfc329590076b30a85ce1",
+      "ar": "836ba7ee12f646a8078d3ae921c1aabcad1afc89acddfc329590076b30a85ce1",
+      "tr": "836ba7ee12f646a8078d3ae921c1aabcad1afc89acddfc329590076b30a85ce1"
     },
     "tax-codes": {
       "en": "a9aea0cf38a7176e7bfc8ce99928988247a9bbe4a02695501d27d73da6c0b321",
@@ -781,7 +781,7 @@
       "sha256": "19b5a0259062df28bcb526059a3b5d90742ec31ee2cd9f152d2ccf52abbcf982"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "9106b0c0c7fbb29c530a1711deb70815eaab1440153c1d87fb7df2a1daa9aaed"
+      "sha256": "c563e5c4df4b39492292ad5ba7db17061a032608c93f0621fa6f7cebea2bc676"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "cca7cd0dd303c0a4c4e770c25f571ee6b6aae3e3cf3c85c3649cf872238404dc"
@@ -2170,7 +2170,7 @@
       "sha256": "15f8e4325ca8fc7230a5efd125466fd28c8cb6bb88c5773fc4f673c91ac7933b"
     },
     "web/ui/partials/tap_settings_body.html": {
-      "sha256": "b267db37607f77bd76ad46b45bf4187e35ccabde3c19ce9f3868e840d45b0ba1"
+      "sha256": "7809d044cf49be79f40fa6f77be9cea430171361f544f7cc2ab5c916b4ca6368"
     },
     "web/ui/partials/tax_autoinstall_chip.html": {
       "sha256": "b2c2308b503c2ad8f6bd98577f77a3babdc231867507162b99bbea3a30604a2d"
