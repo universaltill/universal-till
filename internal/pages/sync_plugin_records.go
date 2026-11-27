@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -37,6 +38,10 @@ const (
 	pluginRecordsPushBatches = 5
 	// pluginRecordsRespCap bounds what the replica reads of an answer.
 	pluginRecordsRespCap = 1 << 20
+	// pluginRecordsReasonMax caps (in bytes) the main's reason string a
+	// replica stores and audits: the main's codes are short, anything
+	// longer is cut (review, low).
+	pluginRecordsReasonMax = 64
 )
 
 // pluginRecordsBatchDeadline bounds one batch's deliveries; the rest are
@@ -369,6 +374,7 @@ func pushPluginRecordsBatch(ctx context.Context, d *common.Deps, repo *data.Plug
 // rejectOutboxRow makes a row terminal and audits it (the card: "4xx =
 // terminal rejected, audited, shown in Problems").
 func rejectOutboxRow(ctx context.Context, d *common.Deps, repo *data.PluginRecordsRepo, o data.OutboxRecord, reason string, now time.Time) {
+	reason = capRecordReason(reason)
 	if reason == "" {
 		reason = "refused"
 	}
@@ -378,4 +384,18 @@ func rejectOutboxRow(ctx context.Context, d *common.Deps, repo *data.PluginRecor
 	}
 	_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", "plugin", o.PluginID, "plugin_record_rejected",
 		map[string]any{"collection": o.Collection, "id": o.RecordID, "reason": reason}, now.Format(time.RFC3339), "")
+}
+
+// capRecordReason keeps at most pluginRecordsReasonMax bytes of the main's
+// reason, cut on a rune boundary, with invalid UTF-8 dropped.
+func capRecordReason(reason string) string {
+	reason = strings.ToValidUTF8(reason, "")
+	if len(reason) <= pluginRecordsReasonMax {
+		return reason
+	}
+	cut := pluginRecordsReasonMax
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
 }

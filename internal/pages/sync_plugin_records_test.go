@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -628,5 +629,26 @@ func TestSaleCommitUnaffectedByUnreachableMainAndFullOutbox_3697(t *testing.T) {
 	_ = rdp.Db.QueryRow(`SELECT COUNT(*) FROM plugin_record_outbox WHERE status='pending'`).Scan(&pending)
 	if pending != data.RecordMaxRowsPlugin {
 		t.Fatalf("pending = %d: the sale path must not touch the outbox", pending)
+	}
+}
+
+// Review (low): the main's reason string is stored and audited on the
+// replica, so its length is capped there whatever the main sends.
+func TestSyncPushPluginRecords_RejectReasonIsCapped_3697(t *testing.T) {
+	long := strings.Repeat("é", 5000)
+	srv, _ := recordsStubMain(t, 200, recordsResultsBody("rejected", long, "r1"))
+	rdp := recordsReplica(t, srv.URL)
+	queueRecord(t, rdp, "p.a", "r1")
+	syncPushTick(context.Background(), rdp, &http.Client{Timeout: 5 * time.Second})
+	st, reason, _, _ := outboxState(t, rdp, "r1")
+	if st != "rejected" || len(reason) == 0 || len(reason) > pluginRecordsReasonMax || !utf8.ValidString(reason) {
+		t.Fatalf("row = %s, reason len %d (valid utf8 %v), want rejected with at most %d bytes", st, len(reason), utf8.ValidString(reason), pluginRecordsReasonMax)
+	}
+	var audit string
+	if err := rdp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action='plugin_record_rejected'`).Scan(&audit); err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) > 512 {
+		t.Fatalf("audit row carries the uncapped reason (%d bytes)", len(audit))
 	}
 }
