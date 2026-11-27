@@ -244,8 +244,8 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 	}
 	stop := approvalBGAdd()
 	go func() {
-		defer approvalBG.wg.Done()
 		defer logging.RecoverAndLog("enroll.approvalKeyReport")
+		defer approvalBG.wg.Done()
 		if wg != nil {
 			defer wg.Done()
 		}

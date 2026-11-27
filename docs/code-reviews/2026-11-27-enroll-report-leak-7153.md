@@ -64,3 +64,15 @@ No High or Medium findings.
 | L2 | Low | The comment said a racing kick is "stopped and waited for". It may in fact be stopped before its first attempt. | Comment corrected |
 | L3 | Low | The 1 MiB `runtime.Stack` buffer could truncate silently and miss a live frame | The buffer now grows until the stacks fit |
 | L4 | Low | A reset called from inside a report goroutine would wait on itself (nothing does this) | Documented on `approvalBG` |
+
+## CI fix round
+
+The first push failed CI. `internal/logging` `TestNoUnrecoveredGoroutines`
+flagged `approval_report.go:246`: the goroutine's first statement was
+`defer approvalBG.wg.Done()`, and the guard requires
+`defer logging.RecoverAndLog(...)` to come first (ut-docs#3304). The two
+defers are now swapped. On a panic, `Done` still runs during the unwind, and
+the recover then catches the panic. The guard passes locally, and
+`-race -count=20 -run '7153|TestRecover'` is green. The local gate had missed
+this guard: the Tester's `go test ./...` run timed out in `internal/plugins`,
+and its report did not separate the `internal/logging` result.
