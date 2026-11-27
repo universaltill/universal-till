@@ -1563,6 +1563,26 @@ func enrollWithNameApproved(t *testing.T, mux *http.ServeMux, dp *common.Deps, n
 	return rec
 }
 
+// enrolApprovedForDevice enrols with a token a manager approved for a request
+// that named deviceID (requester_device_id), as the real approve flow does.
+func enrolApprovedForDevice(t *testing.T, mux *http.ServeMux, dp *common.Deps, name, deviceID string) *httptest.ResponseRecorder {
+	t.Helper()
+	code := issueEnrolCode(t, mux, "http://192.168.1.10:8080")
+	_, tok, err := decodeEnrollCode(code)
+	if err != nil {
+		t.Fatalf("decode enrol code: %v", err)
+	}
+	pr := data.NewPairingRepo(dp.Db)
+	id, err := pr.CreatePendingRequestForDevice(context.Background(), name, strings.Repeat("a", 64), data.TillRoleAdditional, "", deviceID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pr.ApproveWithRole(context.Background(), id, tok, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	return enrolForTest(t, mux, tok, name, deviceID)
+}
+
 func TestSyncEnroll_RejectsDuplicateSiblingName(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
@@ -2118,7 +2138,21 @@ func TestSyncEnroll_RenameKeepsTheRowForTheSameDevice(t *testing.T) {
 	if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339), first.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Review 2026-11-27: a self-asserted device id with a typed/QR token (no
+	// manager approval that named this device) never takes the quiet row over.
 	if rec := enrolForTest(t, mux, mintEnrolTokenForTest(t, mux), "Phone renamed", dev); rec.Code != http.StatusOK {
+		t.Fatalf("unapproved enrol: %d %s", rec.Code, rec.Body.String())
+	}
+	if row, _, _ := repo.TillByDeviceID(t.Context(), dev); row.ID != first.ID || row.Name != "Phone" {
+		t.Fatalf("an unapproved enrol took the quiet row: %+v", row)
+	}
+	// The manager-approved request of THAT device does.
+	if list, _ := repo.ListTills(t.Context()); len(list) == 2 {
+		if err := repo.DeleteTill(t.Context(), list[1].ID); err != nil && list[1].ID != first.ID {
+			t.Fatal(err)
+		}
+	}
+	if rec := enrolApprovedForDevice(t, mux, dp, "Phone renamed", dev); rec.Code != http.StatusOK {
 		t.Fatalf("rename enrol: %d %s", rec.Code, rec.Body.String())
 	}
 	list, _ := repo.ListTills(t.Context())

@@ -832,7 +832,16 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", derr)
 				return
 			}
-			if found && !byDev.SeenWithin(time.Now(), replaceLiveWindow) && !strings.EqualFold(name, primaryName) {
+			// A rename takes the row only with the same proof as the name rule:
+			// a manager approved a request that NAMED this device. A typed code,
+			// a QR token, or a self-asserted device id never unlocks it (review
+			// 2026-11-27, finding 1).
+			approvedDev, approvedOK, perr := pairingRepo.RequesterDeviceForToken(r.Context(), presented)
+			if perr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", perr)
+				return
+			}
+			if found && approvedOK && approvedDev == in.DeviceID && !byDev.SeenWithin(time.Now(), replaceLiveWindow) && !strings.EqualFold(name, primaryName) {
 				taken, terr := repo.NameTakenExcept(r.Context(), name, byDev.ID)
 				if terr != nil {
 					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", terr)

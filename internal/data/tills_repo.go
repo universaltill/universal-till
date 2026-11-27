@@ -276,9 +276,14 @@ func (r *TillsRepo) TillByDeviceID(ctx context.Context, deviceID string) (TillRo
 	return TillRow{}, false, nil
 }
 
-// SetDeviceID records the device id a till joined with.
+// SetDeviceID records the device id a till joined with. One device id belongs to
+// one till row, the first to claim it: a later row asserting the same id gets
+// none, so a lookup by device id is never ambiguous and a self-asserted id never
+// moves a device id off the till that really holds it (ut-docs#7097 review).
 func (r *TillsRepo) SetDeviceID(ctx context.Context, id, deviceID string) error {
-	if _, err := r.db.ExecContext(ctx, `UPDATE tills SET device_id = ? WHERE id = ?`, deviceID, id); err != nil {
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE tills SET device_id = ? WHERE id = ?
+  AND NOT EXISTS (SELECT 1 FROM tills WHERE device_id = ? AND id <> ?)`, deviceID, id, deviceID, id); err != nil {
 		return fmt.Errorf("set till device id: %w", err)
 	}
 	return nil
