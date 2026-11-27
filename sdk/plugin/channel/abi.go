@@ -44,6 +44,26 @@ const (
 	AskImport        = "channel.import.ask"
 	AskOutbox        = "channel.outbox.ask"
 	AskTick          = "channel.tick"
+	// AskWebhookRegister (ut-docs#7084, additive in contract v1): the host
+	// asks the adapter to ensure its API-registrable webhook subscriptions at
+	// the channel, for the callback address the host gives it. Tenant context.
+	AskWebhookRegister = "channel.webhook.register.ask"
+)
+
+// WebhookRegisterInput.Mode values.
+const (
+	WebhookModeEnsure = "ensure"
+	WebhookModeRemove = "remove"
+)
+
+// TopicState.State values of a WebhookRegisterResult.
+const (
+	TopicRegistered  = "registered"
+	TopicAlready     = "already"
+	TopicUpdated     = "updated"
+	TopicRemoved     = "removed"
+	TopicUnsupported = "unsupported"
+	TopicFailed      = "failed"
 )
 
 // Limits the host enforces (contract sections 3 and 4). The SDK refuses a
@@ -115,6 +135,10 @@ const (
 	EventShopRedact     = "shop_redact"
 	EventDataRequest    = "data_request"
 	EventOther          = "other"
+	// EventProductChanged (ut-docs#7084, additive in contract v1): a product
+	// was created, changed or deleted at the channel. A doorbell only: the
+	// host re-reads the named products with AskFetch.
+	EventProductChanged = "product_changed"
 )
 
 // Log levels.
