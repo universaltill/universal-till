@@ -126,9 +126,17 @@ type Hooks struct {
 	// added it ignores the field and writes unconditionally, so the cloud
 	// must not rely on it below the registry's RegistryMinTillVersion.
 	SetTillSetting func(ctx context.Context, key, value string, expect *string) (string, error)
-	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
-	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
-	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
+	// SetTillSettingCond is SetTillSetting plus the per-field version
+	// fields of the shop-config design (design-B 4.2): when non-nil it is
+	// used instead of SetTillSetting for every set_till_setting directive.
+	// A conflict, a stale version or a tier mismatch comes back as a
+	// *ReasonError (key conflict | stale_version | tier_mismatch), nothing
+	// written. An older cloud sends none of the fields: the zero
+	// TillSettingCond means today's unconditional write.
+	SetTillSettingCond func(ctx context.Context, key, value string, expect *string, cond TillSettingCond) (string, error)
+	InstallPlugin      func(ctx context.Context, listingID string) (string, error)
+	RemovePlugin       func(ctx context.Context, pluginID string) (string, error)
+	SetPrice           func(ctx context.Context, itemID string, priceMinor int64) (string, error)
 	// AdjustStock handles "adjust_stock" {item_id, qty_delta, reason,
 	// location_id?, variant_id?}; variantID/locationID are "" when absent
 	// (an older cloud) — the till then picks the location as before
@@ -899,7 +907,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		}
 		msg, err = hooks.SetSetting(ctx, key, str("value"))
 	case "set_till_setting":
-		if hooks.SetTillSetting == nil {
+		if hooks.SetTillSetting == nil && hooks.SetTillSettingCond == nil {
 			return "failed", "set_till_setting is not supported on this till"
 		}
 		key := str("key")
@@ -913,6 +921,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 				return "failed", "expect must be a string"
 			}
 			expect = &e
+		}
+		if hooks.SetTillSettingCond != nil {
+			cond, ok := tillSettingCondFrom(d.Payload)
+			if !ok {
+				return "failed", "ver and base_ver must be whole numbers of at least 1, tier a string"
+			}
+			msg, err = hooks.SetTillSettingCond(ctx, key, str("value"), expect, cond)
+			noteReason(ctx, err)
+			break
 		}
 		msg, err = hooks.SetTillSetting(ctx, key, str("value"), expect)
 	case "install_plugin":

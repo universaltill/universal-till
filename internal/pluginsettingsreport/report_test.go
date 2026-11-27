@@ -246,3 +246,33 @@ func TestPrintable_KeepsZWNJRejectsOtherFormatChars(t *testing.T) {
 		}
 	}
 }
+
+// Phase 2 (design B 4.3): the report carries the row's REAL ver/origin/at
+// instead of the constant InitialVer, so the cloud ingests a till edit.
+func TestBuild_ReportsTheRowsRealVerOriginAt(t *testing.T) {
+	verAt := time.Date(2031, 5, 6, 7, 8, 9, 0, time.UTC) // fixed-date:ok fixture constant, not read against the clock
+	in := []Plugin{{ID: "p.one", Version: "1.0.0",
+		Settings: []plugins.ManifestSetting{{Key: "edited", Type: "text"}, {Key: "pushed", Type: "text"}, {Key: "seeded", Type: "text"}, {Key: "legacy", Type: "text"}},
+		Rows: map[string]Row{
+			"edited": {ValueJSON: `"a"`, UpdatedAt: t0, Ver: 5, Origin: "till", VerAt: verAt},
+			"pushed": {ValueJSON: `"b"`, UpdatedAt: t0, Ver: 9, Origin: "cloud", VerAt: verAt},
+			"seeded": {ValueJSON: `"c"`, UpdatedAt: t0, Ver: 1, Origin: "default"},
+			"legacy": {ValueJSON: `"d"`, UpdatedAt: t0}, // a row from a caller that knows no ver
+		}}}
+	got := map[string]Setting{}
+	for _, s := range Build(in)[0].Settings {
+		got[s.Key] = s
+	}
+	want := map[string][3]any{
+		"edited": {5, "till", "2031-05-06T07:08:09Z"},
+		"pushed": {9, "cloud", "2031-05-06T07:08:09Z"},
+		"seeded": {1, "till", "2031-01-02T03:04:05Z"}, // never edited: reported as the till's, at the row time
+		"legacy": {1, "till", "2031-01-02T03:04:05Z"},
+	}
+	for k, w := range want {
+		s := got[k]
+		if s.Ver != w[0].(int) || s.Origin != w[1].(string) || s.At != w[2].(string) {
+			t.Errorf("%s = ver %d origin %q at %q, want %v", k, s.Ver, s.Origin, s.At, w)
+		}
+	}
+}

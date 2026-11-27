@@ -257,10 +257,15 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/{id}/settings/{key}/options":   true,
 	"POST /api/plugins/{id}/uninstall":                true,
 	"POST /api/plugins/{id}/update":                   true,
-	// Shop type: saving it runs builtinlayouts.Sync, which installs/activates
-	// the built-in layout plugins via plugins.PersistManifest — a plugin
-	// install, so always denied (ADR-0113 §1.5).
-	"POST /api/settings/shop-type": true,
+	"POST /plugins/restored-secrets/dismiss":          true, // writes the restore-scan marker; a demo till never restores
+	// Shop type: saving it re-lays-out the menu and seeds apply-once defaults
+	// from the shop-type template (ADR-0190) — a persistent shop change a
+	// demo till never makes, so always denied (ADR-0113 §1.5).
+	"POST /api/settings/shop-type":                true,
+	"POST /api/settings/shop-type/undo":           true, // S7: nothing to undo on a demo till
+	"POST /api/settings/shop-type/dismiss-banner": true,
+	"POST /api/settings/shop-type/offer/not-now":  true, // S8: a demo till is never offered a template
+	"POST /api/settings/shop-type/offer/never":    true,
 	// Catalogue/data/voucher import and saving exports to the filesystem
 	// (ADR-0113 §1.5: file ingest).
 	"GET /import":                   true,
@@ -543,6 +548,11 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /plugin-fonts/{plugin}/{version}/{file}":    true,
 	"GET /themes/{file}":                             true,
 	"GET /ui/theme-sync":                             true,
+	// S7: the shop-type pick/preview/panel fragments only read; the write
+	// (POST /api/settings/shop-type and its undo) is denied above.
+	"GET /api/settings/shop-type/panel":   true,
+	"GET /api/settings/shop-type/pick":    true,
+	"GET /api/settings/shop-type/preview": true,
 	// Sign-in, lock and session.
 	"GET /login":               true,
 	"GET /pin":                 true,

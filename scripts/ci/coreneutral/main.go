@@ -58,6 +58,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -587,6 +588,7 @@ func scanPackage(files map[string][]byte) ([]Finding, []string, error) {
 // internal/db/migrations.
 func scanTree(root string) ([]Finding, []string, int, error) {
 	byDir := map[string]map[string][]byte{}
+	var jsonFindings []Finding
 	n := 0
 	for _, top := range []string{"catimport", "internal", "cmd", "mobile"} {
 		base := filepath.Join(root, top)
@@ -606,6 +608,19 @@ func scanTree(root string) ([]Finding, []string, int, error) {
 				if d.Name() == "testdata" || rel == "internal/db/migrations" {
 					return filepath.SkipDir
 				}
+				return nil
+			}
+			if isTemplateJSON(rel) {
+				src, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				tf, terr := scanTemplateJSON(rel, src)
+				if terr != nil {
+					return terr
+				}
+				jsonFindings = append(jsonFindings, tf...)
+				n++
 				return nil
 			}
 			if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
@@ -642,7 +657,69 @@ func scanTree(root string) ([]Finding, []string, int, error) {
 		all = append(all, fs...)
 		probs = append(probs, ps...)
 	}
+	all = append(all, jsonFindings...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Path < all[j].Path })
 	return all, probs, n, nil
+}
+
+// templateJSONDir holds the shop-type templates (ADR-0190). They are data,
+// not Go, so the parser scan never sees them; scanTemplateJSON applies the
+// same neutrality rules to every string (key or value) in them: no
+// first-party plugin ID, no vendor name, no country code. Findings use the
+// pseudo-func "<json>" so an allow-list line is path|<json>|"literal".
+const templateJSONDir = "internal/shoptemplate/templates/"
+
+func isTemplateJSON(rel string) bool {
+	return strings.HasPrefix(rel, templateJSONDir) && strings.HasSuffix(rel, ".json") &&
+		!strings.Contains(strings.TrimPrefix(rel, templateJSONDir), "/")
+}
+
+func scanTemplateJSON(rel string, src []byte) ([]Finding, error) {
+	var doc any
+	if err := json.Unmarshal(src, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	seen := map[string]bool{}
+	var out []Finding
+	flag := func(v string) {
+		kind := ""
+		switch {
+		case pluginIDRe.MatchString(v):
+			kind = "plugin"
+		case isVendor(v):
+			kind = "vendor"
+		case countryCodes[v] || (localeRe.MatchString(v) && countryCodes[strings.ToUpper(v[3:])]):
+			kind = "country"
+		}
+		if kind == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, Finding{Path: rel, Func: "<json>", Literal: v, Kind: kind})
+	}
+	var walk func(x any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case string:
+			flag(t)
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				flag(k)
+				walk(t[k])
+			}
+		}
+	}
+	walk(doc)
+	return out, nil
 }
 
 // Entry is one allow-list line.

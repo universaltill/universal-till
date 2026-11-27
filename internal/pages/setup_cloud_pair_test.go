@@ -575,7 +575,7 @@ func TestCloudWizardWithKnownShopTypeSkipsTheShopTypeStep(t *testing.T) {
 	if strings.Contains(page, `data-step="5"`) || strings.Contains(page, `name="shop_type"`) {
 		t.Error("the shop-type step is still rendered for a cloud-known type")
 	}
-	if !strings.Contains(page, `data-cloud-field="shop_type"`) || !strings.Contains(page, "Café / coffee shop") {
+	if !strings.Contains(page, `data-cloud-field="shop_type"`) || !strings.Contains(page, "Cafe or takeaway counter") {
 		t.Error("the Your shop step lacks the read-only type line")
 	}
 	if !strings.Contains(page, "cloudShopType: true") {
@@ -629,6 +629,7 @@ func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
 	orig := paths.DataDir()
 	paths.Init(t.TempDir())
 	t.Cleanup(func() { paths.Init(orig) })
+	useSeedTemplates(t)
 	mux, d, nonce, _ := heldWizardPage(t, "service")
 	// A posted cafe must not win over the cloud's service.
 	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "cafe") })
@@ -638,7 +639,7 @@ func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
 	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "service" {
 		t.Fatalf("shop.type = %q, want service", v)
 	}
-	// applyShopTypeOrderTypeDefault ran: a service shop has no eat-in.
+	// The service template's seed ran: a service shop has no eat-in.
 	if v, _, _ := d.Settings.Get(t.Context(), data.OrderTypePromptModeKey); v != data.OrderTypePromptModeOff {
 		t.Fatalf("%s = %q, want off for a service shop", data.OrderTypePromptModeKey, v)
 	}

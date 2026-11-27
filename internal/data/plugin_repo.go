@@ -412,8 +412,8 @@ UPDATE plugin_settings SET value_json = ?, updated_at = ? WHERE id = ?`,
 			return pluginObs.wrapf("reconcile_settings", "seal default for %s", err, d.Key)
 		}
 		if _, err := exec.ExecContext(ctx, `
-INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at, origin)
+VALUES (?, ?, ?, ?, ?, ?, ?, 'default')`,
 			d.ID, pluginID, d.Key, valueJSON, d.Scope, d.ScopeID,
 			d.UpdatedAt.UTC().Format(time.RFC3339)); err != nil {
 			return pluginObs.wrap("reconcile_settings", err)
@@ -599,7 +599,7 @@ SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1
 // GetInstalledPluginVersion fetches a plugin's row version regardless of its
 // is_active flag — unlike GetActivePluginVersion, this also finds a plugin an
 // operator has manually DISABLED. A caller deciding whether to uninstall a
-// plugin that should no longer apply (e.g. builtinlayouts.Sync reacting to a
+// plugin that should no longer apply (e.g. the retired-layout migration reacting to a
 // shop_type change) must key off "is this plugin installed at all", not "is
 // it currently active" — a disabled-but-still-installed plugin would
 // otherwise never be cleaned up, and a later re-enable would resurrect
@@ -862,7 +862,7 @@ ORDER BY permission
 // manager settings editor + host feature configs read these).
 func (r *PluginRepo) ListPluginSettings(ctx context.Context, pluginID string) ([]PluginSettingRow, error) {
 	rows, err := r.executor(nil).QueryContext(ctx, `
-SELECT id, plugin_id, key, value_json, scope, scope_id, updated_at
+SELECT id, plugin_id, key, value_json, scope, scope_id, updated_at, ver, origin, ver_at
 FROM plugin_settings WHERE plugin_id = ? AND scope IN ('global', 'register') ORDER BY key`, pluginID)
 	if err != nil {
 		return nil, pluginObs.wrap("list_settings", err)
@@ -872,10 +872,14 @@ FROM plugin_settings WHERE plugin_id = ? AND scope IN ('global', 'register') ORD
 	for rows.Next() {
 		var s PluginSettingRow
 		var updated string // stored as SQLite datetime TEXT
-		if err := rows.Scan(&s.ID, &s.PluginID, &s.Key, &s.ValueJSON, &s.Scope, &s.ScopeID, &updated); err != nil {
+		var verAt sql.NullString
+		if err := rows.Scan(&s.ID, &s.PluginID, &s.Key, &s.ValueJSON, &s.Scope, &s.ScopeID, &updated, &s.Ver, &s.Origin, &verAt); err != nil {
 			return nil, pluginObs.wrap("scan_setting", err)
 		}
 		s.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+		if verAt.Valid {
+			s.VerAt, _ = time.Parse(time.RFC3339, verAt.String)
+		}
 		// ADR-0082: a sealed row is opened here so no caller ever sees
 		// ciphertext. An unopenable one is still LISTED (the operator needs
 		// the field on the page to re-enter it) but with an empty value —
@@ -1012,7 +1016,7 @@ func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, ke
 	}
 	defer tx.Rollback()
 
-	changed, err := upsertPluginSettingTx(ctx, tx, pluginID, key, valueJSON, scope)
+	changed, err := upsertPluginSettingTx(ctx, tx, pluginID, key, valueJSON, scope, nil)
 	if err != nil {
 		return pluginObs.wrap("upsert_setting", err)
 	}
@@ -1040,7 +1044,7 @@ func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, ke
 // editor applies caller-side. The write itself is unchanged either way
 // (updated_at still moves on an identical re-write) — this only gates the
 // onSettingsChanged hook.
-func upsertPluginSettingTx(ctx context.Context, tx *sql.Tx, pluginID, key, valueJSON, scope string) (bool, error) {
+func upsertPluginSettingTx(ctx context.Context, tx *sql.Tx, pluginID, key, valueJSON, scope string, meta *PluginSettingMeta) (bool, error) {
 	var prior sql.NullString
 	if scanErr := tx.QueryRowContext(ctx, `
 SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = ?
@@ -1048,19 +1052,42 @@ LIMIT 1`, pluginID, key, scope).Scan(&prior); scanErr != nil && !errors.Is(scanE
 		return false, scanErr
 	}
 	changed := !prior.Valid || prior.String != valueJSON
+	now := time.Now().UTC().Format(time.RFC3339)
 
-	res, err := tx.ExecContext(ctx, `
+	// ver/origin/ver_at: an explicit meta (the cloud's directive) is stored
+	// as sent; any other write that changes the stored bytes is a till edit
+	// and moves ver by one. An unchanged re-save leaves the version alone.
+	var res sql.Result
+	var err error
+	switch {
+	case meta != nil:
+		res, err = tx.ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now'), ver = ?, origin = ?, ver_at = ?
+WHERE plugin_id = ? AND key = ? AND scope = ?`,
+			valueJSON, meta.Ver, meta.Origin, now, pluginID, key, scope)
+	case changed:
+		res, err = tx.ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now'), ver = ver + 1, origin = 'till', ver_at = ?
+WHERE plugin_id = ? AND key = ? AND scope = ?`,
+			valueJSON, now, pluginID, key, scope)
+	default:
+		res, err = tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
 WHERE plugin_id = ? AND key = ? AND scope = ?`,
-		valueJSON, pluginID, key, scope)
+			valueJSON, pluginID, key, scope)
+	}
 	if err != nil {
 		return false, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		insVer, insOrigin := int64(2), PluginSettingOriginTill // an unwritten key reads as ver 1
+		if meta != nil {
+			insVer, insOrigin = meta.Ver, meta.Origin
+		}
 		if _, err = tx.ExecContext(ctx, `
-INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, ?)`,
-			uuid.NewString(), pluginID, key, valueJSON, scope); err != nil {
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, ver, origin, ver_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), pluginID, key, valueJSON, scope, insVer, insOrigin, now); err != nil {
 			return false, err
 		}
 		changed = true
@@ -1075,6 +1102,47 @@ VALUES (?, ?, ?, ?, ?)`,
 type PluginSettingWrite struct {
 	Key, Scope, ValueJSON string
 	DeclaredSecret        bool
+	// Meta, when set, is stored as the row's ver/origin exactly as given (the
+	// cloud's directive, internal/pluginsecretapply). Nil = a till edit: a
+	// changed value moves ver by one with origin till.
+	Meta *PluginSettingMeta
+}
+
+// Who wrote a plugin setting's current value.
+const (
+	PluginSettingOriginTill    = "till"
+	PluginSettingOriginCloud   = "cloud"
+	PluginSettingOriginDefault = "default" // the manifest default seeded at install, never edited
+)
+
+// PluginSettingMeta is the per-field version of one plugin setting.
+type PluginSettingMeta struct {
+	Ver    int64
+	Origin string
+}
+
+// PluginSettingVer returns the version of the GLOBAL row of key as the cloud's
+// conflict rule must see it: found=false and ver 0 for no row; ver 0 for a
+// seeded manifest default nobody edited (no unreported local edit exists);
+// otherwise the stored ver. origin is the stored origin.
+func (r *PluginRepo) PluginSettingVer(ctx context.Context, pluginID, key string) (ver int64, origin string, found bool, err error) {
+	return r.settingVer(ctx, nil, pluginID, key)
+}
+
+func (r *PluginRepo) settingVer(ctx context.Context, tx *sql.Tx, pluginID, key string) (ver int64, origin string, found bool, err error) {
+	err = r.executor(tx).QueryRowContext(ctx, `
+SELECT ver, origin FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = 'global' LIMIT 1`,
+		pluginID, key).Scan(&ver, &origin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, pluginObs.wrap("get_setting_ver", err)
+	}
+	if origin == PluginSettingOriginDefault {
+		ver = 0
+	}
+	return ver, origin, true, nil
 }
 
 // SavePluginSettingsBatch saves a whole settings form at once (ADR-0121
@@ -1088,6 +1156,23 @@ type PluginSettingWrite struct {
 // Same per-row semantics as UpsertPluginSettingScoped (owns its own
 // transaction; don't call it while holding one on the same DB).
 func (r *PluginRepo) SavePluginSettingsBatch(ctx context.Context, pluginID string, writes []PluginSettingWrite) (changedKeys []string, err error) {
+	return r.savePluginSettingsBatch(ctx, pluginID, writes, nil)
+}
+
+// SavePluginSettingsBatchChecked is SavePluginSettingsBatch with a guard run
+// inside the write transaction before any upsert (the DSN's immediate txlock
+// already holds the write lock, so nothing can change between the guard's
+// reads and the writes). check reads versions through localVer (same rule as
+// PluginSettingVer); an error from check is returned unchanged and nothing is
+// written. The cloud's set_plugin_secret apply uses it so a till edit made
+// between the version check and the write is never overwritten.
+func (r *PluginRepo) SavePluginSettingsBatchChecked(ctx context.Context, pluginID string, writes []PluginSettingWrite,
+	check func(localVer func(key string) (int64, error)) error) ([]string, error) {
+	return r.savePluginSettingsBatch(ctx, pluginID, writes, check)
+}
+
+func (r *PluginRepo) savePluginSettingsBatch(ctx context.Context, pluginID string, writes []PluginSettingWrite,
+	check func(localVer func(key string) (int64, error)) error) (changedKeys []string, err error) {
 	done := pluginObs.trace("save_settings_batch")
 	defer func() { done(err) }()
 	if len(writes) == 0 {
@@ -1105,9 +1190,17 @@ func (r *PluginRepo) SavePluginSettingsBatch(ctx context.Context, pluginID strin
 		return nil, err
 	}
 	defer tx.Rollback()
+	if check != nil {
+		if err = check(func(key string) (int64, error) {
+			ver, _, _, e := r.settingVer(ctx, tx, pluginID, key)
+			return ver, e
+		}); err != nil {
+			return nil, err
+		}
+	}
 	seen := map[string]bool{}
 	for i, w := range writes {
-		changed, upErr := upsertPluginSettingTx(ctx, tx, pluginID, w.Key, sealed[i], w.Scope)
+		changed, upErr := upsertPluginSettingTx(ctx, tx, pluginID, w.Key, sealed[i], w.Scope, w.Meta)
 		if upErr != nil {
 			err = pluginObs.wrap("save_settings_batch", upErr)
 			return nil, err
@@ -1249,16 +1342,16 @@ LIMIT 1`,
 	}
 
 	res, execErr := tx.ExecContext(ctx, `
-UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
-WHERE plugin_id = ? AND key = ? AND scope = 'global'`, toStore, pluginID, key)
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now'), ver = ver + 1, origin = 'till', ver_at = ?
+WHERE plugin_id = ? AND key = ? AND scope = 'global'`, toStore, time.Now().UTC().Format(time.RFC3339), pluginID, key)
 	if execErr != nil {
 		err = pluginObs.wrap("merge_additive_json_map_setting", execErr)
 		return 0, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		if _, insErr := tx.ExecContext(ctx, `
-INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, toStore); insErr != nil {
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, ver, ver_at)
+VALUES (?, ?, ?, ?, 'global', 2, ?)`, uuid.NewString(), pluginID, key, toStore, time.Now().UTC().Format(time.RFC3339)); insErr != nil {
 			err = pluginObs.wrap("merge_additive_json_map_setting", insErr)
 			return 0, err
 		}
@@ -1631,6 +1724,12 @@ type PluginSettingRow struct {
 	// secrets key does not travel in a phone backup). ValueJSON is empty
 	// then; the settings page asks the operator to enter it again.
 	Unreadable bool
+	// Ver/Origin/VerAt: the row's per-field version (migration 119; Ver 1 and
+	// Origin till for a row nobody versioned). VerAt is the till clock, zero
+	// when never set. Filled by ListPluginSettings.
+	Ver    int64
+	Origin string
+	VerAt  time.Time
 }
 
 // PluginHookRow represents a plugin hook row.

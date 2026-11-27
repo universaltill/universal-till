@@ -1,0 +1,11 @@
+{{/* ut-docs#6332 S7: the 7 day undo strip on Settings and Menu. Input:
+     shopTypeBannerView {Text}; server-driven (rendered only while an
+     unexpired record matches). Manager on the main/single till only. */}}
+<div class="shop-type-undo" id="shop-type-undo" role="status" aria-live="polite" data-testid="shop-type-undo">
+  <span class="shop-type-undo-text">{{ .Text }}</span>
+  <span class="shop-type-undo-actions">
+    <button type="button" class="btn" hx-post="/api/settings/shop-type/undo" hx-target="#shop-type-undo-msg" hx-swap="innerHTML">{{ T "settings.template.undo.undo" }}</button>
+    <button type="button" class="btn secondary" hx-post="/api/settings/shop-type/dismiss-banner" hx-target="#shop-type-undo" hx-swap="outerHTML"><span aria-hidden="true">×</span> {{ T "settings.template.undo.dismiss" }}</button>
+  </span>
+  <span id="shop-type-undo-msg" class="shop-type-undo-msg"></span>
+</div>

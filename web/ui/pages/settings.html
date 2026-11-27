@@ -32,7 +32,7 @@
      Rendered hidden: the script below shows it for /settings with no
      fragment, so a browser without script still gets the full page. -->
 <nav class="settings-home" id="settings-home" aria-label="{{ T "settings.home.label" }}" hidden>
-  <form class="settings-search settings-home-search" role="search" data-submit="prevent">
+  {{ if .shopTypeUndoneNote }}<p class="shop-type-undone" role="status">{{ .shopTypeUndoneNote }}</p>{{ end }}{{ if .shopTypeBanner }}{{ template "shop_type_undo_banner.html" .shopTypeBanner }}{{ end }}{{ if .templateOffer }}{{ template "template_offer.html" .templateOffer }}{{ end }}<form class="settings-search settings-home-search" role="search" data-submit="prevent">
     <label class="visually-hidden" for="settings-home-q">{{ T "settings.search.label" }}</label>
     <input id="settings-home-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
   </form>
@@ -45,6 +45,12 @@
     </a>
     {{ end }}
   </div>
+  {{ if .settingsTmpl.Footer }}
+  <div class="settings-home-footer" data-testid="settings-footer">
+    <p class="settings-footer-line"><span>{{ .settingsTmpl.Footer }}</span> {{ if .shopTypePanel.Satellite }}<span class="muted">{{ .shopTypePanel.SatelliteText }}</span>{{ else }}<a class="settings-footer-change" href="#settings-shop-type" hx-get="/api/settings/shop-type/pick" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.footer_change" }}</a>{{ end }}</p>
+    <p class="settings-footer-hint muted">{{ T "settings.template.footer_search_hint" }}</p>
+  </div>
+  {{ end }}
 </nav>
 <div class="settings-shell" id="settings-shell">
   {{/* ut-docs#3090: swap to the grid before the ~2,000 lines of cards below
@@ -54,6 +60,7 @@
   <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
     <a class="settings-home-link" id="settings-home-link" href="#" hidden>{{ T "settings.home.back" }}</a>
     <h2 class="settings-cat-title" id="settings-cat-title" tabindex="-1" hidden></h2>
+    {{ if .settingsTmpl.Active }}<p class="settings-more-intro muted" id="settings-more-intro" data-testid="settings-more-intro" hidden>{{ .settingsTmpl.TagIntro }}</p>{{ end }}
     <form class="settings-search" role="search" data-submit="prevent">
       <label class="visually-hidden" for="settings-q">{{ T "settings.search.label" }}</label>
       <input id="settings-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
@@ -69,9 +76,16 @@
          it once and correlates each row to the matching #settings-grid
          card actually present in THIS render (a gated card that didn't
          render this time is simply skipped). -->
-    <ul id="settings-nav-index" hidden aria-hidden="true">
-      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }} data-cat="{{ .Cat }}">{{ .Label }}</li>{{ end }}
+    {{/* ut-docs#6332: with a shop-type template in effect, rows carry data-tag
+         (recommended | tucked) and data-home (the category a tucked row left);
+         the texts the script shows for them ride on the list. No template =
+         none of these attributes, byte-identical to before. */}}
+    <ul id="settings-nav-index" hidden aria-hidden="true"{{ if .settingsTmpl.Active }} data-tag-recommended="{{ .settingsTmpl.TagRec }}" data-tag-tucked="{{ .settingsTmpl.TagTucked }}" data-chip="{{ .settingsTmpl.ChipText }}" data-intro="{{ .settingsTmpl.TagIntro }}"{{ end }}>
+      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }} data-cat="{{ .Cat }}"{{ if .Tag }} data-tag="{{ .Tag }}"{{ end }}{{ if .HomeCat }} data-home="{{ .HomeCat }}"{{ end }}>{{ .Label }}</li>{{ end }}
     </ul>
+    {{ if .settingsTmpl.Active }}
+    <p class="settings-more-hint muted" id="settings-more-hint" data-testid="settings-more-hint" hidden>{{ .settingsTmpl.MissingText }} <a class="settings-more-hint-link" href="#cat-advanced">{{ .settingsTmpl.MissingLink }}</a></p>
+    {{ end }}
   </aside>
   <div class="settings-panel" id="settings-panel">
     <button type="button" class="btn secondary settings-back" id="settings-back"><span class="back-arrow" aria-hidden="true">←</span> {{ T "settings.nav.back" }}</button>
@@ -2656,24 +2670,13 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
 <div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
   <p class="muted">{{ T "settings.shop_type.help" }}</p>
-  <!-- ut-docs#1902: says what will change BEFORE it applies (only "Service
-       trade" today drives anything — the builtin Salon layout, ADR-0088;
-       every other shop type keeps the byte-identical, everything-visible
-       menu, so the note only needs to name the one that isn't a no-op). -->
-  <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
+  {{/* ut-docs#6332 S7: Change shop type = pick, then a preview that writes
+       nothing, then a PIN-confirmed change with a 7 day undo
+       (shop_type_change.go). The panel body is swapped in place. */}}
   <fieldset class="set-lock" data-lock-region="settings-shop-type"{{ if index $.lockedRegions "settings-shop-type" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-shop-type" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/shop-type" hx-swap="none" data-after-request="fail save-error:settings-save-error">
-    {{ $stype := .shopType }}
-    <select name="shop_type">
-      <option value="">—</option>
-      {{ range .shopTypes }}
-      <option value="{{ . }}" {{ if eq . $stype }}selected{{ end }}>{{ T (printf "setup.shop_type.%s" .) }}</option>
-      {{ end }}
-    </select>
-    <button class="btn" type="submit">{{ T "common.save" }}</button>
-    <span id="shop-type-msg" aria-live="polite"></span>
-  </form>
+  <div id="shop-type-panel">{{ template "shop_type_panel.html" .shopTypePanel }}</div>
+  <span id="shop-type-msg" aria-live="polite"></span>
   </fieldset>
 </div>
 <!-- ut-docs#867 deliberate exception: /api/settings/upsert IS elevation-wired,
@@ -2831,7 +2834,9 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
         key: li.getAttribute('data-key'),
         label: (li.textContent || '').replace(/\s+/g, ' ').trim(),
         group: li.getAttribute('data-group') || '',
-        cat: li.getAttribute('data-cat') || ''
+        cat: li.getAttribute('data-cat') || '',
+        tag: li.getAttribute('data-tag') || '',
+        home: li.getAttribute('data-home') || ''
       });
     });
   }
@@ -2861,8 +2866,24 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     a.textContent = row.label;
     li.appendChild(a);
     tree.appendChild(li);
-    navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent, cat: row.cat });
+    navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent, cat: row.cat, tag: row.tag, home: row.home });
   });
+  // ut-docs#6332: the one label slot above a card's title when a shop-type
+  // template promoted it (Recommended) or tucked it into More settings. Text
+  // only, never colour alone; a card never carries both.
+  if (navIndexEl) {
+    navItems.forEach(function (item) {
+      if (!item.tag) return;
+      var txt = navIndexEl.getAttribute(item.tag === 'tucked' ? 'data-tag-tucked' : 'data-tag-recommended');
+      var h = item.card.querySelector('h2, h3');
+      if (!txt || !h) return;
+      var p = document.createElement('p');
+      p.className = 'settings-card-tag settings-card-tag-' + item.tag;
+      p.setAttribute('data-testid', 'settings-card-tag');
+      p.textContent = txt;
+      h.parentNode.insertBefore(p, h);
+    });
+  }
   // Snapshot of the fully-built tree (nav-item <li>s AND group-heading
   // <li>s) so a search restores the exact same markup afterwards — restoreNav
   // below replays these same nodes rather than reconstructing from navItems
@@ -2955,6 +2976,15 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     if (home) home.hidden = m !== null;
     shell.hidden = m === null;
     if (homeLink) homeLink.hidden = m === null;
+    // ut-docs#6332: More settings explains the "tucked away" labels; a
+    // category page says when some of its cards were tucked away.
+    var intro = document.getElementById('settings-more-intro');
+    if (intro) intro.hidden = m !== ADVANCED;
+    var moreHint = document.getElementById('settings-more-hint');
+    if (moreHint) {
+      var tucked = m !== null && m !== ADVANCED && navItems.some(function (it) { return it.tag === 'tucked' && it.home === m; });
+      moreHint.hidden = !tucked;
+    }
     if (catTitle) {
       catTitle.hidden = m === null;
       catTitle.textContent = m === null ? '' : (catLabels[m] || catLabels[ADVANCED] || '');
@@ -3083,6 +3113,12 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
       var q = homeSearch.value;
       if (!q.trim()) return;
       homeSearch.value = '';
+      // The tile used to be called Advanced: that word still finds it.
+      if (q.trim().toLocaleLowerCase() === 'advanced') {
+        try { history.pushState(null, '', '#settings-advanced'); } catch (e) { /* file:// etc. */ }
+        enterView(ADVANCED, false);
+        return;
+      }
       // pushState (like a tile tap): Back returns to the grid, not off /settings.
       try { history.pushState(null, '', '#settings-advanced'); } catch (e) { /* file:// etc. */ }
       enterView(ADVANCED, false);
@@ -3204,6 +3240,14 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
       s.textContent = entry.section.title;
       a.appendChild(t);
       a.appendChild(s);
+      // ut-docs#6332: text chip (not colour alone) for a hit whose card the
+      // shop-type template tucked into More settings.
+      if (entry.section.tag === 'tucked' && navIndexEl && navIndexEl.getAttribute('data-chip')) {
+        var chip = document.createElement('span');
+        chip.className = 'settings-hit-chip';
+        chip.textContent = navIndexEl.getAttribute('data-chip');
+        a.appendChild(chip);
+      }
       li.appendChild(a);
       tree.appendChild(li);
     });

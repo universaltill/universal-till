@@ -428,18 +428,18 @@
              pairing's value regardless). */}}
         {{ if not (and .cloudShop .cloudShop.ShopType) }}
         <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
-          <h1>{{ T "setup.shop_type.title" }}</h1>
+          <h1 id="shop-type-title">{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <input type="hidden" name="shop_type" :value="shopType">
-          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.shop_type.title" }}">
-            {{ range $i, $t := .shopTypes }}
-            <button type="button" class="picker-tile" role="radio" data-value="{{ . }}" :aria-checked="shopType === '{{ . }}' ? 'true' : 'false'" :tabindex="shopType === '{{ . }}' || (!shopType && {{ $i }} === 0) ? 0 : -1" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
-            {{ end }}
-          </div>
-          <div class="setup-nav">
+          {{/* ut-docs#6332 S7: the same tile group the Settings pick step uses
+               (shop_type_tiles.html, pre-rendered: this page has no shared partial set). */}}
+          {{ .shopTypeTiles }}
+          <div class="setup-nav shop-type-bar">
             <button type="button" class="btn secondary" @click="step = prv(5)">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" data-next @click="step = nxt(5)">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="shopType = ''; step = nxt(5)">{{ T "setup.shop_type.skip" }}</button>
+            <button type="button" class="btn primary" :disabled="!shopType" :aria-disabled="!shopType ? 'true' : 'false'" data-next @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
+          <p class="muted">{{ T "setup.shop_type.skip_hint" }}</p>
         </section>
         {{ end }}
 

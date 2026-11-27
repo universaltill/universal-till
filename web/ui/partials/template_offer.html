@@ -1,0 +1,15 @@
+{{/* ut-docs#6332 S8: the one-time offer to existing shops (Settings landing
+     only; never the menu or sell screen, never a dialog). Input:
+     templateOfferView {Type, TypeLabel, TypeLine}. "See what changes" only
+     opens the preview; nothing is applied from this card. */}}
+<section class="template-offer" id="template-offer" data-testid="template-offer" aria-labelledby="template-offer-title">
+  <h2 id="template-offer-title">{{ T "settings.template.offer.title" }}</h2>
+  <p class="template-offer-type"><strong>{{ .TypeLine }}</strong></p>
+  <p class="muted">{{ T "settings.template.offer.body" }}</p>
+  <div class="template-offer-actions">
+    <a class="btn" href="#settings-shop-type" hx-get="/api/settings/shop-type/preview?to={{ .Type }}" hx-target="#shop-type-panel" hx-swap="innerHTML">{{ T "settings.template.offer.see_changes" }}</a>
+    <button type="button" class="btn secondary" hx-post="/api/settings/shop-type/offer/not-now" hx-target="#template-offer-msg" hx-swap="innerHTML"><span aria-hidden="true">×</span> {{ T "settings.template.offer.not_now" }}</button>
+    <button type="button" class="btn secondary" hx-post="/api/settings/shop-type/offer/never" hx-target="#template-offer-msg" hx-swap="innerHTML">{{ T "settings.template.offer.never_again" }}</button>
+  </div>
+  <div id="template-offer-msg" class="template-offer-msg"></div>
+</section>

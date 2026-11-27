@@ -1312,7 +1312,7 @@ func LayoutPresetOwner(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, p
 // anything is written — the refusal rolls the whole install back.
 //
 // Only preset-vs-preset is exclusive: a vertical-flavoured layout plugin
-// (plugins/layout-salon) never sets the role and is unaffected, and a
+// (a barber layout, say) never sets the role and is unaffected, and a
 // preset coexists with any number of them (ADR-0088's slots stay shared;
 // Decision F still refuses same-key restructuring separately). The
 // plugin's own prior registration is excluded, so a preset updating or

@@ -144,6 +144,10 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 				fail(http.StatusBadRequest, "not_shop_wide", "not a shop-wide setting: "+s.Key)
 				return
 			}
+			if storage == common.KeyShopType || strings.HasPrefix(storage, "shop.template_") {
+				fail(http.StatusConflict, "main_till_only", "the shop type and its template are changed on the main till")
+				return
+			}
 			switch logical {
 			case common.KeyCountry:
 				// Trimmed as the local handlers trim it.

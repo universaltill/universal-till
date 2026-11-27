@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -137,4 +138,57 @@ func resultKeyData(key string) map[string]any {
 		return nil
 	}
 	return map[string]any{"message_key": key}
+}
+
+// Reason keys of a set_till_setting directive the till refused on the shop-
+// config version/tier rules (design-B 4.2/4.3). They are codes my. translates;
+// nothing was written.
+const (
+	ReasonSettingConflict     = "conflict"
+	ReasonSettingStale        = "stale_version"
+	ReasonSettingTierMismatch = "tier_mismatch"
+)
+
+// TillSettingCond is the optional conditional part of a set_till_setting
+// payload, all additive: Ver is the version this write mints, BaseVer the
+// version the editor saw, Tier the registry tier the cloud believes the key
+// has (the till refuses when its own registry says otherwise).
+type TillSettingCond struct {
+	Ver, BaseVer *int64
+	Tier         string
+}
+
+// tillSettingCondFrom reads ver/base_ver/tier from a directive payload. ok is
+// false when one is present but malformed (not a whole number >= 1, or tier
+// not a string), so a bad directive is refused rather than read as
+// unconditional.
+func tillSettingCondFrom(p map[string]any) (TillSettingCond, bool) {
+	var c TillSettingCond
+	num := func(k string) (*int64, bool) {
+		raw, present := p[k]
+		if !present || raw == nil {
+			return nil, true
+		}
+		f, isNum := raw.(float64)
+		if !isNum || f != math.Trunc(f) || f < 1 || f > 1<<53 {
+			return nil, false
+		}
+		n := int64(f)
+		return &n, true
+	}
+	var ok bool
+	if c.Ver, ok = num("ver"); !ok {
+		return c, false
+	}
+	if c.BaseVer, ok = num("base_ver"); !ok {
+		return c, false
+	}
+	if raw, present := p["tier"]; present && raw != nil {
+		t, isStr := raw.(string)
+		if !isStr {
+			return c, false
+		}
+		c.Tier = t
+	}
+	return c, true
 }

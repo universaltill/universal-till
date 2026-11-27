@@ -84,6 +84,12 @@ type AgentSetting struct {
 	// Page is the deep link when the setting is not on /settings (Region is
 	// then only a label).
 	Page string
+	// NotRestorableReason, when set, keeps the entry out of my.'s "restore
+	// configuration" plan: the value changes money, legal meaning or stored
+	// records, so the owner sets it on the till (design-B RC5, ADR-0175 s15.3).
+	// A short English reason for the maintainers; my. shows its own wording
+	// ("set on the till"). Never set on a remote-writable entry.
+	NotRestorableReason string
 }
 
 // AgentSettings is the catalogue, in Settings-screen order. It is also the
@@ -138,7 +144,7 @@ var AgentSettings = []AgentSetting{
 		Options: []string{"category_tabs", "all_filter_chips", "strip_overflow"}},
 	{Key: ReportRetentionModeKey, Region: "settings-retention",
 		LabelKey: "settings.retention.title", HintKey: "settings.retention.help", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeEnum, Tier: SettingTierSensitive}, // shortening it deletes records (ut-docs#3390)
+		Type: SettingTypeEnum, Tier: SettingTierSensitive, NotRestorableReason: "shortening it deletes records"}, // shortening it deletes records (ut-docs#3390)
 	// ut-docs#2557: explain-only (not Writable) — turning on staff monitoring
 	// stays a human click (ADR-0153 Decision 3).
 	{Key: CloudStaffBreakdownKey, Region: "settings-cloud-staff",
@@ -178,7 +184,7 @@ var AgentSettings = []AgentSetting{
 		Type: SettingTypeText, Tier: SettingTierNormal},
 	{Key: "store.currency", Region: "settings-currency",
 		LabelKey: "settings.currency.title", HintKey: "settings.currency.help", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierSensitive}, // changes the meaning of every price (ut-docs#3390)
+		Type: SettingTypeText, Tier: SettingTierSensitive, NotRestorableReason: "changes the meaning of every price and report"}, // changes the meaning of every price (ut-docs#3390)
 	{Key: "store.currency_display", Region: "settings-currency-display",
 		LabelKey: "settings.currency_display.title", HintKey: "settings.currency_display.help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeText, Tier: SettingTierNormal}, // display only; not remote-writable until the owner decides
@@ -190,7 +196,7 @@ var AgentSettings = []AgentSetting{
 		Type: SettingTypeList, Tier: SettingTierNormal, RemoteWritable: true},
 	{Key: "shop.type", Region: "settings-shop-type",
 		LabelKey: "settings.shop_type.title", HintKey: "settings.shop_type.help", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierSensitive}, // drives tax/fiscal defaults (ut-docs#3390)
+		Type: SettingTypeText, Tier: SettingTierSensitive, NotRestorableReason: "drives tax and fiscal defaults"}, // drives tax/fiscal defaults (ut-docs#3390)
 
 	// Not on the /settings page: receipt text lives on the receipt designer,
 	// the receipt policy on the printer card. Receipt header/footer lines
