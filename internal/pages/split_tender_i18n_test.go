@@ -72,6 +72,7 @@ var wantSplitTenderMsgAttrs = []string{
 	// Cashier tip entry on a split leg.
 	"tip-exceeds",
 	"tip-note",
+	"tip-too-large",
 }
 
 // splitTenderMsgLocaleKeys maps each attribute to the locale key it renders,
@@ -107,6 +108,7 @@ var splitTenderMsgLocaleKeys = map[string]string{
 	"reader-required": "tap.reader.pick",
 	"tip-exceeds":     "tender.status.tip_exceeds",
 	"tip-note":        "tender.tip.pill",
+	"tip-too-large":   "tender.tip.too_large",
 	// ut-docs#1037 single-purpose vouchers: the balance check's verdict for
 	// a specific-item voucher (reuses the Gift voucher popup's own "Specific
 	// item" label, ut-docs#4214) and the Redeem success line.
@@ -336,7 +338,7 @@ func kebabToCamel(s string) string {
 // splitTenderMsgWeblatePending names attributes whose key is new and not yet
 // translated (ADR-0160: translations come from Weblate, never a code PR); they
 // must render the English fallback until the Weblate pack carries them.
-var splitTenderMsgWeblatePending = map[string]bool{"reader-required": true, "tip-exceeds": true, "tip-note": true}
+var splitTenderMsgWeblatePending = map[string]bool{"reader-required": true, "tip-exceeds": true, "tip-note": true, "tip-too-large": true}
 
 func TestSplitTenderStatusStringsLocalize(t *testing.T) {
 	mux := newSplitTenderI18nMux(t)

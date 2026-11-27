@@ -26,9 +26,9 @@ Cash is built in; card and other payment methods come as plugins from the store 
 A tip row sits above the payment buttons when tips are switched on. It is on by default for **service** shops (salons, barbers) and off for other shops until a manager turns it on (**Settings → Payments → Offer a tip at checkout**).
 
 1. Before tapping a payment method, choose the tip: **No tip** (already selected, so declining costs nothing), a percentage button (each shows the amount it adds), or **Other amount** to type one. The line under the buttons shows **Total with tip**.
-2. Tap the payment method as usual. The tip is added to the amount charged and kept separately, so it is not counted as sales. A cash tip is held out of the till's expected cash at the end of day, the same way as a card tip.
+2. Tap the payment method as usual. The tip is added to the amount charged and kept separately, so it is not counted as sales. A cash tip is not counted as cash sales either: the end-of-day report shows it on its own **Tips held out** line. The cash itself stays in the drawer until you pay it out, so the drawer count still expects it.
 3. On the **Split** tab each payment has its own **Tip amount** box. The **Amount** you enter is what is handed over, tip included; **Fill remaining** adds the tip you typed.
-4. A tip cannot be more than the bill. A refund returns the goods, never the tip.
+4. A tip cannot be more than the bill; on a split sale that is the tips of all payments together. A refund returns the goods, never the tip.
 
 Set the percentages under **Settings → Payments → Tip percentages**: up to five, separated by commas, decimals allowed (`10,15,20` or `12.5`). Percentages round to the nearest minor unit, halves up. The tip is for the staff member by default; a country setup may make it the business's. The **Tips** tab of Reports lists the tips taken and lets a manager record who was paid.
 

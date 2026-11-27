@@ -623,6 +623,13 @@ window.utCurrency = (function(){
         setStatus(msg.msgTipExceeds, 'error');
         return false;
       }
+      // Slip guard, the same as the quick-pay tip row and the server: the
+      // tips of all legs together are at most the bill (500 typed for 5.00).
+      var tipsSoFar = payments.reduce(function(sum, p){ return sum + (p.tip || 0); }, 0);
+      if (tipMinor > 0 && amountDue() > 0 && tipsSoFar + tipMinor > amountDue()) {
+        setStatus(msg.msgTipTooLarge, 'error');
+        return false;
+      }
       var payment = { method: method, amount: amountMinor };
       if (changeMinor > 0) {
         payment.change = changeMinor;
@@ -1019,6 +1026,22 @@ window.utCurrency = (function(){
       if (btn && row.contains(btn)) choose(btn);
     });
     if (customInput) customInput.addEventListener('input', refresh);
+    // A tip above the bill never leaves the till: the tap on a method button
+    // (or the card-reader form's submit) is stopped before htmx sees it, and
+    // the message under the field says why. The server refuses it too, but
+    // only with the generic failure notice.
+    function stopOverTip(e){
+      var elt = e.target && e.target.closest ? e.target.closest('[hx-include*="#tip-minor"]') : null;
+      if (!elt) return;
+      var total = billTotal();
+      if (total > 0 && currentTip(total) > total) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (customInput) customInput.focus();
+      }
+    }
+    document.addEventListener('click', stopOverTip, true);
+    document.addEventListener('submit', stopOverTip, true);
     // A new basket total re-prices the preset amounts; an emptied basket
     // (the sale just completed, or was cleared) goes back to "No tip".
     document.body.addEventListener('htmx:afterSwap', function(){

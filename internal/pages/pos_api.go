@@ -3075,6 +3075,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var payments []pos.PaymentInput
+		// requestTips sums the tips the request's own legs carry, for the
+		// slip guard applied once the total is known (a tip is at most the
+		// bill, on the split path as on the quick-pay row).
+		var requestTips int64
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
@@ -3115,6 +3119,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid tip amount", http.StatusBadRequest)
 				return
 			}
+			requestTips += p.Tip // bounded: each tip is at most its leg's amount
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				// ut-docs#923: a genuine internal/setup failure (the FK-upsert
 				// itself hit a DB-layer error), not a reachable business
@@ -3315,6 +3320,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// (core's one convention, #2571) and TipAmount is the breakdown. A
 		// percent is of the payable total, integer half-up; a tip above 100%
 		// of the total is refused as a slip (nothing recorded yet).
+		if requestTips > total.Minor() {
+			http.Error(w, "invalid tip amount", http.StatusBadRequest)
+			return
+		}
 		if formTipLeg >= 0 && (formTipBP > 0 || formTipMinor > 0) {
 			tip := formTipMinor
 			if tip == 0 {

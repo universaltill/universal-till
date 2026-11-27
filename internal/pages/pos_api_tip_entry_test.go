@@ -162,3 +162,45 @@ func TestTender_SplitTipMustNotCoverSaleMoney(t *testing.T) {
 		t.Fatalf("120 with a 12 tip only covers 108 of 120: want no sale, got %+v (status %d)", got, rec.Code)
 	}
 }
+
+// Review 2026-11-27: the split path gets the same slip guard as the quick-pay
+// row. A tip typed as 500 instead of 5.00 on a card leg would charge the
+// customer 620 for a 120 bill; tips across the legs may not exceed the bill.
+func TestTender_SplitTipsAboveTheBillAreRefused(t *testing.T) {
+	for name, body := range map[string]string{
+		"one leg":  `{"payments":[{"method":"card","amount":620,"tip":500}],"offline":true}`,
+		"two legs": `{"payments":[{"method":"card","amount":130,"tip":70},{"method":"cash","amount":111,"tip":51}],"offline":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux, dp := tipSetup(t, true)
+			req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+			}
+			if got := tipPayments(t, dp); len(got) != 0 {
+				t.Fatalf("a refused tip must record no payment, got %+v", got)
+			}
+		})
+	}
+}
+
+// A tip of exactly the bill (100%) is the limit and is accepted on a split leg.
+func TestTender_SplitTipEqualToTheBillIsAccepted(t *testing.T) {
+	mux, dp := tipSetup(t, true)
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(
+		`{"payments":[{"method":"card","amount":240,"tip":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := tipPayments(t, dp); len(got) != 1 || got[0].amount != 240 || got[0].tip != 120 {
+		t.Fatalf("payments = %+v, want card 240 with tip 120", got)
+	}
+}
