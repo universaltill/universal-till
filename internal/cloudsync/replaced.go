@@ -19,7 +19,7 @@ type ReplacedSignal struct {
 	By, At string
 }
 
-// RevokeSignal is a 401 device_revoked's data (ut-docs#5058, ADR-0217 §2.3):
+// RevokeSignal is a 401 device_revoked's data (ut-docs#5058, ADR-0222 §2.3):
 // the machine-readable Reason (replaced, moved, removed, store_deleted,
 // pair_abandoned; "" from an older cloud), Recover when the cloud says this
 // revocation is healable, and Detail, the display text of replaced_by or

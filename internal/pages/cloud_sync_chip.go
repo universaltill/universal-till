@@ -80,7 +80,7 @@ func cloudSyncChipShown(r *http.Request, d *common.Deps) bool {
 		return false
 	}
 	// A refused credential is the heal chip's (or the lock-out chip's) to say,
-	// never "check the internet connection" (ADR-0217, AC12).
+	// never "check the internet connection" (ADR-0222, AC12).
 	return !cloudAuthChipStatus().Show && !healChipStatus().ShowsChip()
 }
 

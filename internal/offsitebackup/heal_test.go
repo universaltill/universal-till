@@ -13,7 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 )
 
-// ADR-0217 T3: the upload's 401 feeds the heal engine, and a heal ends the
+// ADR-0222 T3: the upload's 401 feeds the heal engine, and a heal ends the
 // refusal wait and starts an upload (ut-docs#7067 FU-3).
 
 type healKV struct{}

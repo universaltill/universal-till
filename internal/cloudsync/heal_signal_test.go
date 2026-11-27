@@ -17,7 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
-// ADR-0217 T1/T3: every cloud caller's 401 envelope reaches the heal engine;
+// ADR-0222 T1/T3: every cloud caller's 401 envelope reaches the heal engine;
 // the check-in tick's 401 shows the chip at once; probes are check-ins.
 
 // engineRig runs a real credheal engine with a fake Recover so a test can see

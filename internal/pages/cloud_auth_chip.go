@@ -42,7 +42,7 @@ const (
 	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
 	cloudAuthRestored = "restored" // ut-docs#5157: data restored onto a new device
 	cloudAuthBlocked  = "blocked"  // ut-docs#5145: the cloud will not re-register this till yet
-	cloudAuthHeal     = "heal"     // ADR-0217: reconnecting by itself, or why it cannot
+	cloudAuthHeal     = "heal"     // ADR-0222: reconnecting by itself, or why it cannot
 )
 
 // healChipStatus is the heal engine's status; a var so tests can pin it.
@@ -164,7 +164,7 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 			return
 		}
-		// ADR-0217: the till is reconnecting by itself, or says in plain words
+		// ADR-0222: the till is reconnecting by itself, or says in plain words
 		// why it cannot. From the first refused call, not the third.
 		locale := httpx.ResolveLocale(w, r)
 		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {

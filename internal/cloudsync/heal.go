@@ -1,6 +1,6 @@
 package cloudsync
 
-// The till side of ADR-0217 in this package: every cloud call's 401 envelope
+// The till side of ADR-0222 in this package: every cloud call's 401 envelope
 // reaches the heal engine (internal/credheal), refusals are logged once per
 // change, and the engine's probe is a check-in GET.
 

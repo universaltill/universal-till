@@ -338,7 +338,7 @@ func (s *Store) SignReregister(deviceID, challenge string) (string, error) {
 
 // Has reports whether a parseable key file exists. It never creates a key
 // and never fails: the self-heal engine asks it before trying to prove
-// identity (ADR-0217).
+// identity (ADR-0222).
 func (s *Store) Has() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -346,7 +346,7 @@ func (s *Store) Has() bool {
 	return err == nil && found
 }
 
-// recoverDomain and rejoinDomain are the first lines of the ADR-0217 proofs
+// recoverDomain and rejoinDomain are the first lines of the ADR-0222 proofs
 // (ut-cloud internal/approvalkey.RecoverDomain). Both differ from every other
 // domain, so a signature made for one never verifies as another.
 const (
@@ -364,7 +364,7 @@ func joinSigned(domain string, fields ...string) ([]byte, error) {
 }
 
 // RecoverMessage is the exact bytes a till signs to get a new cloud
-// credential for its own device (ADR-0217 §2.2), "\n" separated, no trailing
+// credential for its own device (ADR-0222 §2.2), "\n" separated, no trailing
 // newline:
 //
 //	universaltill/till-recover/v1\n<store_id>\n<device_id>\n<challenge_id>\n<nonce>\n<expires_at>\n<public_key>

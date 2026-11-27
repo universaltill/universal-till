@@ -22,7 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
-// ADR-0217 §4.3: the till side of the recover exchange, against a fake cloud
+// ADR-0222 §4.3: the till side of the recover exchange, against a fake cloud
 // that rebuilds and verifies the signed message the way ut-cloud will.
 
 const (

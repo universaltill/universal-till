@@ -750,8 +750,8 @@ func TestFinalDeviceRevokedReasonDeletesTheKeyFile(t *testing.T) {
 	}
 }
 
-// ADR-0217 T3: a device_revoked with no reason says nothing about WHY, and
-// since ADR-0217 an older cloud's silence and a healable tombstone look alike:
+// ADR-0222 T3: a device_revoked with no reason says nothing about WHY, and
+// since ADR-0222 an older cloud's silence and a healable tombstone look alike:
 // the key file is NOT deleted (the till may heal and keep its shop key).
 func TestReasonlessDeviceRevokedKeepsTheKeyFile(t *testing.T) {
 	for _, reason := range []string{"", "store_deleted", "pair_abandoned"} {
