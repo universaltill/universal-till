@@ -102,7 +102,7 @@ func TestRevokeSignalCarriesReasonAndRecoverHint(t *testing.T) {
 
 func TestRevokeSignalDetailAndReasonsAreClamped(t *testing.T) {
 	cases := map[string]string{
-		`{"data":{"reason":"moved","moved_to":"Other shop"},"error":{"code":"device_revoked"}}`:      "Other shop",
+		`{"data":{"reason":"moved","moved_to":"Other shop"},"error":{"code":"device_revoked"}}`:      "", // a store id, never kept
 		`{"data":{"reason":"replaced","replaced_by":"Counter 2"},"error":{"code":"device_revoked"}}`: "Counter 2",
 		`{"data":{"reason":"removed","removed_by":"owner"},"error":{"code":"device_revoked"}}`:       "",
 		`{"data":{"reason":"moved","moved_to":"x"},"error":{"code":"unauthorized"}}`:                 "",

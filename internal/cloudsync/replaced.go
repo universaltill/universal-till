@@ -58,9 +58,9 @@ func parseRevokeSignal(body []byte) *RevokeSignal {
 	switch env.Data.Reason {
 	case "replaced":
 		sig.Detail = env.Data.ReplacedBy
-	case "moved":
-		sig.Detail = env.Data.MovedTo
 	}
+	// moved_to is the target shop's external id, not a display name: it is
+	// never kept or shown (review 2026-11-27); the till says "another shop".
 	return sig
 }
 
