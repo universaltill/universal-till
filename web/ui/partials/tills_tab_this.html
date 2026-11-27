@@ -4,12 +4,19 @@
      (elevation-wired there, unchanged). */}}
 <h2 tabindex="-1" data-tills-heading>{{ T "settings.tills.role_label" }}</h2>
 <div class="card" data-testid="tills-this-status">
-  <p class="tills-sentence"><span class="dot{{ if or .MainUnreachable .IsReplaced }} warn{{ end }}" aria-hidden="true"></span> <span data-testid="tills-this-sentence">{{ .ThisSentence }}</span></p>
+  <p class="tills-sentence"><span class="dot{{ if or .MainUnreachable .IsReplaced .Heal }} warn{{ end }}" aria-hidden="true"></span> <span data-testid="tills-this-sentence">{{ .ThisSentence }}</span></p>
   {{ if .MainTillAddr }}<p class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</p>{{ end }}
 </div>
 {{/* ut-docs#7057: the replaced state is said here, in the page, not only by an
      API refusal. Never a modal. */}}
-{{ if .IsReplaced }}
+{{ with .Heal }}{{ if not .Waiting }}
+<div class="notice-block-warn" role="status" data-testid="tills-heal-banner" data-heal-reason="{{ .Reason }}">
+  <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ .Short }}</strong>
+  <p>{{ .Sentence }}</p>
+  {{ if .Button }}<a class="btn btn-touch" href="{{ .Href }}" data-testid="tills-heal-action">{{ .Button }}</a>{{ end }}
+</div>
+{{ end }}{{ end }}
+{{ if and .IsReplaced (not .Heal) }}
 <div class="sync-banner" role="status" data-testid="tills-replaced-banner">
   <strong>{{ T "tills.this.replaced_title" }}</strong>
   {{ if .ReplacedBy }}{{ printf (T "tills.this.replaced_body") .ReplacedBy }}{{ else }}{{ T "tills.this.replaced_body_unnamed" }}{{ end }}
@@ -72,5 +79,6 @@
   </dl>
   <p class="small muted">{{ T "tills.this.account_note" }}</p>
   {{ if not .ShopConnected }}<p class="muted">{{ T "tills.this.not_connected_hint" }}</p>{{ end }}
+  {{ if .LastReconnected }}<p class="muted small" data-testid="tills-last-reconnected">{{ .LastReconnected }}</p>{{ end }}
   <a class="btn secondary" href="/tills?tab=settings#account">{{ T "tills.this.account_settings" }}</a>
 </div>

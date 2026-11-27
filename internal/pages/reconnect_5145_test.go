@@ -122,7 +122,7 @@ func TestSettings_LockoutPanelAndFacts(t *testing.T) {
 	body := getAs(mux, "/settings", &mgrUser).Body.String()
 	fp, _ := tillKeyFingerprint()
 	for _, want := range []string{
-		`data-testid="reconnect-panel"`, "The cloud no longer accepts this till&#39;s sign-in. Selling is not affected.",
+		`data-testid="reconnect-panel"`, "This till is no longer connected to your shop. Selling works as normal.",
 		"Reconnect this till", "Register as a new shop", `data-testid="register-facts"`, deviceID, fp[:4] + " " + fp[4:8],
 	} {
 		if !strings.Contains(body, want) {

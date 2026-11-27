@@ -116,6 +116,12 @@
        sign-in was refused. Standing state (role=status), never a modal;
        selling is not affected. Two operator actions, Reconnect first and the
        quiet "new shop" last. Nothing here types text. */}}
+  {{ with .healNotice }}
+  <div class="set-gap-s register-blocked" data-testid="heal-notice" data-heal-reason="{{ .reason }}" role="status">
+    <p>⏸ {{ .sentence }}</p>
+    {{ if .button }}<a class="btn btn-touch" href="{{ .href }}" data-testid="heal-notice-action">{{ .button }}</a>{{ end }}
+  </div>
+  {{ end }}
   {{ with .reconnectPanel }}
   <div class="set-gap-s register-blocked" data-testid="reconnect-panel" role="status">
     <p>⏸ {{ T "settings.till_registration.lockout_notice" }}</p>
@@ -235,7 +241,7 @@
        registration state, and the POST is elevation-wired (ut-docs#867). -->
   {{/* ut-docs#6959: collapsed under "Reconnect" once the store is linked;
        open, as before, otherwise. */}}
-  {{ if .storeClaimed }}<details class="set-divider" id="pair-details">{{ else }}<div class="set-divider" id="pair-details">{{ end }}
+  {{ if .storeClaimed }}<details class="set-divider" id="pair-details"{{ if .openReconnect }} open{{ end }}>{{ else }}<div class="set-divider" id="pair-details">{{ end }}
     {{ if .storeClaimed }}
     <summary style="cursor:pointer;min-block-size:44px;padding-block:.6rem;font-weight:600">{{ T "settings.enrol.reconnect_title" }}</summary>
     {{ else }}

@@ -20,7 +20,7 @@ import (
 // owner:
 //
 //	device_revoked                          → "Removed from the shop's cloud account"
-//	token_retired / unauthorized, claimed   → "This till needs pairing again"
+//	token_retired / unauthorized, claimed   → "Needs a code to reconnect"
 //	token_retired / unauthorized, anonymous → "Cloud sign-in lost" (ut-docs#5145)
 //
 // device_revoked always gets its own words: only an owner can revoke, so

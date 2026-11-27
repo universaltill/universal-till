@@ -18,17 +18,19 @@
        restored — ut-docs#5157: this till's data was restored onto a new
                   device, so its cloud connection was reset; "Restored on
                   a new device — connect again" until paired/registered
-       heal     — ADR-0217: the till reconnects by itself ("Reconnecting this
-                  till to your shop") or says in plain words why it cannot,
-                  with at most one link; shown from the first refused call
+       heal     — ADR-0217: the till reconnects by itself ("Reconnecting…") or
+                  says in short words why it cannot. The pill is the ONE
+                  control: short words · button label, one link to where the
+                  button goes (the full sentence is the title); shown from the
+                  first refused call
      Words first, never colour alone. Only a viewer who may open Settings
      gets a link (an <a> with no href is plain text), so a cashier never
      gets one that 403s; the explanation is in the title for everyone.
      The link goes to Settings → Registration until the "Pair with a shop"
      screen (ut-docs#3523) exists. */}}
-<a {{ if .canManage }}href="/settings#registration" {{ end }}class="sb-item sb-cloud-auth is-{{ .variant }}" data-testid="sb-cloud-auth" data-cloud-auth="{{ .variant }}"
-   title="{{ if eq .variant "heal" }}{{ .heal.Text }}{{ else if eq .variant "replaced" }}{{ .replacedHint }}{{ else if or (eq .variant "blocked") (eq .variant "register") }}{{ .blockedHint }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored_hint" }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
+<a {{ if .canManage }}href="{{ if eq .variant "heal" }}{{ .heal.Href }}{{ else }}/settings#registration{{ end }}" {{ end }}class="sb-item sb-cloud-auth is-{{ .variant }}{{ if and (eq .variant "heal") .heal.Waiting }} is-selfhealing{{ end }}" data-testid="sb-cloud-auth" data-cloud-auth="{{ .variant }}"
+   title="{{ if eq .variant "heal" }}{{ .heal.Sentence }}{{ if not .canManage }} {{ T "status.cloud_heal.ask_manager" }}{{ end }}{{ else if eq .variant "replaced" }}{{ .replacedHint }}{{ else if or (eq .variant "blocked") (eq .variant "register") }}{{ .blockedHint }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored_hint" }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
   <span class="btn-ico" aria-hidden="true">{{ if eq .variant "blocked" }}{{ icon "pause" }}{{ else }}{{ icon "sparkles" }}{{ end }}</span>
-  <span class="sb-cloud-auth-text">{{ if eq .variant "heal" }}{{ .heal.Text }}{{ else if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored" }}{{ else if eq .variant "blocked" }}{{ T "status.cloud_auth.blocked" }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.locked_out" }}{{ end }}</span>
+  <span class="sb-cloud-auth-text">{{ if eq .variant "heal" }}{{ .heal.Short }}{{ else if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored" }}{{ else if eq .variant "blocked" }}{{ T "status.cloud_auth.blocked" }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.locked_out" }}{{ end }}</span>
+  {{ if and (eq .variant "heal") .heal.Button .canManage }}<span class="sb-cloud-auth-sep" aria-hidden="true">·</span><span class="sb-cloud-auth-btn" data-testid="sb-cloud-heal-action">{{ .heal.Button }}</span>{{ end }}
 </a>
-{{ if and (eq .variant "heal") .heal.Button .canManage }}<a class="sb-item sb-cloud-auth-btn" href="{{ .heal.Href }}" data-testid="sb-cloud-heal-action">{{ .heal.Button }}</a>{{ end }}

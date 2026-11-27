@@ -174,6 +174,14 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 	}
 	m["IsReplaced"] = replaced
 	m["ReplacedBy"] = rep.By
+	// ADR-0217: the same sentence and one button as the status-bar chip.
+	hst := healChipStatus()
+	if hv, show := healChip(locale, hst, storeHasOwner(ctx, d.Settings)); show {
+		m["Heal"] = hv
+	}
+	if !hst.LastHealedAt.IsZero() {
+		m["LastReconnected"] = fmt.Sprintf(httpx.T(locale, "tills.this.last_reconnected"), httpx.FormatDateTime(hst.LastHealedAt.Local(), locale))
+	}
 	m["Tab"] = tab
 	m["TabIDs"] = tillsTabIDs
 	m["IsMain"] = asString(m["SyncPrimary"]) == ""
@@ -264,6 +272,11 @@ func tillsThisData(ctx context.Context, d *common.Deps, r *http.Request, m map[s
 		m["ThisSentenceKey"] = "tills.this.sentence.additional"
 	}
 	m["ThisSentence"] = tillsSentence(m, locale)
+	// A till that fixes itself says so in the status sentence (no banner, no
+	// button); the other states carry their sentence in the banner below.
+	if hv, ok := m["Heal"].(healView); ok && hv.Waiting {
+		m["ThisSentence"] = hv.Sentence
+	}
 	if d.Cfg != nil {
 		m["ShopConnected"] = enroll.CredentialsComplete(enroll.Effective(d.Cfg).Marketplace)
 	}
