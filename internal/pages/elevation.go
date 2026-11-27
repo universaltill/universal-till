@@ -149,17 +149,17 @@ func checkOrElevateApproval(dp *common.Deps, r *http.Request, binding, pin, tok 
 		return elevationCheck{Outcome: allowed, ActorID: actorID}, ""
 	}
 	if pin == "" {
-		return elevationCheck{Outcome: needsElevation, ActorID: actorID}, elevationApprovals.mint(binding)
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID}, elevationApprovals.mint(actorID, binding)
 	}
 	if !elevationApprovals.valid(tok, binding) {
-		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(binding)
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(actorID, binding)
 	}
 	check := verifyElevationPIN(dp, r, actorID, pin, actions...)
 	if check.Outcome != elevated {
 		return check, tok
 	}
 	if !elevationApprovals.consume(tok, binding) {
-		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(binding)
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(actorID, binding)
 	}
 	return check, ""
 }
@@ -196,6 +196,10 @@ func writeElevationRefusalJSON(w http.ResponseWriter, r *http.Request, check ele
 	key := elevationErrorKey(check.Err)
 	if key == "" {
 		key = "common.error.manager_or_admin_required"
+	}
+	if errors.Is(check.Err, errApprovalStale) {
+		// The prompt's "check what is shown above" means nothing to an API caller.
+		key = "elevation.error_approval_changed_api"
 	}
 	e := map[string]string{
 		"code":    elevationJSONCode(check.Err),

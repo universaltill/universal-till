@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 // ut-docs#7140: checkOrElevateApproval is the one bound gate; the form
@@ -56,26 +57,37 @@ func TestCheckOrElevateApproval_StaleNeverReachesPINLookup(t *testing.T) {
 	t.Cleanup(elevationApprovals.reset)
 	dp := newElevationTestDeps(t)
 	b := jsonBinding("c1", "r")
-	_, tok := checkOrElevateApproval(dp, jsonGateReq("c1"), b, "", "", "refund")
+	const realTok = "<the live token>"
 
 	cases := map[string]struct{ binding, tok, user string }{
-		"changed value": {jsonBinding("c1", "other"), tok, "c1"},
+		"changed value": {jsonBinding("c1", "other"), realTok, "c1"},
 		"missing token": {b, "", "c1"},
 		"forged token":  {b, "AAAAAAAAAAAAAAAAAAAAAA", "c1"},
-		"other user":    {jsonBinding("c2", "r"), tok, "c2"},
+		"other user":    {jsonBinding("c2", "r"), realTok, "c2"},
 	}
 	for name, c := range cases {
+		// Fresh store per case: 5 stale tries stay under the per-actor cap
+		// (ut-docs#7152), so the original token must survive every case.
+		elevationApprovals.reset()
+		_, tok := checkOrElevateApproval(dp, jsonGateReq("c1"), b, "", "", "refund")
+		presented := c.tok
+		if presented == realTok {
+			presented = tok
+		}
 		for i := 0; i < 5; i++ {
-			got, _ := checkOrElevateApproval(dp, jsonGateReq(c.user), c.binding, "000000", c.tok, "refund")
+			got, _ := checkOrElevateApproval(dp, jsonGateReq(c.user), c.binding, "000000", presented, "refund")
 			if !errors.Is(got.Err, errApprovalStale) {
 				t.Fatalf("%s try %d: Err = %v, want errApprovalStale", name, i, got.Err)
 			}
 		}
-	}
-	// The manager is not locked out and the original token still works.
-	got, _ := checkOrElevateApproval(dp, jsonGateReq("c1"), b, jsonMgrPIN, tok, "refund")
-	if got.Outcome != elevated {
-		t.Fatalf("after 20 stale tries: %+v, want elevated (no lockout tick)", got)
+		if !elevationApprovals.valid(tok, b) {
+			t.Fatalf("%s: a stale presentation burned the live token", name)
+		}
+		// The manager is not locked out: the live token still elevates.
+		got, _ := checkOrElevateApproval(dp, jsonGateReq("c1"), b, jsonMgrPIN, tok, "refund")
+		if got.Outcome != elevated {
+			t.Fatalf("%s: after 5 stale tries: %+v, want elevated (no lockout tick)", name, got)
+		}
 	}
 }
 
@@ -152,6 +164,15 @@ func TestWriteElevationRefusalJSON_Shape(t *testing.T) {
 			e, _ := env["error"].(map[string]any)
 			if e["code"] != c.wantCode || e["message"] == "" || e["message"] == nil {
 				t.Fatalf("error = %v, want code %q and a message", e, c.wantCode)
+			}
+			if c.name == "stale" {
+				want := httpx.T("en", "elevation.error_approval_changed_api")
+				if want == "elevation.error_approval_changed_api" {
+					t.Fatal("elevation.error_approval_changed_api missing from en.json")
+				}
+				if e["message"] != want || e["message"] == httpx.T("en", "elevation.error_approval_changed") {
+					t.Fatalf("stale message = %q, want the API wording %q", e["message"], want)
+				}
 			}
 			if tok, has := e["approval"]; c.tok == "" && has || c.tok != "" && tok != c.tok {
 				t.Fatalf("approval = %v (present %v), want %q", tok, has, c.tok)
