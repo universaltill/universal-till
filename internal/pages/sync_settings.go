@@ -131,6 +131,7 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 
 		kv := make(map[string]string, len(in.Settings))
 		needsFiscalAuthority := false
+		clearTSEHeldMarker := false
 		country, countryInBatch, localeInBatch := "", false, false
 		for i := range in.Settings {
 			s := &in.Settings[i]
@@ -183,11 +184,31 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 			case wireKeySigningDeviceFailingSince:
 				fail(http.StatusBadRequest, "fiscal_not_settable", "fiscal.signing_device_failing_since is not settable")
 				return
-			case fiscal.KeySystemOfRecord, wireKeySigningDeviceConfigured:
+			case tseCredentialHeldKey:
+				fail(http.StatusBadRequest, "fiscal_not_settable", tseCredentialHeldKey+" is not settable")
+				return
+			case fiscal.KeySystemOfRecord:
 				needsFiscalAuthority = true
+			case wireKeySigningDeviceConfigured:
+				needsFiscalAuthority = true
+				// ut-docs#7050: a manual configured write retires the
+				// provisioned-credential marker, but only a real change of
+				// the stored value (not a no-op re-save).
+				prev, _, gerr := d.Settings.Get(ctx, storage)
+				if gerr != nil {
+					logging.L().Errorf("sync settings from %s: read %s: %v", till.Name, storage, gerr)
+					fail(http.StatusInternalServerError, "server_error", "server error")
+					return
+				}
+				if prev != s.Value {
+					clearTSEHeldMarker = true
+				}
 			}
 			s.Key = storage
 			kv[storage] = s.Value
+		}
+		if clearTSEHeldMarker {
+			kv[tseCredentialHeldKey] = "false"
 		}
 
 		// audit_log.actor_id FKs onto users: the actor must be a real user
