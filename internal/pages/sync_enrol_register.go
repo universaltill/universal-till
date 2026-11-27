@@ -45,6 +45,13 @@ func enrolRegister(ctx context.Context, posRepo *data.POSRepo, replaceID, tillID
 				logging.L().Warnf("sync: link register %s to device of till %s: %v", registerID, tillID, err)
 			}
 		}
+		// The register follows the till's (new) name; a name another register
+		// holds is left alone, never an error.
+		if strings.TrimSpace(name) != "" {
+			if _, err := posRepo.RenameRegisterToFollowTill(ctx, registerID, name); err != nil {
+				logging.L().Warnf("sync: rename register %s to follow replaced till %s: %v", registerID, tillID, err)
+			}
+		}
 		return registerID, "", false
 	}
 
