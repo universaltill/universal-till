@@ -211,6 +211,9 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 		}
 		m["Others"] = o
 		m["OthersCount"] = o.Disagree
+		if d.SyncPrimaryURL(ctx) == "" { // ut-docs#7098: optional, default off, throttled
+			maybeAutoRetireRegisters(ctx, d, o.Rows, o.CloudOK)
+		}
 	case "add":
 		tillsAddData(r, m)
 	case "settings":

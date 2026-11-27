@@ -54,7 +54,7 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 			if (row.State != tills.StateLocalOnly && row.State != tills.StateOldEntry) || row.IsSelf || !row.LongUnseen || !confirmed[row.ID] {
 				continue
 			}
-			if err := repo.DeleteTill(r.Context(), row.ID); err != nil {
+			if err := revokeTillAndRetireRegister(r.Context(), repo, posRepo, row.ID, data.RetiredOldEntry, actor); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "tills_revoke_stale", err)
 				return
 			}

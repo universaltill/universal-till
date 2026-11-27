@@ -943,18 +943,24 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// register_id degrades gracefully to exactly the pre-#894 behaviour —
 		// completeJoin/ApplyReplicaIdentity already treat "" as "older
 		// primary, no register sent" and fall back to manual assignment.
-		var registerID, registerName string
-		if replaceID != "" {
-			// A replaced enrolment keeps its register (ut-docs#7057).
-			registerID, _ = posRepo.EnrolledRegisterID(r.Context(), tillID)
-		} else if registerID, registerName, err = posRepo.CreateRegisterForEnrolment(r.Context(), name); err != nil {
-			logging.L().Errorf("auto-provision register for enrolling till %s: %v", tillID, err)
-			registerID, registerName = "", ""
+		// ut-docs#7098: one device = one register (see enrolRegister). The
+		// proof for a takeover is the same as the rename rule's: a manager
+		// approved a request that NAMED this device.
+		deviceProof := false
+		if in.DeviceID != "" && validRequesterDeviceID(in.DeviceID) {
+			if approvedDev, approvedOK, perr := pairingRepo.RequesterDeviceForToken(r.Context(), presented); perr == nil {
+				deviceProof = approvedOK && approvedDev == in.DeviceID
+			}
 		}
+		linkDevice := ""
+		if validRequesterDeviceID(in.DeviceID) {
+			linkDevice = in.DeviceID
+		}
+		registerID, registerName, takenOver := enrolRegister(r.Context(), posRepo, replaceID, tillID, name, linkDevice, deviceProof)
 		// Same action for a replace, so EnrolledRegisterID keeps working;
 		// the payload says it was one.
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role, "replaced": replaceID != "",
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role, "replaced": replaceID != "", "taken_over": takenOver,
 				// ut-docs#5074: which number it got, and whether it was the
 				// one it asked for (a re-join), so a reclaimed number shows.
 				"till_no": tillNo, "requested_prefix": in.ReceiptPrefix},
@@ -1098,7 +1104,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		id := r.PathValue("id")
-		if err := repo.DeleteTill(r.Context(), id); err != nil {
+		// ut-docs#7098: removing a till retires the register it owned.
+		if err := revokeTillAndRetireRegister(r.Context(), repo, posRepo, id, data.RetiredRevoked, getSessionUserID(r)); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}

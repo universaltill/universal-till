@@ -187,13 +187,15 @@ func applyReportedTillName(tills *data.TillsRepo, registers *data.POSRepo, unusa
 		return
 	}
 	logging.L().Infof("sync link: till %s now reports the name %q", tillID, name)
-	regID, err := registers.EnrolledRegisterID(ctx, tillID)
+	// ut-docs#7098: the register_devices link first, the till_enrolled audit
+	// row as before for a till enrolled earlier. A rename never creates a row.
+	link, ok, err := registers.RegisterByTill(ctx, tillID)
 	if err != nil {
 		logging.L().Warnf("sync link: find register of till %s: %v", tillID, err)
 		return
 	}
-	if regID != "" {
-		renameRegisterAfterTill(ctx, registers, regID, name)
+	if ok && link.RegisterID != "" {
+		renameRegisterAfterTill(ctx, registers, link.RegisterID, name)
 	}
 }
 
