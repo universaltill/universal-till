@@ -68,3 +68,23 @@ func TestApprovalStore7152_GlobalCapStillBounds(t *testing.T) {
 		}
 	}
 }
+
+// The empty actor id (auth off / no session user) is one more capped bucket:
+// it evicts its own oldest and never a named actor's older token.
+func TestApprovalStore7152_EmptyActorIsCappedBucket(t *testing.T) {
+	s := newTickStore()
+	named := s.mint("A", "bind-A")
+	var toks []string
+	for i := 0; i < approvalPerActorCap+1; i++ {
+		toks = append(toks, s.mint("", fmt.Sprintf("e%d", i)))
+	}
+	if s.valid(toks[0], "e0") {
+		t.Fatal(`"" actor's first token survived its 9th mint`)
+	}
+	if !s.valid(toks[len(toks)-1], fmt.Sprintf("e%d", len(toks)-1)) {
+		t.Fatal(`"" actor's newest token was evicted`)
+	}
+	if !s.valid(named, "bind-A") {
+		t.Fatal(`"" actor's spam evicted A's older token`)
+	}
+}

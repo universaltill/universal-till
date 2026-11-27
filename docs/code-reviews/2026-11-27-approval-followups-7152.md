@@ -18,6 +18,7 @@ Pre-flight: Till user-visible behaviour n/a (both changed routes are API-only, s
 | R-L1 | Low | Dev changed `TestCheckOrElevateApproval_StaleNeverReachesPINLookup` to fetch a fresh token, because 15 stale c1 tries now evict the original token under the per-actor cap. That dropped the proof that a stale or mismatched presentation never burns the live token. | **Fixed:** each case now starts from a fresh store and mints its own live token. After 5 stale tries, still under the cap, the test asserts `valid(tok, b)` and that the live token still elevates with the manager PIN. |
 | R-L2 | Low | A session's own stale or missing-token refusals push out its own older live tokens. Example: one login shared by 8 or more devices or integrations. | **Accepted:** this fails closed (`approval_changed` plus a fresh token), and the newest token, the one on screen, always survives. It is the trade-off the card chose. |
 | R-L3 | Low | Actor A can still evict B through the global cap. That needs 256 live tokens while A holds fewer than 8, which means 32 or more distinct staff ids each holding 8 prompts within 5 minutes. | **Accepted:** this is the documented backstop. |
+| T-G1 | Low | Tester: the empty actor id (auth off / no session user) had no test. | **Fixed:** `TestApprovalStore7152_EmptyActorIsCappedBucket`. |
 | R-N1 | Nit | Through the full app mux, a GET reaches the catch-all `/` and gets 404, not 405. | **Accepted:** this matches every other method-pattern route, and nothing changes state. |
 
 ## Verification
@@ -25,6 +26,6 @@ Pre-flight: Till user-visible behaviour n/a (both changed routes are API-only, s
 - Dev saw each new test fail first. The status tests failed with `GET = 403, want 405` and `oversize = 403 … want 413`. The store tests did not compile against the old `mint` signature. The stale JSON case failed on the old wording.
 - The reviewer re-verified a TDD claim in a throwaway worktree: with the per-actor eviction disabled, `ActorSpamDoesNotEvictOthers` and `ActorEvictsOwnOldest` fail, and they pass once it is restored.
 - Clean: `go vet ./internal/pages/`; the targeted `go test` with and without `-race`; `guard-i18n.sh` and `guard-i18n-meta.sh`. The full `internal/pages` suite passed in 679s with `-timeout 1500s`. Its runtime is the pre-existing #7091, not this change.
-- Tester: see the close-out comment on ut-docs#7152.
+- Tester (separate agent, own worktree, `-race`): targeted suite and both i18n guards pass. Each mutation is caught: removing MaxBytesReader, dropping `POST`, disabling or inverting the per-actor eviction, and reverting the JSON key. Full `go test ./...` and e2e are left to CI and the batch gate. There is no visual surface.
 
 Verdict: approve. No follow-up cards.
