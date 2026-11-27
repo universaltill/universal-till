@@ -29,6 +29,8 @@ func TestPluginsPage_RestoredSecretsBannerListsKeysNotValues(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "till.db")
 	d.Cfg = &config.Config{DBPath: dbPath}
 	seedTestPlugin(t, d.Db, "com.x.pay", "Pay", "1.0.0")
+	prevKS := secrets.Default() // the process-wide store TestMain registered; later tests keep it
+	t.Cleanup(func() { secrets.SetDefault(prevKS) })
 	secrets.SetDefault(nil) // the sealing key file did not come with the backup
 	ciphertext := secrets.Prefix + "AAAAnotarealciphertextAAAA"
 	if _, err := d.Db.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('s1','com.x.pay','api_key',?, 'global')`, ciphertext); err != nil {
