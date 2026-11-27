@@ -73,17 +73,26 @@ On a till with cloud sync, the status bar at the bottom of the screen shows when
 4. On an iPhone the app syncs only while it is open. Open it to pick up changes.
 5. An additional till does not show this. It gets the shop's changes from the main till (see the main-till light in its status bar).
 
-## When the cloud stops accepting this till
+## When this till loses its connection to your shop
 
-If the cloud refuses this till's credential three times in a row, or this till's data was restored onto a new device, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of these things:
+A till that the cloud stops accepting **reconnects by itself**: you do not need to pair it again, and you do not need to do anything. It never blocks a sale. The till keeps selling, keeps every sale it still has to send, and the status bar says what is happening, in one short line. **Pairing again with a code is only the last step, and only for the cases below where the till says so.**
 
-- **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
-- **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
-- **Cloud sign-in lost**: the store has no owner account, so the till can't be paired. Tap the chip, then **Reconnect this till** in Settings → Till registration (same shop); only if that is refused, **Register as a new shop** (only the old fleet history is lost).
-- **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection. A restored till never registers itself as a new shop; you choose what happens.
-- **Cloud reconnect paused** (with "in use on two machines" in Settings → Till registration): the same till data is running on two machines (a copied folder), so the cloud will not connect it again. Keep the data on one machine; the till retries once a day.
+**The till fixes it by itself (nothing to press):**
 
-A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
+- **Reconnecting…**: the till is getting its connection back right now, usually within a couple of minutes. When it is done, a short message says **This till is connected to your shop again**, and Tills → This till shows **Reconnected by itself on** the date. Settings → Backups says "Copies to your account are paused while this till reconnects. They start again by themselves."
+- **Reconnects** and a date: the till waits for that date and then reconnects by itself. You can ignore it, or use a code to be quicker.
+
+**The till needs a person (one button, never more):** the status bar shows a short line and one button after a dot. The same words and the same button are on Tills → This till and in Settings → Till registration. Tap the status-bar line to go to the button's page.
+
+- **Needs a code to reconnect** → **Reconnect with a code**: the till can't prove who it is (for example it was restored from a backup, copied, or moved to a new phone). On my.universaltill.com open Tills, choose this till, press **Make a code**, and type the code in Settings → Till registration → Reconnect this till to a shop. A till restored onto a new device always needs a code once: that is deliberate, so a copy of your till cannot connect as your till. The old device, if it is still in use, keeps its own connection.
+- **Can't reconnect by itself** → **Register as a new shop**: the shop has no online account to make a code with. Registering creates a new shop for this till: its sales stay on this till, and what it sent online before stays with the old shop.
+- **Removed from your shop** → **Enter a code**: the shop's owner removed this till from the account on purpose. Its sales are saved on the till and it can still sell. Ask the shop owner for a code to connect it again.
+- **Replaced by …** or **Another till is the main till** → **Join as an additional till**: another till is now the main till of your shop. This till can still sell, but its sales no longer reach your account until you join it to the main till as an additional till (see Multiple tills).
+- **Moved to …** → **Open Till registration**: this till now belongs to another shop. Enter a code from that shop there to connect it.
+- **Shop deleted from its account**: the shop was deleted online. Selling works and sales stay on the till. If the owner restores the shop on my.universaltill.com, the till reconnects by itself within a day. There is nothing to press.
+- **In use on two devices** → **Open Till registration**: this till's data is in use on two devices and only one can stay connected. Keep using one, reconnect it with a code, and set the other up again as a new additional till.
+
+A cashier sees the same words without a button and is told to ask a manager to open Settings. Settings → Till registration has the code field open when you arrive from a button. **Reconnect this till** and **Register as a new shop** there are for a shop with no online account.
 
 ## When Claim this store or Accept terms fails
 
@@ -97,9 +106,9 @@ The card says what went wrong in one line; selling is never affected:
 - **Another registration attempt is still running**: the till is already registering in the background. Wait a moment and try again.
 - **Registration failed** or **Could not get a claim code**: the till could not reach the cloud. Check the internet connection and try again.
 
-## Pair with a shop (and re-pairing)
+## Pair with a shop (reconnect with a code)
 
-Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.
+Use this when the shop already exists in the Universal Till cloud and this till should join it, or when the status bar says **Needs a code to reconnect**, **Removed from your shop** or **Moved to …**. A till that merely lost its connection does not need this: it reconnects by itself first (see above).
 
 1. In the shop's cloud account, choose "Pair a till" (or "Pair again" for a till that is already listed) to get a pairing code (8 characters, valid 15 minutes, single use).
 2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. If this till is already connected to a shop, it first asks you to confirm that you want to replace that connection and shows the code you typed, so you can check it; Cancel changes nothing. A manager or admin approves it afterwards.

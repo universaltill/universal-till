@@ -202,7 +202,7 @@ func assertJoinRefusedForSales(t *testing.T, rec *httptest.ResponseRecorder, stu
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("expected text/html so htmx swaps it in, got %q", ct)
 	}
-	if want := `<span class="muted">✗ ` + replaceWarningHTML() + `</span>`; !strings.HasPrefix(rec.Body.String(), want) {
+	if want := `<span class="muted">One more step: this device already has its own sales. Tick the box below, then press Join again.</span>`; !strings.HasPrefix(rec.Body.String(), want) {
 		t.Fatalf("expected the refusal to start with %q, got %q", want, rec.Body.String())
 	}
 	assertReplaceSlotOOB(t, rec.Body.String())

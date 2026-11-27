@@ -43,7 +43,7 @@ func TestCloudAuthChip_BlockedVariant(t *testing.T) {
 			t.Fatalf("manager chip lacks %q: %s", want, body)
 		}
 	}
-	for _, other := range []string{"needs pairing again", "Register as a new store", "Removed from the shop"} {
+	for _, other := range []string{"Needs a code to reconnect", "Register as a new store", "Removed from the shop"} {
 		if strings.Contains(body, other) {
 			t.Fatalf("blocked chip also says %q: %s", other, body)
 		}
