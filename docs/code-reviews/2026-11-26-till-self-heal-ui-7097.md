@@ -35,3 +35,18 @@ touched.
 ## Findings
 
 (none yet)
+
+
+## Combined review 2026-11-27 (ut-docs#7097 batch, one Reviewer: not the Dev, not the Tester)
+
+Independent security pass by a different-model subagent (Fable) plus the Reviewer's own reading, against the binding review-adr.md conditions (B1-B6, H1-H2, M1-M9). Pre-flight: walked PREFLIGHT.md for the touched surfaces; the batch's combined Tester report (tester-report.md) is the test evidence; no real shop or person names in the added tests.
+
+Findings and outcome (engine fixes merged in):
+
+1. HIGH, fixed. The dev's "Fixed in this resume" changes (heal-needs-code Settings, the Join label revert, meta wording) were never committed to the PR; they are now.
+2. MED, fixed. The moved state no longer renders the cloud's `moved_to` (a store id); it says "another shop".
+3. Tester item C, fixed. Settings "Claim this store" on a 401 said "check the internet connection"; it now says the till is not connected right now (`settings.enrol.claim_unauthorized`, English plus meta) and reports the 401 to the heal engine (which probes first).
+4. Dev item, fixed. The chip decides the heal state before the register-refusal variants, so the old "cloud knows a different key" text never shows beside the heal notice.
+5. Unchecked by anyone: dark theme, RTL (fa/ar) and the longest German/Persian strings were not looked at (tester said so); drive them in the device pass before the flag goes beyond the test shop. Satellite join button label is still shared.
+
+Verdict: SHIP after the fixes above, after #2760.
