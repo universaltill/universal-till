@@ -252,6 +252,27 @@ func RejectAllPendingRecords(ctx context.Context, tx SyncQuerier, reason string,
 	return err
 }
 
+// DeletePluginRecords drops one plugin's outbox, inbox and snapshot rows
+// inside the caller's transaction (an uninstall; ut-docs#3697 review M1) and
+// returns how many rows went. A snapshot delete on a main bumps the admin
+// generation, so replicas drop it on their next pull.
+func DeletePluginRecords(ctx context.Context, tx SyncQuerier, pluginID string) (int64, error) {
+	var total int64
+	for _, q := range []string{
+		`DELETE FROM plugin_record_outbox WHERE plugin_id = ?`,
+		`DELETE FROM plugin_record_inbox WHERE plugin_id = ?`,
+		`DELETE FROM plugin_snapshot WHERE plugin_id = ?`,
+	} {
+		res, err := tx.ExecContext(ctx, q, pluginID)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
+}
+
 // Status lists one plugin's rows for a collection, oldest first, capped.
 func (r *PluginRecordsRepo) Status(ctx context.Context, pluginID, collection string) ([]RecordStatusRow, error) {
 	rows, err := r.db.QueryContext(ctx, `

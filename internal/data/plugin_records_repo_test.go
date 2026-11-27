@@ -456,3 +456,44 @@ func TestRecordsEnqueue_DuplicateKeepsFirstRow_3697(t *testing.T) {
 		t.Fatalf("duplicate must not replace/resurrect the row: %s %s", payload, status)
 	}
 }
+
+// Review M1: an uninstall drops the plugin's outbox, inbox and snapshot rows
+// (and only that plugin's).
+func TestDeletePluginRecords_OnlyThatPlugin_3697(t *testing.T) {
+	r, _ := recordsRepo(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, p := range []string{"p.a", "p.b"} {
+		if _, err := r.Enqueue(ctx, p, "entries", "x", []byte(`{}`), now); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.InboxAdd(ctx, p, "entries", "y", "till-1", now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.SnapshotSet(ctx, p, "staff", []byte(`[]`), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := DeletePluginRecords(ctx, tx, "p.a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("deleted = %d, want 3 (outbox, inbox, snapshot)", n)
+	}
+	for _, tbl := range []string{"plugin_record_outbox", "plugin_record_inbox", "plugin_snapshot"} {
+		var a, b int
+		_ = r.db.QueryRow(`SELECT COUNT(*) FROM ` + tbl + ` WHERE plugin_id = 'p.a'`).Scan(&a)
+		_ = r.db.QueryRow(`SELECT COUNT(*) FROM ` + tbl + ` WHERE plugin_id = 'p.b'`).Scan(&b)
+		if a != 0 || b != 1 {
+			t.Fatalf("%s: p.a=%d (want 0) p.b=%d (want 1)", tbl, a, b)
+		}
+	}
+}

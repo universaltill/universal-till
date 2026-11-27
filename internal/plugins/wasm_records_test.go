@@ -447,3 +447,35 @@ func TestRecordsGuestThroughTheSDK_3697(t *testing.T) {
 		}
 	}
 }
+
+// Review M1: uninstalling a plugin drops its queued records, its inbox
+// ledger and its snapshots; another plugin's rows stay.
+func TestUninstallPlugin_DropsPluginRecords_3697(t *testing.T) {
+	d := hostfnTestDB(t)
+	seedPlugin(t, d, recPlugin)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	repo := data.NewPluginRecordsRepo(d)
+	for _, p := range []string{recPlugin, "com.other"} {
+		if _, err := repo.Enqueue(ctx, p, "entries", "x", []byte(`{}`), now); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.InboxAdd(ctx, p, "entries", "y", "till-1", now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.SnapshotSet(ctx, p, "staff", []byte(`[]`), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := UninstallPlugin(ctx, d, recPlugin); err != nil {
+		t.Fatal(err)
+	}
+	for _, tbl := range []string{"plugin_record_outbox", "plugin_record_inbox", "plugin_snapshot"} {
+		var mine, other int
+		_ = d.QueryRow(`SELECT COUNT(*) FROM `+tbl+` WHERE plugin_id = ?`, recPlugin).Scan(&mine)
+		_ = d.QueryRow(`SELECT COUNT(*) FROM ` + tbl + ` WHERE plugin_id = 'com.other'`).Scan(&other)
+		if mine != 0 || other != 1 {
+			t.Fatalf("%s after uninstall: uninstalled=%d (want 0) other=%d (want 1)", tbl, mine, other)
+		}
+	}
+}
