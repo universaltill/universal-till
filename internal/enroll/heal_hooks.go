@@ -49,11 +49,12 @@ func SetDeadCredentialHook(f func(source, code, reason string, recover bool)) {
 	}
 	deadCredentialHook.Store(&f)
 	earlyDead.Lock()
-	e := earlyDead
+	had, at := earlyDead.set, earlyDead.at
+	source, code, reason, rec := earlyDead.source, earlyDead.code, earlyDead.reason, earlyDead.recover
 	earlyDead.set = false
 	earlyDead.Unlock()
-	if e.set && time.Since(e.at) < earlyDeadMaxAge {
-		f(e.source, e.code, e.reason, e.recover)
+	if had && time.Since(at) < earlyDeadMaxAge {
+		f(source, code, reason, rec)
 	}
 }
 
