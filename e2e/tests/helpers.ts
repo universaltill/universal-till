@@ -910,3 +910,28 @@ export async function answerTillConfirm(
   await expect(dlg).toBeHidden();
   return msg;
 }
+
+// ut-docs#7096: a cashier's New sale on a priced basket needs a manager PIN,
+// and the PIN only counts with the prompt's single-use approval. Ask first,
+// then replay the prompt's hidden fields with the PIN.
+export async function resetBasketWithPIN(request: APIRequestContext, pin: string) {
+  const headers = { 'HX-Request': 'true' };
+  const first = await request.post('/api/pos/reset', { headers });
+  if (!first.ok()) throw new Error(`resetBasketWithPIN: New sale answered ${first.status()}`);
+  if (first.headers()['x-ut-response'] !== 'elevation-prompt') return; // nothing priced, or allowed
+  const html = await first.text();
+  const unescape = (v: string) =>
+    v.replace(/&#34;|&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const form: Record<string, string> = {};
+  for (const m of html.matchAll(/<input[^>]*type="hidden"[^>]*>/g)) {
+    const name = m[0].match(/name="([^"]+)"/)?.[1];
+    const value = m[0].match(/value="([^"]*)"/)?.[1] ?? '';
+    if (name) form[name] = unescape(value);
+  }
+  form.override_pin = pin;
+  const res = await request.post('/api/pos/reset', { headers, form });
+  if (!res.ok()) throw new Error(`resetBasketWithPIN: approved New sale answered ${res.status()}`);
+  if (res.headers()['x-ut-response'] === 'elevation-prompt') {
+    throw new Error('resetBasketWithPIN: approved New sale re-prompted');
+  }
+}

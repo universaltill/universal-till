@@ -2,11 +2,11 @@ package db
 
 import "testing"
 
-// Migration 119: per-field ver on plugin_settings. Existing rows start at
+// Migration 121: per-field ver on plugin_settings. Existing rows start at
 // ver 1 origin till; the SumUp rows are seeded from the legacy plain counter
 // sumup_key_version so an older replayed directive stays stale (ADR-0213).
-func TestMigration119_PluginSettingsVerSeedsSumUpFromLegacyCounter(t *testing.T) {
-	d, _ := openAtPreMigrationSchema(t, 119, "plugin-settings-ver.db")
+func TestMigration121_PluginSettingsVerSeedsSumUpFromLegacyCounter(t *testing.T) {
+	d, _ := openAtPreMigrationSchema(t, 121, "plugin-settings-ver.db")
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if _, err := d.DB.Exec(q, args...); err != nil {
@@ -26,8 +26,8 @@ VALUES (?, '1.0.0', 'T', 'd', 'a', 's', 'wasm', 'e', 'https://example.com/p', 'd
 	set("b", "sumup", "sumup_merchant_code", `"M1"`)
 	set("c", "sumup", "sumup_key_version", `5`)
 	set("d", "other", "sumup_api_key", `"x"`) // another plugin: untouched
-	if err := d.applyMigration(loadMigrationVersion(t, 119)); err != nil {
-		t.Fatalf("apply 119: %v", err)
+	if err := d.applyMigration(loadMigrationVersion(t, 121)); err != nil {
+		t.Fatalf("apply 121: %v", err)
 	}
 	row := func(id string) (ver int64, origin string) {
 		t.Helper()

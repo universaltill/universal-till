@@ -2,11 +2,14 @@ package pages
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -916,63 +919,81 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("tab") == openOrdersTabCounter {
 			tab = openOrdersTabCounter
 		}
-		offlineRaw := r.Form.Get("offline")
-		offline := formFlagTruthy(r.Form.Get("offline_override")) || formFlagTruthy(offlineRaw)
+		view := "parked-orders"
+		if onPage {
+			view = "page"
+		}
+		offline := formFlagTruthy(r.Form.Get("offline_override")) || formFlagTruthy(r.Form.Get("offline"))
+		offlineVal := "0"
+		if offline {
+			offlineVal = "1"
+		}
 		hint := "#parked-orders-hint"
 		if onPage {
 			hint = "#open-orders-hint"
 		}
 
-		elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			// Name the order in the approver's summary, read the same
-			// non-destructive, primary-first way the table move does --
-			// never from the request, so the approver sees what is really
-			// being cancelled.
-			label := id
-			if held, found := heldSaleForResume(ctx, d, repo, id); found && held.Label != "" {
-				label = held.Label
-			}
-			view := "parked-orders"
+		respond := func(outcome cancelOutcome) {
 			if onPage {
-				view = "page"
+				switch outcome {
+				case cancelOK:
+					w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&msg=open_orders.cancel.done")
+				case cancelNotFound:
+					w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=hold.error.not_found")
+				case cancelMainTillUnreachable:
+					w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.main_till_unreachable")
+				default:
+					w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.live")
+				}
+				w.WriteHeader(http.StatusOK)
+				return
 			}
-			renderElevationPrompt(w, r, "/api/pos/held/cancel", hint,
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.cancel_order"), label),
-				[]elevationHiddenField{{Name: "id", Value: id}, {Name: "view", Value: view}, {Name: "tab", Value: tab}, {Name: "offline", Value: offlineRaw}},
-				elev)
-			return
-		}
-
-		outcome := cancelHeldSale(ctx, d, repo, posRepo, id, elev, offline)
-		if onPage {
+			w.Header().Set("HX-Retarget", "#parked-orders-body")
+			w.Header().Set("HX-Reswap", "innerHTML")
 			switch outcome {
 			case cancelOK:
-				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&msg=open_orders.cancel.done")
+				w.Header().Set("HX-Trigger", "held-changed")
+				renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.done"), "success")
 			case cancelNotFound:
-				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=hold.error.not_found")
+				w.Header().Set("HX-Trigger", "held-changed")
+				renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "hold.error.not_found"), "error")
 			case cancelMainTillUnreachable:
-				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.main_till_unreachable")
+				renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.main_till_unreachable"), "error")
 			default:
-				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.live")
+				renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.live"), "error")
 			}
-			w.WriteHeader(http.StatusOK)
-			return
 		}
-		w.Header().Set("HX-Retarget", "#parked-orders-body")
-		w.Header().Set("HX-Reswap", "innerHTML")
-		switch outcome {
-		case cancelOK:
-			w.Header().Set("HX-Trigger", "held-changed")
-			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.done"), "success")
-		case cancelNotFound:
-			w.Header().Set("HX-Trigger", "held-changed")
-			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "hold.error.not_found"), "error")
-		case cancelMainTillUnreachable:
-			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.main_till_unreachable"), "error")
-		default:
-			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.live"), "error")
+
+		elev := elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)}
+		if !canPerform(d, r, "void_comp_waste") {
+			// ut-docs#7096: a held order is mutable under the same id (resume +
+			// re-park, UpsertIfNewer from other tills), so the approval binds the
+			// order as the approver saw it, read server-side the same
+			// non-destructive primary-first way the summary always did.
+			held, found := heldSaleForResume(ctx, d, repo, id)
+			if id == "" || !found {
+				respond(cancelNotFound) // nothing minted, nothing verified, nothing written
+				return
+			}
+			hidden := []elevationHiddenField{
+				{Name: "id", Value: id}, {Name: "view", Value: view},
+				{Name: "tab", Value: tab}, {Name: "offline", Value: offlineVal},
+			}
+			var tok string
+			elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/held/cancel", getSessionUserID(r),
+				[]string{"void_comp_waste"}, hidden, heldCancelApprovalExtras(held)...), "void_comp_waste")
+			if elev.Outcome == needsElevation {
+				label := id
+				if held.Label != "" {
+					label = held.Label
+				}
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
+				renderElevationPrompt(w, r, "/api/pos/held/cancel", hint,
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.cancel_order"), label), hidden, elev)
+				return
+			}
 		}
+		respond(cancelHeldSale(ctx, d, repo, posRepo, id, elev, offline))
 	})
 
 	// Held-sales strip: chips the cashier taps to resume.
@@ -1161,4 +1182,13 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderHeldStrip(w, r)
 	})
+}
+
+// heldCancelApprovalExtras (ut-docs#7096): the held row as the approver saw
+// it. UpdatedAt has one-second resolution, so the value fields and a hash of
+// the payload are bound too (a same-second re-park with other lines differs).
+func heldCancelApprovalExtras(h data.HeldSale) []string {
+	sum := sha256.Sum256([]byte(h.Payload))
+	return []string{"held", h.UpdatedAt, strconv.FormatInt(h.TotalMinor, 10),
+		strconv.Itoa(h.LineCount), h.Label, h.TableID, hex.EncodeToString(sum[:])}
 }

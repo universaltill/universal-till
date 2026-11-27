@@ -1724,7 +1724,7 @@ type PluginSettingRow struct {
 	// secrets key does not travel in a phone backup). ValueJSON is empty
 	// then; the settings page asks the operator to enter it again.
 	Unreadable bool
-	// Ver/Origin/VerAt: the row's per-field version (migration 119; Ver 1 and
+	// Ver/Origin/VerAt: the row's per-field version (migration 121; Ver 1 and
 	// Origin till for a row nobody versioned). VerAt is the till clock, zero
 	// when never set. Filled by ListPluginSettings.
 	Ver    int64

@@ -20,8 +20,8 @@ branches (ADR text). Cards: epics ut-docs#6332 (ADR-0190) and ut-docs#6967
   marketplace key at apply time (`plugins.VerifiedManifestSettings`), decides
   what a `set_plugin_secret` directive may write. Wire v2 (kind, op, ver,
   base_ver, aux, restore); v1 still applies. Per-field `ver`/`origin` on
-  `plugin_settings` (migration 119) and `setting_meta` for core keys
-  (migration 118). `internal/restoredsecrets`: the "enter these keys again"
+  `plugin_settings` (migration 121, renumbered at merge; 119 is the item gallery) and `setting_meta` for core keys
+  (migration 120, renumbered at merge; 118 is pairing). `internal/restoredsecrets`: the "enter these keys again"
   list after a restore.
 - **ut-cloud.** Six ent schemas (C0), the record (`internal/shopconfig`:
   ingest, conflict rule, publish, undo, restore plan and job), generic plugin

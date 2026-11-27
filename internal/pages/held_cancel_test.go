@@ -215,9 +215,15 @@ func TestHeldCancel_CashierWithManagerPINRecordsApprover(t *testing.T) {
 	mgrID, cashierID := newElevationTestPrincipals(t, dp, "mgr-cancel-3", "cashier-cancel-3", "334455")
 	seedCancelHeldOrder(t, dp, "hold-c3", "Sarah", "")
 
-	rec := postForm(mux, "/api/pos/held/cancel",
-		url.Values{"id": {"hold-c3"}, "view": {"parked-orders"}, "tab": {"hold"}, "override_pin": {"334455"}},
-		&auth.User{ID: cashierID, Role: "cashier"})
+	cashier := &auth.User{ID: cashierID, Role: "cashier"}
+	first := postFormHtmx(mux, "/api/pos/held/cancel",
+		url.Values{"id": {"hold-c3"}, "view": {"parked-orders"}, "tab": {"hold"}}, cashier)
+	if !isElevationPrompt(first) {
+		t.Fatalf("want prompt first, got %d", first.Code)
+	}
+	retry := promptHiddenFields(t, first.Body.String())
+	retry.Set("override_pin", "334455")
+	rec := postFormHtmx(mux, "/api/pos/held/cancel", retry, cashier)
 	if isElevationPrompt(rec) {
 		t.Fatalf("a manager PIN must clear the gate, got another prompt: %s", rec.Body.String())
 	}

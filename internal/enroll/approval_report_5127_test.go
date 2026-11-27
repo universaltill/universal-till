@@ -32,6 +32,7 @@ type reportCloud struct {
 	auth   string
 	path   string
 	body   []byte
+	resp   string // canned response body
 }
 
 func newReportCloud(t *testing.T, status int) *reportCloud {
@@ -45,7 +46,13 @@ func newReportCloud(t *testing.T, status int) *reportCloud {
 		c.mu.Unlock()
 		c.hits.Add(1)
 		w.WriteHeader(int(c.status.Load()))
-		_, _ = w.Write([]byte(`{"data":{}}`))
+		c.mu.Lock()
+		body := c.resp
+		c.mu.Unlock()
+		if body == "" {
+			body = `{"data":{}}`
+		}
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(c.srv.Close)
 	return c
@@ -176,15 +183,90 @@ func TestKickReportsOncePerIdentityAndRetriesSlowly(t *testing.T) {
 	}
 }
 
-func TestKickRetryAfterFailureIsSlowAndBounded(t *testing.T) {
+// ADR-0222 T3 (dead-end row 21): the report never gives up. After the listed
+// waits it goes on at a long fixed interval, so a till that could not pin its
+// key (a dead credential, a long outage) still does once it can.
+func TestKickRetryNeverGivesUp(t *testing.T) {
 	identify(t)
-	setApprovalRetryDelays(t, []time.Duration{10 * time.Millisecond, 10 * time.Millisecond})
+	setApprovalRetryDelays(t, []time.Duration{5 * time.Millisecond, 5 * time.Millisecond})
+	setApprovalRetryTail(t, 5*time.Millisecond)
 	c := newReportCloud(t, http.StatusInternalServerError)
+	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-	kickApprovalKeyReport(context.Background(), marketplace(c), &wg)
+	kickApprovalKeyReport(ctx, marketplace(c), &wg)
+	waitFor(t, "more attempts than the listed waits", func() bool { return c.hits.Load() >= 6 })
+	cancel()
 	wg.Wait()
-	if c.hits.Load() != 3 { // first try + the two delays, then it stops
-		t.Fatalf("hits = %d, want 3 (bounded retries)", c.hits.Load())
+}
+
+func TestApprovalRetryTailIsADay(t *testing.T) {
+	if approvalRetryTail != 24*time.Hour {
+		t.Fatalf("tail = %s, want 24h", approvalRetryTail)
+	}
+	if got := approvalRetryDelays; len(got) != 3 || got[0] != 15*time.Minute || got[1] != time.Hour || got[2] != 6*time.Hour {
+		t.Fatalf("delays = %v, want 15m 1h 6h", got)
+	}
+}
+
+// A 401 from the report is a dead credential: it is told to the heal engine,
+// and the report keeps retrying (it works again after the heal).
+func TestApprovalKeyReport401ReportsADeadCredential(t *testing.T) {
+	identify(t)
+	var got struct {
+		sync.Mutex
+		source, code, reason string
+		recover              bool
+		n                    int
+	}
+	SetDeadCredentialHook(func(source, code, reason string, rec bool) {
+		got.Lock()
+		got.source, got.code, got.reason, got.recover = source, code, reason, rec
+		got.n++
+		got.Unlock()
+	})
+	t.Cleanup(func() { SetDeadCredentialHook(nil) })
+	c := newReportCloud(t, http.StatusUnauthorized)
+	c.resp = `{"data":{"reason":"pair_abandoned","recover":true},"error":{"code":"device_revoked"}}`
+	if out := reportApprovalKeyOnce(context.Background(), marketplace(c)); out != reportRetry {
+		t.Fatalf("outcome = %v, want retry", out)
+	}
+	got.Lock()
+	defer got.Unlock()
+	if got.n != 1 || got.source != "approval_key" || got.code != "device_revoked" || got.reason != "pair_abandoned" || !got.recover {
+		t.Fatalf("hook saw %s %s %s %v x%d", got.source, got.code, got.reason, got.recover, got.n)
+	}
+}
+
+// A 401 with no envelope code (a proxy) is never reported.
+func TestApprovalKeyReport401WithoutCodeIsNotReported(t *testing.T) {
+	identify(t)
+	var n atomic.Int32
+	SetDeadCredentialHook(func(string, string, string, bool) { n.Add(1) })
+	t.Cleanup(func() { SetDeadCredentialHook(nil) })
+	c := newReportCloud(t, http.StatusUnauthorized)
+	c.resp = `<html>nope</html>`
+	_ = reportApprovalKeyOnce(context.Background(), marketplace(c))
+	if n.Load() != 0 {
+		t.Fatal("an envelope-less 401 was reported")
+	}
+}
+
+// The 409 conflict is saved, so the Tills page can show it after a restart,
+// and cleared when the cloud takes the key.
+func TestApprovalKeyConflictIsSavedAndCleared(t *testing.T) {
+	identify(t)
+	kv := newFakeKV()
+	setApprovalReportKV(kv)
+	t.Cleanup(func() { setApprovalReportKV(nil) })
+	c := newReportCloud(t, http.StatusConflict)
+	_ = reportApprovalKeyOnce(context.Background(), marketplace(c))
+	if kv.get(KeyApprovalKeyConflictAt) == "" {
+		t.Fatal("conflict not saved")
+	}
+	c.status.Store(http.StatusOK)
+	_ = reportApprovalKeyOnce(context.Background(), marketplace(c))
+	if kv.get(KeyApprovalKeyConflictAt) != "" {
+		t.Fatal("conflict not cleared after the cloud took the key")
 	}
 }
 

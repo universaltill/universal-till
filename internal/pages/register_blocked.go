@@ -59,6 +59,18 @@ func registerKeyRefused(ctx context.Context, d *common.Deps) bool {
 	return !enroll.KeyRefusedAt(ctx, d.Settings).IsZero()
 }
 
+// registerInUseElsewhere: this till's identity is live on another machine (a
+// copied data folder) and the till stopped re-arming (ut-docs#7097, AC10).
+func registerInUseElsewhere(ctx context.Context, d *common.Deps) bool {
+	if d == nil || d.Settings == nil {
+		return false
+	}
+	if s := enroll.CurrentStatus(); s.Registered || s.ViaMainTill {
+		return false
+	}
+	return enroll.InUseElsewhere(ctx, d.Settings)
+}
+
 // blockedWhen is the moment the till can reconnect, in the locale's date
 // convention and the till's own time zone, isolated so it keeps its order
 // inside a right-to-left sentence (U+2068 .. U+2069, what <bdi> does in HTML).
@@ -152,6 +164,12 @@ func registerBlockedView(r *http.Request, d *common.Deps, locale string) map[str
 			"notice": template.HTML(strings.Replace( //nolint:gosec // the template text is escaped; the date is escaped
 				html.EscapeString(httpx.T(locale, "settings.till_registration.blocked_until")), "%s",
 				"<bdi>"+html.EscapeString(httpx.FormatDateTime(until.Local(), locale))+"</bdi>", 1)),
+		}
+	}
+	if registerInUseElsewhere(r.Context(), d) {
+		return map[string]any{
+			"help":   httpx.T(locale, "settings.till_registration.blocked_help"),
+			"notice": httpx.T(locale, "settings.till_registration.in_use_elsewhere"),
 		}
 	}
 	if registerKeyRefused(r.Context(), d) {

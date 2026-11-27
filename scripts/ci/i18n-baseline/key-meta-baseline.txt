@@ -1871,7 +1871,6 @@ refund.error.provider_declined
 refund.error.server
 refund.fully_refunded
 refund.help
-refund.manager_pin
 refund.method
 refund.original_ref
 refund.returns_ref

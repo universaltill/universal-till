@@ -336,6 +336,71 @@ func (s *Store) SignReregister(deviceID, challenge string) (string, error) {
 	return b64(ed25519.Sign(k, msg)), nil
 }
 
+// Has reports whether a parseable key file exists. It never creates a key
+// and never fails: the self-heal engine asks it before trying to prove
+// identity (ADR-0222).
+func (s *Store) Has() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, found, err := s.load()
+	return err == nil && found
+}
+
+// recoverDomain and rejoinDomain are the first lines of the ADR-0222 proofs
+// (ut-cloud internal/approvalkey.RecoverDomain). Both differ from every other
+// domain, so a signature made for one never verifies as another.
+const (
+	recoverDomain = "universaltill/till-recover/v1"
+	rejoinDomain  = "universaltill/till-rejoin/v1"
+)
+
+func joinSigned(domain string, fields ...string) ([]byte, error) {
+	for _, f := range fields {
+		if f == "" || strings.ContainsAny(f, "\n\r") {
+			return nil, errors.New("signed message: a field is empty or contains a line break")
+		}
+	}
+	return []byte(domain + "\n" + strings.Join(fields, "\n")), nil
+}
+
+// RecoverMessage is the exact bytes a till signs to get a new cloud
+// credential for its own device (ADR-0222 §2.2), "\n" separated, no trailing
+// newline:
+//
+//	universaltill/till-recover/v1\n<store_id>\n<device_id>\n<challenge_id>\n<nonce>\n<expires_at>\n<public_key>
+func RecoverMessage(storeID, deviceID, challengeID, nonce, expiresAt, publicKey string) ([]byte, error) {
+	return joinSigned(recoverDomain, storeID, deviceID, challengeID, nonce, expiresAt, publicKey)
+}
+
+// sign loads the key without ever creating one and signs the message
+// build(publicKey) returns; it also reports the key id and public key.
+func (s *Store) sign(build func(pub string) ([]byte, error)) (kid, pub, sig string, err error) {
+	s.mu.Lock()
+	k, found, lerr := s.load()
+	s.mu.Unlock()
+	if lerr != nil {
+		return "", "", "", lerr
+	}
+	if !found {
+		return "", "", "", errors.New("approval: this till has no approval key")
+	}
+	pk := k.Public().(ed25519.PublicKey)
+	pub = b64(pk)
+	msg, err := build(pub)
+	if err != nil {
+		return "", "", "", err
+	}
+	return KID(pk), pub, b64(ed25519.Sign(k, msg)), nil
+}
+
+// SignRecover signs a recover challenge. It never creates a key, like
+// SignReregister: a till with no usable key cannot prove anything.
+func (s *Store) SignRecover(storeID, deviceID, challengeID, nonce, expiresAt string) (kid, publicKey, sig string, err error) {
+	return s.sign(func(pub string) ([]byte, error) {
+		return RecoverMessage(storeID, deviceID, challengeID, nonce, expiresAt, pub)
+	})
+}
+
 var (
 	sharedMu sync.Mutex
 	shared   *Store

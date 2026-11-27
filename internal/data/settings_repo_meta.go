@@ -82,7 +82,7 @@ func bumpTillMeta(ctx context.Context, q metaQuerier, key, newValue string, now 
 	}
 	err := bumpTillMetaChecked(ctx, q, key, newValue, now)
 	if err != nil && strings.Contains(err.Error(), "no such table: setting_meta") {
-		return nil // a database older than migration 118 (hand-built test schemas); the migrated till always has it
+		return nil // a database older than migration 120 (hand-built test schemas); the migrated till always has it
 	}
 	return err
 }

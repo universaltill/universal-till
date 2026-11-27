@@ -75,6 +75,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/cardreaders"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -447,6 +448,17 @@ func stop() {
 	}
 	cur.cancel()
 	<-cur.done
+}
+
+// Resume tells the till the app is in the foreground again (iOS scene
+// active, Android Activity resumed). A suspended phone app runs no timers, so
+// the cloud credential self-heal (ADR-0222) would otherwise notice a dead
+// credential, or run an overdue wake, only at the next tick: Resume makes it
+// ask the cloud once now and heal in the background. It never blocks, never
+// restarts or touches the server (a sale may be open) and is a no-op when the
+// server is not running. Safe to call on every foreground.
+func Resume() {
+	credheal.Resume()
 }
 
 // IsRunning reports whether a Start'd server is genuinely still up — not

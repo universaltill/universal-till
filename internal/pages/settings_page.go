@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -1077,6 +1078,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"registerBlocked": registerBlockedView(r, d, locale),
 			"registerFacts":   registerFactsView(r, d, locale),
 			"reconnectPanel":  reconnectPanelView(r, d),
+			// ADR-0222: the same sentence as the status-bar chip, and the code
+			// field open when its button brought the person here.
+			"healNotice":    healNoticeView(r, d, locale),
+			"openReconnect": r.URL.Query().Get("reconnect") == "1" || healNeedsCode(healChipStatus()),
 			// ut-docs#6959: unknown counts as unclaimed (Claim button stays).
 			"storeClaimed": storeHasOwner(r.Context(), d.Settings),
 		}
@@ -1299,6 +1304,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				key = "settings.enrol.service_unavailable"
 			case errors.Is(err, enroll.ErrTillNotRegistered):
 				key = "settings.enrol.not_registered"
+			default:
+				// A 401 is the cloud refusing this till's credential, not a
+				// network problem: say so, and tell the heal engine (it probes
+				// first, so a stray 401 never rotates anything).
+				var he *enroll.RegisterHTTPError
+				if errors.As(err, &he) && he.Status == http.StatusUnauthorized {
+					key = "settings.enrol.claim_unauthorized"
+					switch he.Code {
+					case "unauthorized", "token_retired", "device_revoked":
+						credheal.Report(credheal.Signal{Source: "claim", Code: he.Code})
+					}
+				}
 			}
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, key)))
 			return
