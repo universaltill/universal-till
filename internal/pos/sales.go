@@ -1589,7 +1589,7 @@ func SaleStatusTransitionAllowed(from, to string) bool {
 	return saleStatusTransitionAllowed(from, to)
 }
 
-// UpdateSaleStatus updates sale.status and writes audit_log. Status expected:
+// UpdateSaleStatusFrom updates sale.status and writes audit_log. Status expected:
 // open|parked|voided|refunded|completed, and the move must be allowed from the
 // sale's current status (saleStatusTransitionAllowed) — otherwise
 // ErrSaleStatusTransition, with nothing changed and no audit row.
@@ -1618,14 +1618,11 @@ func SaleStatusTransitionAllowed(from, to string) bool {
 // behaviour is unchanged. additionalTill is the till's current role, not
 // where the sale was made: a till whose sync.primary_url were cleared would
 // void its old voucher sales again (no code clears it today).
-func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string, additionalTill bool) error {
-	return UpdateSaleStatusFrom(ctx, sqlDB, saleID, "", status, actorID, blockedActorID, reason, additionalTill)
-}
-
-// UpdateSaleStatusFrom is UpdateSaleStatus with the status the caller's gate
-// saw (ut-docs#7140): expectedFrom != "" and the in-tx status differs →
-// ErrSaleStatusTransition, nothing written. A manager approval is bound to
-// that status, so it cannot be spent on a sale that changed since the prompt.
+//
+// expectedFrom is the status the caller's gate saw (ut-docs#7140): when it is
+// not "" and the in-tx status differs → ErrSaleStatusTransition, nothing
+// written. A manager approval is bound to that status, so it cannot be spent
+// on a sale that changed since the prompt. "" skips the check.
 func UpdateSaleStatusFrom(ctx context.Context, sqlDB *sql.DB, saleID, expectedFrom, status, actorID, blockedActorID, reason string, additionalTill bool) error {
 	if saleID == "" {
 		return errors.New("saleID required")
