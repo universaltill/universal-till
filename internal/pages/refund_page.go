@@ -672,6 +672,20 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// NeedsManagerPIN (ut-docs#3134): the manager-PIN field renders only
 		// for a session whose role isn't granted "refund".
 		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
+		// ut-docs#7104 (ADR-0136 D9.8): a sale with an open refund keeps that
+		// refund's attempt id, so repeating the same refund on a reloaded screen
+		// is the same journal key (re-asked), not a "different refund" the open
+		// leg refuses. Oldest open leg wins. Fail soft: a read error mints a
+		// fresh id and the POST fails closed.
+		attemptID := uuid.NewString()
+		if open, oerr := data.NewPaymentLegJournalRepo(d.Db).OpenRefundLegs(r.Context(), detail.ID); oerr == nil {
+			for _, o := range open {
+				if id, ok := data.RefundLegAttemptID(o.RequestID, detail.ID, o.MethodID); ok {
+					attemptID = id
+					break
+				}
+			}
+		}
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
 			"theme":                d.ResolvedTheme(r),
@@ -699,7 +713,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			// guard.returnedQtyByLine into the requestID's hash, which
 			// changes the instant ANY refund against this sale commits --
 			// see that handler's own comment for the full reasoning.
-			"RefundAttemptID": uuid.NewString(),
+			// Exception (ut-docs#7104): a reload of a sale with an open refund
+			// keeps that refund's id (see attemptID above).
+			"RefundAttemptID": attemptID,
 		})(w, r)
 	})
 
@@ -987,27 +1003,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
-		// immediately before the payment.<key>.refund webhook below —
-		// mirroring completeTender's ordering (pos_api.go): after every
-		// earlier check capable of refusing the refund outright (quantity/
-		// discount/service-charge validation above), before the provider
-		// webhook. A later cannot-sign refusal (ADR-0146) leaves this start
-		// unfinished, the same accepted outcome as a provider decline.
-		// Firing any earlier (e.g. right after the ADR-0048 gate, before
-		// this request's own line/quantity/discount validation) would start
-		// a TSE-side transaction for a refund a plain input mistake was
-		// always going to refuse — review finding, ut-docs#1519. The real
-		// saleInput isn't built until after the webhook resolves (below), so
-		// this carries only what the point actually needs (sale_type,
-		// offline) plus whatever SaleID gets minted here, threaded into the
-		// real saleInput once it exists so the two dispatches share an id.
-		fiscalStartCarrier := &pos.SaleInput{
-			SaleType: "return",
-			Offline:  formFlagTruthy(r.Form.Get("offline")),
-		}
-		dispatchFiscalSignStart(r.Context(), d, fiscalStartCarrier)
-
 		// Payment-provider refund (payment-provider contract): if the refund
 		// method belongs to a payment plugin that hooks `payment.<key>.refund`,
 		// it gets a BLOCKING call BEFORE the return is recorded — the provider
@@ -1089,26 +1084,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			digest := sha256.Sum256(digestBytes)
 			requestID = fmt.Sprintf("%s:%x", refundAttemptID, digest[:8])
 		}
-		// refundDelivered (ADR-0146, ut-docs#3408): whether a
-		// payment.<key>.refund subscriber really ran, i.e. whether money has
-		// already moved electronically by the time fiscal.sign.ask answers
-		// below. Only then can a cannot-sign answer not be refused.
-		// ut-docs#6455: a tap entry's refund is bound to the original payment's
-		// own PaymentIntent and to the amount core is refunding; with several
-		// payments of the method there is no single PaymentIntent, so it is
-		// left unbound (the host function then refuses).
-		// ut-docs#6784: the dispatch itself runs detached from the client. A real
-		// WASM provider call is bound to its ctx (wasm_runtime.go WithTimeout +
-		// WithCloseOnContextDone), so a tab closed after the provider has
-		// refunded would kill the guest, return "declined" and leave money out
-		// with no record. It stays bounded by the plugin's own call timeout
-		// (wasm_runtime.go: timeout, paymentGateTimeout floor for refunds).
-		if tapRefundMainOnly(r.Context(), d, method) {
-			// ADR-0198 Amendment 2026-11-23: an additional till never sends a
-			// card-tap refund; nothing is sent, nothing was refunded.
-			common.LogAndLocalizedError(w, r, http.StatusConflict, "tap.refund.main_only", "refund", errors.New("tap refund refused on an additional till"))
-			return
-		}
 		refundCtx := context.WithoutCancel(r.Context())
 		// ut-docs#7041 (ADR-0136 Decision 9.8): a provider refund is a journaled
 		// leg under refund:<original sale>:<method>:<request id>. A refund with no
@@ -1129,6 +1104,68 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			}
 			common.LogAndLocalizedError(w, r, http.StatusConflict, key, "refund",
 				fmt.Errorf("refund %s was already sent back by the provider (journal %s): not asked again", legKey, cur.State))
+			return
+		}
+		// ut-docs#7104 (ADR-0136 D9.8): while another refund of this sale is still
+		// open (asked, captured, unknown or warned under a different key), refuse
+		// this one: the customer may already have been paid back by the open one.
+		// Same key = the same refund being repeated, handled above. Runs under
+		// refundSaleLocks.lock(detail.ID) (held to the end of this handler), and a
+		// till process is the only writer, so check and AskLeg cannot interleave
+		// for one sale. Above any method branch: cash and hookless methods are
+		// refused too (they write no journal row, so only provider legs block).
+		// Placed before the fiscal start so no TSE transaction opens for it.
+		open, oerr := legRepo.OpenRefundLegs(refundCtx, detail.ID)
+		if oerr != nil {
+			common.LogAndLocalizedError(w, r, http.StatusServiceUnavailable, "refund.error.journal_unavailable", "refund", oerr)
+			return
+		}
+		for _, o := range open {
+			if o.RequestID != legKey {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.other_refund_open", "refund",
+					fmt.Errorf("refund of sale %s refused: refund %s is still %s (ADR-0136 D9.8, ut-docs#7104)", detail.ID, o.RequestID, o.State))
+				return
+			}
+		}
+		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
+		// immediately before the payment.<key>.refund webhook below —
+		// mirroring completeTender's ordering (pos_api.go): after every
+		// earlier check capable of refusing the refund outright (quantity/
+		// discount/service-charge validation above), before the provider
+		// webhook. A later cannot-sign refusal (ADR-0146) leaves this start
+		// unfinished, the same accepted outcome as a provider decline.
+		// Firing any earlier (e.g. right after the ADR-0048 gate, before
+		// this request's own line/quantity/discount validation) would start
+		// a TSE-side transaction for a refund a plain input mistake was
+		// always going to refuse — review finding, ut-docs#1519. The real
+		// saleInput isn't built until after the webhook resolves (below), so
+		// this carries only what the point actually needs (sale_type,
+		// offline) plus whatever SaleID gets minted here, threaded into the
+		// real saleInput once it exists so the two dispatches share an id.
+		fiscalStartCarrier := &pos.SaleInput{
+			SaleType: "return",
+			Offline:  formFlagTruthy(r.Form.Get("offline")),
+		}
+		dispatchFiscalSignStart(r.Context(), d, fiscalStartCarrier)
+
+		// refundDelivered (ADR-0146, ut-docs#3408): whether a
+		// payment.<key>.refund subscriber really ran, i.e. whether money has
+		// already moved electronically by the time fiscal.sign.ask answers
+		// below. Only then can a cannot-sign answer not be refused.
+		// ut-docs#6455: a tap entry's refund is bound to the original payment's
+		// own PaymentIntent and to the amount core is refunding; with several
+		// payments of the method there is no single PaymentIntent, so it is
+		// left unbound (the host function then refuses).
+		// ut-docs#6784: the dispatch itself runs detached from the client. A real
+		// WASM provider call is bound to its ctx (wasm_runtime.go WithTimeout +
+		// WithCloseOnContextDone), so a tab closed after the provider has
+		// refunded would kill the guest, return "declined" and leave money out
+		// with no record. It stays bounded by the plugin's own call timeout
+		// (wasm_runtime.go: timeout, paymentGateTimeout floor for refunds).
+		if tapRefundMainOnly(r.Context(), d, method) {
+			// ADR-0198 Amendment 2026-11-23: an additional till never sends a
+			// card-tap refund; nothing is sent, nothing was refunded.
+			common.LogAndLocalizedError(w, r, http.StatusConflict, "tap.refund.main_only", "refund", errors.New("tap refund refused on an additional till"))
 			return
 		}
 		legEntry := legBase(legKey, method, refundTotal, detail.Currency, "")

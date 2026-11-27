@@ -94,6 +94,26 @@ func RefundLegKey(saleID, method, requestID string) string {
 	return LegRefundKeyPrefix + saleID + ":" + method + ":" + requestID
 }
 
+// RefundLegAttemptID is the refund_attempt_id inside a refund leg key built by
+// POST /api/refund: refund:<sale>:<method>:<attempt id>:<16-hex digest>. false for a
+// key minted without an attempt id (no digest) or another sale/method.
+func RefundLegAttemptID(key, saleID, method string) (string, bool) {
+	tail, ok := strings.CutPrefix(key, RefundLegKey(saleID, method, ""))
+	if !ok {
+		return "", false
+	}
+	id, dig, ok := strings.Cut(tail, ":")
+	if !ok || id == "" || strings.Contains(dig, ":") || len(dig) != 16 {
+		return "", false
+	}
+	for _, c := range dig {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	return id, true
+}
+
 // RefundLegOriginalSale is the original sale id inside a refund leg key;
 // false for any other key.
 func RefundLegOriginalSale(key string) (string, bool) {
@@ -374,6 +394,37 @@ ORDER BY j.seq LIMIT ?`, args...)
 		e, err := scanLeg(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan payment leg journal: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// OpenRefundLegs returns the refund legs of one original sale whose newest row is
+// asked, captured, unknown or warned (ADR-0136 D9.8, ut-docs#7104), oldest first.
+func (r *PaymentLegJournalRepo) OpenRefundLegs(ctx context.Context, saleID string) ([]LegEntry, error) {
+	if saleID == "" {
+		return nil, nil
+	}
+	// ';' is ':' + 1: [refund:<S>:, refund:<S>;) is exactly the keys of sale S, so
+	// refund:S1: never matches refund:S10:.
+	lo := LegRefundKeyPrefix + saleID + ":"
+	hi := LegRefundKeyPrefix + saleID + ";"
+	rows, err := r.db.QueryContext(ctx, `
+SELECT `+legCols+` FROM payment_leg_journal j
+WHERE j.request_id >= ? AND j.request_id < ?
+  AND j.state IN (?, ?, ?, ?)
+  AND NOT EXISTS (SELECT 1 FROM payment_leg_journal n WHERE n.request_id = j.request_id AND n.seq > j.seq)
+ORDER BY j.seq LIMIT ?`, lo, hi, LegAsked, LegCaptured, LegUnknown, LegWarned, legJournalScanMax)
+	if err != nil {
+		return nil, fmt.Errorf("list open refund legs: %w", err)
+	}
+	defer rows.Close()
+	var out []LegEntry
+	for rows.Next() {
+		e, err := scanLeg(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan open refund leg: %w", err)
 		}
 		out = append(out, e)
 	}
