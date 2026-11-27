@@ -25,3 +25,16 @@ without a credential), `ios/UniversalTill/{TillController,TillServer}.swift` and
 ## Findings
 
 (none yet)
+
+
+## Combined review 2026-11-27 (ut-docs#7097 batch, one Reviewer: not the Dev, not the Tester)
+
+Independent security pass by a different-model subagent (Fable) plus the Reviewer's own reading, against the binding review-adr.md conditions (B1-B6, H1-H2, M1-M9). Pre-flight: walked PREFLIGHT.md for the touched surfaces; the batch's combined Tester report (tester-report.md) is the test evidence; no real shop or person names in the added tests.
+
+Findings and outcome (engine fixes merged in):
+
+1. Tester item A, fixed. `credheal.Resume` was reached only from `mobile` (not a deadcode root). It is now also called when the operator asks for a check-in (`requestOperatorCheckin`), so it is reachable from the desktop roots without growing the baseline (`guard-deadcode-baseline.sh` passes).
+2. Verified: shells never touch the credential; `Resume` is non-blocking, buffered, and from `ok` only probes, rotating only on a coded 401 from a real check-in; a waiting till with a far wake is not woken early.
+3. Not run: Kotlin `ForegroundThrottleTest`, device matrix rows (phones); the persisted-pair-request dead end is a carded design item.
+
+Verdict: SHIP after #2760.
