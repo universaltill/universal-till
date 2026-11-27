@@ -11,7 +11,11 @@
 #   - every "Build osslsigncode (pinned commit)" step has its own
 #     timeout-minutes and a retrying, time-limited `apt-get update`;
 #   - packaging/windows/install-osslsigncode.sh bounds its git clone with
-#     `timeout` and gives `apt-get install` the same Acquire options.
+#     `timeout` and gives `apt-get install` the same Acquire options;
+#   - ut-docs#7091: release-tests' every `go test` carries `-timeout 20m`, is
+#     piped into `go run ./scripts/ci/gotestdur` under `shell: bash`, there are
+#     at least two (the `go list ./...` bulk, which includes internal/pages, and
+#     ./internal/plugins), and the job timeout-minutes >= 20 * commands + 5.
 # Readers consume their whole input (here-strings, no `grep -q` on a pipe) so
 # pipefail never turns a SIGPIPE into a false "missing" (ut-docs#2941).
 set -euo pipefail
@@ -107,6 +111,92 @@ else
 fi
 
 check_jobs
+
+# ut-docs#7091: release-tests' go test commands are each bounded and the job
+# timeout covers them back to back.
+check_release_tests() {
+  local block code segs seg n=0 listed=0 plug=0 tm
+  block="$(job_block release-tests)"
+  if [ -z "$block" ]; then
+    fail "no release-tests job in ${WF}"
+    return
+  fi
+  code="$(grep -vE '^[[:space:]]*#' <<<"$block" || true)"
+  # One segment per line or `&&`-separated command.
+  segs="$(sed 's/&&/\n/g' <<<"$code")"
+  while IFS= read -r seg; do
+    case "$seg" in
+    *"go test "*) ;;
+    *) continue ;;
+    esac
+    n=$((n + 1))
+    if grep -qE -- '-timeout[ =]20m([[:space:]]|$)' <<<"$seg"; then
+      pass "release-tests: go test has -timeout 20m"
+    else
+      fail "release-tests: go test without -timeout 20m: ${seg}"
+    fi
+    if grep -qE -- '\|[[:space:]]*go run \./scripts/ci/gotestdur' <<<"$seg"; then
+      pass "release-tests: go test is piped into gotestdur"
+    else
+      fail "release-tests: go test not piped into go run ./scripts/ci/gotestdur: ${seg}"
+    fi
+    case "$seg" in *"go list ./..."*) listed=$((listed + 1)) ;; esac
+    case "$seg" in *"./internal/plugins"*) plug=$((plug + 1)) ;; esac
+  done <<<"$segs"
+  if [ "$n" -lt 2 ] || [ "$listed" -lt 1 ] || [ "$plug" -lt 1 ]; then
+    fail "release-tests: want >= 2 go test commands (a go list ./... bulk and ./internal/plugins), found ${n} (bulk ${listed}, plugins ${plug})"
+  else
+    pass "release-tests: bulk and plugins go test commands present"
+  fi
+  if grep -qE '^        shell: bash[[:space:]]*$' <<<"$block"; then
+    pass "release-tests: step runs under shell: bash (pipefail)"
+  else
+    fail "release-tests: no shell: bash (a pipe would hide go test's exit status)"
+  fi
+  tm="$(sed -nE '0,/^    timeout-minutes: ([0-9]+).*/s//\1/p' <<<"$block")"
+  if [ -z "$tm" ]; then
+    fail "release-tests: no job-level timeout-minutes"
+  elif [ "$tm" -ge $((20 * n + 5)) ]; then
+    pass "release-tests: timeout-minutes ${tm} >= 20 * ${n} + 5"
+  else
+    fail "release-tests: timeout-minutes ${tm} < 20 * ${n} + 5 (two serial 20m commands must hit their own -timeout first)"
+  fi
+}
+
+rt_wf="$(mktemp)"
+trap 'rm -f "$selftest_wf" "$rt_wf"' EXIT
+cat >"$rt_wf" <<'YAML'
+name: synthetic
+jobs:
+  release-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Run tests before releasing
+        shell: bash
+        run: |
+          go test -timeout 20m -json $(go list ./... | grep -v x) | go run ./scripts/ci/gotestdur
+          go test -json ./internal/plugins | go run ./scripts/ci/gotestdur
+YAML
+WF="$rt_wf"
+real_fails="$fails"
+rt_out="$(check_release_tests 2>&1 || true)"
+sed -i 's/go test -json \.\/internal/go test -timeout 20m -json .\/internal/' "$rt_wf"
+rt_bound="$(check_release_tests 2>&1 || true)"
+sed -i 's/timeout-minutes: 40/timeout-minutes: 45/' "$rt_wf"
+rt_ok="$(check_release_tests 2>&1 || true)"
+fails="$real_fails"
+WF="$real_wf"
+if grep -qF 'FAIL - release-tests: go test without -timeout 20m: ' <<<"$rt_out" \
+  && grep -qF 'FAIL - release-tests: timeout-minutes 40 < 20 * 2 + 5' <<<"$rt_bound" \
+  && ! grep -qF 'FAIL' <<<"$rt_ok"; then
+  pass "self-test: release-tests without -timeout, a too-small bound and a compliant job"
+else
+  echo "$rt_out$rt_bound$rt_ok" >&2
+  fail "self-test: release-tests checker did not report the synthetic faults"
+fi
+
+check_release_tests
 
 # Build osslsigncode steps.
 steps="$(osslsigncode_steps)"

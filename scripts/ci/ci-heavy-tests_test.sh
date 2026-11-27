@@ -13,7 +13,10 @@
 #   - none of them also runs inside `build` (twice in one job is the
 #     contention ut-docs#674 found, and serial is what this card removed);
 #   - every package `build`'s plain Test step excludes still runs in some
-#     other `go test` command in ci.yml — splitting jobs must never drop one.
+#     other `go test` command in ci.yml — splitting jobs must never drop one;
+#   - ut-docs#7091: test-heavy's run is `${{ matrix.cmd }} -json | go run
+#     ./scripts/ci/gotestdur` under `shell: bash` (pipefail keeps go test's
+#     exit status), and pages-shuffle pipes its -json run the same way.
 # Readers consume their whole input (here-strings, no `grep -q` on a pipe) so
 # pipefail never turns a SIGPIPE into a false "missing" (ut-docs#2941).
 set -euo pipefail
@@ -74,6 +77,34 @@ check_heavy() {
   else
     fail "test-heavy never runs \${{ matrix.cmd }}"
   fi
+  # ut-docs#7091: durations through gotestdur; shell: bash = -eo pipefail.
+  if grep -qE '^        shell: bash[[:space:]]*$' <<<"$heavy"; then
+    pass "test-heavy step runs under shell: bash (pipefail)"
+  else
+    fail "test-heavy step lacks shell: bash (a pipe would hide go test's exit status)"
+  fi
+  # shellcheck disable=SC2016
+  if grep -qF 'run: ${{ matrix.cmd }} -json | go run ./scripts/ci/gotestdur' <<<"$heavy"; then
+    pass "test-heavy pipes -json into gotestdur"
+  else
+    fail "test-heavy does not run: \${{ matrix.cmd }} -json | go run ./scripts/ci/gotestdur"
+  fi
+  local shuffle
+  shuffle="$(job_block pages-shuffle)"
+  if [ -z "$shuffle" ]; then
+    fail "no pages-shuffle job in ${WF}"
+  else
+    if grep -qE '^        shell: bash[[:space:]]*$' <<<"$shuffle"; then
+      pass "pages-shuffle step runs under shell: bash (pipefail)"
+    else
+      fail "pages-shuffle step lacks shell: bash"
+    fi
+    if grep -qE '^        run: go test .* -json \./internal/pages \| go run \./scripts/ci/gotestdur[[:space:]]*$' <<<"$shuffle"; then
+      pass "pages-shuffle pipes -json into gotestdur"
+    else
+      fail "pages-shuffle does not pipe its -json go test into: go run ./scripts/ci/gotestdur"
+    fi
+  fi
   cmds="$(cmds_of "$heavy")"
   all="$(cmds_of "$(cat "$WF")")"
   for c in "${HEAVY[@]}"; do
@@ -129,6 +160,10 @@ jobs:
           - cmd: 'go test -timeout 20m ./internal/pages'
     steps:
       - run: ${{ matrix.cmd }}
+  pages-shuffle:
+    runs-on: ubuntu-latest
+    steps:
+      - run: go test -timeout 20m -count=1 -shuffle=22 ./internal/pages
 YAML
 real_wf="$WF"
 WF="$selftest_wf"
@@ -144,6 +179,10 @@ if grep -qF 'FAIL - test-heavy has no job-level timeout-minutes' <<<"$selftest_o
   && grep -qF 'FAIL - test-heavy has no leg running exactly: go test -race' <<<"$selftest_out" \
   && grep -qF 'FAIL - test-heavy has no leg running exactly: LANG=de_DE.UTF-8' <<<"$selftest_out" \
   && grep -qF 'FAIL - test-heavy lacks fail-fast: false' <<<"$selftest_out" \
+  && grep -qF 'FAIL - test-heavy step lacks shell: bash' <<<"$selftest_out" \
+  && grep -qF 'FAIL - test-heavy does not run' <<<"$selftest_out" \
+  && grep -qF 'FAIL - pages-shuffle step lacks shell: bash' <<<"$selftest_out" \
+  && grep -qF 'FAIL - pages-shuffle does not pipe' <<<"$selftest_out" \
   && grep -qF 'FAIL - build runs a heavy package: ./internal/plugins' <<<"$selftest_out" \
   && grep -qF 'ok   - build runs no whole-package ./internal/app' <<<"$selftest_out"; then
   pass "self-test: a needs:, a missing leg and a leg left in build are reported"

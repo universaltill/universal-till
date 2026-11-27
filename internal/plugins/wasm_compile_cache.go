@@ -93,6 +93,9 @@ func NewWasmRuntimeWithCache(baseDir, cacheDir string) *WasmRuntime {
 
 func newWasmRuntimeWithCacheFor(baseDir, cacheDir, goos string) *WasmRuntime {
 	w := NewWasmRuntime(baseDir)
+	if sharedCompileCacheForTest != nil {
+		return w // ut-docs#7091: the test binary's shared in-memory cache replaces the disk one
+	}
 	if !compileCacheSupported(goos) {
 		logging.L().Infof("wasm compile cache: off (%s runs the interpreter, which has no compiled code to cache)", goos)
 		return w
@@ -424,6 +427,9 @@ func newPluginRuntime(cache wazero.CompilationCache) wazero.Runtime {
 	cfg := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(wasmMemoryLimitPages)
+	if cache == nil {
+		cache = sharedCompileCacheForTest
+	}
 	if cache != nil {
 		cfg = cfg.WithCompilationCache(cache)
 	}
