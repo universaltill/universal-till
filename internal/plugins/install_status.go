@@ -125,6 +125,17 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 	return s.repo.DeleteForPlugin(ctx, pluginID)
 }
 
+// DeleteListing removes one listing's record only while it still names
+// pluginID (the sync re-keys a relisted plugin's record, ut-docs#7034). Unlike
+// ClearForPlugin it never touches another listing's record for the plugin.
+func (s *InstallStatusStore) DeleteListing(ctx context.Context, listingID, pluginID string) error {
+	listingID, pluginID = strings.TrimSpace(listingID), strings.TrimSpace(pluginID)
+	if s == nil || s.repo == nil || listingID == "" || pluginID == "" {
+		return nil
+	}
+	return s.repo.DeleteForListing(ctx, listingID, pluginID)
+}
+
 // MarketplaceCodeFailure maps a marketplace.APIError code (found with
 // errors.As through any "%w" wrapper) to the till's actionable, non-retryable
 // message, and the HTTP status the store download handler answers with. It is
