@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -573,6 +574,31 @@ func refundCharges(detail data.SaleDetail, guard refundGuardState, num, den int6
 	return out
 }
 
+// refundLegView / refundLegGroup feed the refund screen's payment picker
+// (ut-docs#6648). Card is the stored masked PAN (scheme + last4, ADR-0127).
+type refundLegView struct {
+	ID        string
+	Amount    money.Money
+	Remaining money.Money
+	Time      string
+	Card      string
+}
+
+type refundLegGroup struct {
+	Method string
+	Legs   []refundLegView
+}
+
+// refundLegTime renders a stored paid_at as local HH:MM, "" if unparsable.
+func refundLegTime(paidAt string) string {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, paidAt); err == nil {
+			return t.Local().Format("15:04")
+		}
+	}
+	return ""
+}
+
 // registerRefund mounts the refund screen + API (docs: refunds.md, G27/G28).
 // The refund gate reads d.AuthSvc via checkOrElevate (ut-docs#3134).
 func registerRefund(mux *http.ServeMux, d *common.Deps) {
@@ -608,10 +634,27 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		methods := []string{"cash"}
+		var legGroups []refundLegGroup
 		for _, p := range detail.Payments {
-			if p.Method != "cash" {
-				methods = append(methods, p.Method)
+			if p.Method == "cash" || slices.Contains(methods, p.Method) {
+				continue
 			}
+			methods = append(methods, p.Method)
+			// ut-docs#6648: a method paid in two or more traced legs asks which
+			// one the refund goes back to. Read-only and fail-soft: no picker
+			// on a read error, the POST still fails closed.
+			legs, lerr := refundLegsFor(r.Context(), repo, detail, p.Method)
+			if lerr != nil || len(legs) < 2 {
+				continue
+			}
+			g := refundLegGroup{Method: p.Method}
+			for _, l := range legs {
+				g.Legs = append(g.Legs, refundLegView{
+					ID: l.PaymentID, Amount: money.FromMinor(l.Amount), Remaining: money.FromMinor(l.Remaining),
+					Time: refundLegTime(l.PaidAt), Card: l.MaskedPAN,
+				})
+			}
+			legGroups = append(legGroups, g)
 		}
 		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#1001, fiscal.RequiresHardGate): the refund path is
 		// gated the same way the sale path is (enforceFiscalGate in the POST
@@ -636,6 +679,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"Sale":                 detail,
 			"Lines":                refundableLines(detail, returned, returnedByLine),
 			"Methods":              methods,
+			"LegGroups":            legGroups,
 			"AuthOff":              authOff,
 			"NeedsManagerPIN":      needsManagerPIN,
 			"fiscalOverrideActive": fiscalOverrideActive,
@@ -873,6 +917,76 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// was already resolved above, before the service-charge proration.)
 		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), charges, inclusive)
 
+		// ut-docs#6438: hand the plugin the original sale's own provider
+		// reference(s) for this method, in payment order, so the refund never
+		// depends on per-sale plugin storage. ut-docs#6603/#6649: with several
+		// legs, say how much goes back to each, capped at what each has LEFT.
+		// ut-docs#6648: the cashier may pick ONE leg (refund_leg=<payment id>)
+		// or "all" (payment order); absent = payment order. A chosen leg that
+		// has less left is refused, never spilled onto another (ADR-0196 D4:
+		// never guess). Both refusals sit before fiscal.sign.start: they are
+		// checks that can refuse the refund outright. Fail closed on read errors.
+		legs, lerr := refundLegsFor(r.Context(), repo, detail, method)
+		if lerr != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", lerr)
+			return
+		}
+		var originalPayments []map[string]any
+		var legRefunds []data.RefundLegRefund
+		if len(legs) < 2 {
+			// 0 or 1 legs: no choice to make, refund_leg is ignored.
+			for _, l := range legs {
+				originalPayments = append(originalPayments, refundLegEntry(l))
+			}
+		} else {
+			caps := make([]int64, len(legs))
+			for i, l := range legs {
+				caps[i] = l.Remaining
+			}
+			var alloc []int64
+			choice := strings.TrimSpace(r.Form.Get("refund_leg"))
+			if choice == "" || choice == "all" {
+				alloc = allocateRefundAcrossLegs(refundTotal.Minor(), caps)
+				var allocated int64
+				for _, a := range alloc {
+					allocated += a
+				}
+				if allocated < refundTotal.Minor() {
+					common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.method_exhausted", "refund",
+						fmt.Errorf("refund %d exceeds what is left on the %q payments (%d)", refundTotal.Minor(), method, allocated))
+					return
+				}
+			} else {
+				idx := -1
+				for i, l := range legs {
+					if l.PaymentID == choice {
+						idx = i
+						break
+					}
+				}
+				if idx < 0 {
+					common.LogAndLocalizedError(w, r, http.StatusBadRequest, "refund.error.leg_unknown", "refund",
+						fmt.Errorf("refund_leg is not a %q payment of sale %s", method, detail.ID))
+					return
+				}
+				var fits bool
+				alloc, fits = allocateRefundToLeg(refundTotal.Minor(), caps, idx)
+				if !fits {
+					common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.leg_exhausted", "refund",
+						fmt.Errorf("refund %d exceeds what is left on payment %s (%d)", refundTotal.Minor(), legs[idx].PaymentID, caps[idx]))
+					return
+				}
+			}
+			for i, l := range legs {
+				if alloc[i] > 0 {
+					e := refundLegEntry(l)
+					e["refund_amount"] = alloc[i]
+					originalPayments = append(originalPayments, e)
+					legRefunds = append(legRefunds, data.RefundLegRefund{OriginalPaymentID: l.PaymentID, Amount: alloc[i]})
+				}
+			}
+		}
+
 		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
 		// immediately before the payment.<key>.refund webhook below —
 		// mirroring completeTender's ordering (pos_api.go): after every
@@ -950,83 +1064,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
 		}
-		// ut-docs#6438: hand the plugin the original sale's own provider
-		// reference(s) for this method, in payment order, so the refund never
-		// depends on per-sale plugin storage.
-		var originalPayments []map[string]any
-		for _, op := range detail.Payments {
-			if op.Method == method && op.TraceID != "" {
-				entry := map[string]any{
-					"transaction_ref": op.TraceID,
-					"amount":          op.Amount,
-					"tip_amount":      op.TipAmount,
-				}
-				// ut-docs#6566: the reader this leg was paid on, straight from
-				// the payment row (no registry lookup): a reader removed or
-				// offline since never blocks a refund, which goes by
-				// transaction_ref. Context for the provider, additive.
-				if op.TerminalID != "" {
-					entry["reader_id"] = op.TerminalID
-				}
-				originalPayments = append(originalPayments, entry)
-			}
-		}
-		// ut-docs#6603: with several legs of this method, say how much goes back
-		// to each, in payment order, so the plugin never has to guess which
-		// charge to refund. ut-docs#6649: each leg's cap is what it has LEFT
-		// after earlier refunds (recorded per leg; a refund made before those
-		// records existed is netted in payment order). Fail closed: if the
-		// earlier refunds cannot be read, nothing is refunded.
-		var legRefunds []data.RefundLegRefund
-		if len(originalPayments) > 1 {
-			legPaymentIDs := make([]string, 0, len(originalPayments))
-			for _, op := range detail.Payments {
-				if op.Method == method && op.TraceID != "" {
-					legPaymentIDs = append(legPaymentIDs, op.ID)
-				}
-			}
-			recordedByLeg, lerr := repo.RefundedByLeg(r.Context(), detail.ID)
-			methodRefunded, merr := repo.RefundedByMethod(r.Context(), detail.ID, method)
-			if lerr != nil || merr != nil {
-				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", errors.Join(lerr, merr))
-				return
-			}
-			amounts := make([]int64, len(originalPayments))
-			recorded := make([]int64, len(originalPayments))
-			var recordedSum int64
-			for i, op := range originalPayments {
-				amounts[i], _ = op["amount"].(int64)
-				recorded[i] = recordedByLeg[legPaymentIDs[i]]
-				recordedSum += recorded[i]
-			}
-			unrecorded := methodRefunded - recordedSum
-			if unrecorded < 0 {
-				unrecorded = 0
-			}
-			caps := netRefundLegCaps(amounts, recorded, unrecorded)
-			alloc := allocateRefundAcrossLegs(refundTotal.Minor(), caps)
-			// Fail closed: legs that have less left than this refund must send
-			// back would otherwise drop the per-leg list and let the plugin
-			// guess a charge (review finding).
-			var allocated int64
-			for _, a := range alloc {
-				allocated += a
-			}
-			if allocated < refundTotal.Minor() {
-				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.method_exhausted", "refund",
-					fmt.Errorf("refund %d exceeds what is left on the %q payments (%d)", refundTotal.Minor(), method, allocated))
-				return
-			}
-			kept := originalPayments[:0:0]
-			for i, op := range originalPayments {
-				if alloc[i] > 0 {
-					op["refund_amount"] = alloc[i]
-					kept = append(kept, op)
-					legRefunds = append(legRefunds, data.RefundLegRefund{OriginalPaymentID: legPaymentIDs[i], Amount: alloc[i]})
-				}
-			}
-			originalPayments = kept
-		}
+		// ut-docs#6438 / #6603 / #6648: original_payments, built before the
+		// fiscal start above (originalPayments, legRefunds).
 		if len(originalPayments) > 0 {
 			refundPayload["original_payments"] = originalPayments
 		}
@@ -1546,6 +1585,82 @@ func refundServiceCharges(amount int64, taxBasisBP int) []pos.ChargeInput {
 		TaxBasisBP: taxBasisBP,
 		Base:       pos.ChargeBaseNetLines,
 	}}
+}
+
+// refundLeg is one payment of the original sale that a refund of `method` can
+// go back to: same method, has a provider reference (ut-docs#6648).
+type refundLeg struct {
+	PaymentID  string
+	TraceID    string
+	TerminalID string
+	MaskedPAN  string
+	PaidAt     string // as stored
+	Amount     int64  // minor units (DB boundary; netRefundLegCaps works in int64)
+	TipAmount  int64
+	Remaining  int64
+}
+
+// refundLegsFor returns the sale's legs of method in payment order with what
+// each has left. GET and POST both use it so the screen never offers what the
+// POST refuses (ut-docs#6648). With <2 legs it does no reads and
+// Remaining = Amount (the single-leg path is unchanged).
+func refundLegsFor(ctx context.Context, repo *data.POSRepo, detail data.SaleDetail, method string) ([]refundLeg, error) {
+	var legs []refundLeg
+	for _, op := range detail.Payments {
+		if op.Method == method && op.TraceID != "" {
+			legs = append(legs, refundLeg{
+				PaymentID: op.ID, TraceID: op.TraceID, TerminalID: op.TerminalID,
+				MaskedPAN: op.MaskedPAN, PaidAt: op.PaidAt,
+				Amount: op.Amount, TipAmount: op.TipAmount, Remaining: op.Amount,
+			})
+		}
+	}
+	if len(legs) < 2 {
+		return legs, nil
+	}
+	recordedByLeg, lerr := repo.RefundedByLeg(ctx, detail.ID)
+	methodRefunded, merr := repo.RefundedByMethod(ctx, detail.ID, method)
+	if lerr != nil || merr != nil {
+		return nil, errors.Join(lerr, merr)
+	}
+	amounts := make([]int64, len(legs))
+	recorded := make([]int64, len(legs))
+	var recordedSum int64
+	for i, l := range legs {
+		amounts[i] = l.Amount
+		recorded[i] = recordedByLeg[l.PaymentID]
+		recordedSum += recorded[i]
+	}
+	unrecorded := methodRefunded - recordedSum
+	if unrecorded < 0 {
+		unrecorded = 0
+	}
+	for i, c := range netRefundLegCaps(amounts, recorded, unrecorded) {
+		legs[i].Remaining = c
+	}
+	return legs, nil
+}
+
+// refundLegEntry is the original_payments map the plugin gets for one leg.
+func refundLegEntry(l refundLeg) map[string]any {
+	entry := map[string]any{
+		"transaction_ref": l.TraceID,
+		"amount":          l.Amount,
+		"tip_amount":      l.TipAmount,
+	}
+	// ut-docs#6566: the reader this leg was paid on, straight from the payment
+	// row: a reader removed or offline since never blocks a refund.
+	if l.TerminalID != "" {
+		entry["reader_id"] = l.TerminalID
+	}
+	return entry
+}
+
+// allocateRefundToLeg puts the whole refund on leg i, or reports it does not fit.
+func allocateRefundToLeg(total int64, caps []int64, i int) ([]int64, bool) {
+	out := make([]int64, len(caps))
+	out[i] = total
+	return out, total <= caps[i]
 }
 
 // allocateRefundAcrossLegs splits a refund total over the original legs in

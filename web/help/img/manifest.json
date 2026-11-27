@@ -189,7 +189,7 @@
       "tr": "f843876b5ca0c604d8172354629f0929f808a56304a1f9d86d24a7e5fad1c301"
     },
     "sell": {
-      "en": "8e4999717a927e88b275161c8a14738d4b400a0fdd8a7a42980b86706d7b95bb",
+      "en": "1c680945613c270f3d0309d4bb7bc738f1d9bf55101a5fd1c9b2546606fcf47c",
       "fa": "53dd70986b76939362353a23341e030225abe6adb52c857f7c34f728b395133e",
       "ar": "1fa5c2aefdb11a47a2c530d9ebaebc48b8ed17ac8ab295b482bea1b149e8b0ee",
       "tr": "b12548cb86a39eb7b2e8cc05d0c1949a3600edb91918f8beb7f3bcc5361e491e"
@@ -826,7 +826,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "554520bfb6ffcc8d01fe4625586dafdaa56611c4cfd65868564f52c32c7e88be"
+      "sha256": "be12bc352bb6f6316620096a7be85c4beef7562fcd613c6065c4a376116e252c"
     },
     "web/public/app.js": {
       "sha256": "aa34895662d3549e0b48bcca5f93be7e51bc3793c22eb04fce09581e9bea822d"
@@ -1759,7 +1759,7 @@
       "sha256": "eda361ae30692f72f533ea55707f21687743a720145f6788af4dffbef37d0ec1"
     },
     "web/ui/pages/refund.html": {
-      "sha256": "5f5d9ac4deb5a238da8f3270080cd7aa31ce7b68860f1a5ffffddc7192b98a99"
+      "sha256": "c7af93b8a156b49b0b8340a1e55fb1db44d47fb5199d6b674890fdb2a62661e9"
     },
     "web/ui/pages/registers.html": {
       "sha256": "57ba007550749685bbd367f1b44ff9fb790bfe59dd9a1dfbd705ff6bba5dcb8a"

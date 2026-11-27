@@ -8607,3 +8607,21 @@ input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
 .tills-page .help-hint { position: relative; }
 .tills-page .help-hint::after { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 44px; block-size: 44px; transform: translate(-50%, -50%); } /* rtl:allow centred by a symmetric translate */
 .tills-panel a[href="/registers"] { display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: .5rem; }
+
+/* Refund screen: pick which payment of a split bill to refund (ut-docs#6648). */
+.refund-legs { border: 1px solid var(--control-border); border-radius: 6px; margin: .6rem 0 0;
+               padding-block: .35rem; padding-inline: .6rem; display: flex; flex-direction: column; gap: .3rem; }
+.refund-legs[hidden] { display: none; }
+.refund-legs legend { font-weight: 600; padding-inline: .2rem; }
+.refund-leg { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .6rem; margin: 0;
+              min-block-size: 48px; padding-inline: .4rem; border-radius: 6px; cursor: pointer; }
+.refund-leg input[type="radio"] { flex: 0 0 auto; inline-size: 1.4rem; block-size: 1.4rem; margin: 0; accent-color: var(--accent); }
+.refund-leg > span { overflow-wrap: anywhere; min-inline-size: 0; }
+/* Keep the radio and its text on one row at 360px; only the "left" note wraps. */
+.refund-leg > span:not(.muted) { flex: 1 1 10rem; }
+.refund-leg .muted { margin-inline-start: auto; }
+.refund-leg:has(input:checked) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.refund-leg:has(input:focus-visible) { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+.refund-leg:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+/* The sticky status bar must not cover a refusal scrolled into view (1024x600, 360). */
+#refund-msg { scroll-margin-block: 5rem; }
