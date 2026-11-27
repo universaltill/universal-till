@@ -3,10 +3,10 @@
   "device_id": "till-golden-1",
   "expires_at": "2026-11-26T22:05:00Z",
   "kid": "56475aa75463474c",
-  "message": "universaltill/till-recover/v1\n11111111-2222-4333-8444-555555555555\ntill-golden-1\n6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n2026-11-26T22:05:00Z\nA6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
-  "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "message": "universaltill/till-recover/v1\nstore-golden-1\ntill-golden-1\n6f1c2b9e-3d4a-4e5f-8a7b-0c1d2e3f4a5b\nq83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq8A\n2026-11-26T22:05:00Z\nA6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "nonce": "q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq8A",
   "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
   "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-  "signature": "h4OTdiZdMO9zuKPG2pyoge3oeOdRN528k7ClTYcj0SlhNfEXZjlpFMx8Nyk0VejAO7tOogpqw0jMJsHekeo9Dg",
-  "store_id": "11111111-2222-4333-8444-555555555555"
+  "signature": "komeALN60duT5QCZoxg2RfDBzbcIvtUdO65sE8i27enkS9BRWGmizZ15xWO5Pm3G9lO5dibVMHi3TDEW5tr8AQ",
+  "store_id": "store-golden-1"
 }

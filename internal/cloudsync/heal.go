@@ -101,12 +101,6 @@ var refusalLog struct {
 	last map[string]string
 }
 
-func resetRefusalLog() {
-	refusalLog.Lock()
-	refusalLog.last = nil
-	refusalLog.Unlock()
-}
-
 // noteRefusal logs a refused till call (path, status, code, reason: never the
 // token) once per change of that tuple for the path, so a refusal on every
 // tick is one line, and a changed answer is a new one.

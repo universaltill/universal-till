@@ -194,7 +194,7 @@ func refusalOutcome(status int, h replyHeaders, ans recoverAnswer) RecoverOutcom
 	case "recover_limit":
 		out.Until = waitUntil(parseWhen(d.RetryAfter), h)
 	case "device_revoked":
-		out.Detail = clampText(strings.TrimSpace(d.ReplacedBy+d.MovedTo), 80)
+		out.Detail = clampText(strings.TrimSpace(d.ReplacedBy), 80) // moved_to is a store id, never shown
 	}
 	return out
 }
@@ -260,6 +260,16 @@ func recoverOnce(ctx context.Context, cfg *config.Config, kv Settings, m config.
 		// again (review M8).
 		log.Debugf("recover: cloud not reached: %v", err)
 		return RecoverOutcome{Code: "transport", Transient: true, Until: time.Now().Add(lostAnswerFloor)}, true
+	}
+	if status >= 500 {
+		// A proxy's 502/504 can hide a commit that already rotated the token:
+		// same 30 s floor as a lost answer (review 2026-11-27, finding 13).
+		out := refusalOutcome(status, hd, ans)
+		out.Transient = true
+		if floor := time.Now().Add(lostAnswerFloor); out.Until.Before(floor) {
+			out.Until = floor
+		}
+		return out, true
 	}
 	if status != http.StatusOK {
 		return refusalOutcome(status, hd, ans), false

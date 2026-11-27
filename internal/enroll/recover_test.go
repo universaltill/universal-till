@@ -226,7 +226,7 @@ func TestRecover_EveryRefusalClassLeavesTheIdentityUntouched(t *testing.T) {
 		{name: "removed", status: 409, body: `{"error":{"code":"device_revoked"},"data":{"reason":"removed"}}`, wantCode: "device_revoked", wantReason: "removed"},
 		{name: "store deleted", status: 409, body: `{"error":{"code":"device_revoked"},"data":{"reason":"store_deleted"}}`, wantCode: "device_revoked", wantReason: "store_deleted"},
 		{name: "rate limited", status: 429, body: `{}`, retryAfter: "120", wantCode: "rate_limited", transient: true, wantUntil: true},
-		{name: "server error", status: 503, body: `{"error":{"code":"auth_unavailable"}}`, wantCode: "auth_unavailable", transient: true},
+		{name: "server error", status: 503, body: `{"error":{"code":"auth_unavailable"}}`, wantCode: "auth_unavailable", transient: true, wantUntil: true}, // a 5xx on /recover may hide a commit: 30 s floor
 		{name: "old cloud", chal: 404, wantCode: "feature_absent"},
 		{name: "garbage 200", status: 200, body: `not json`, wantCode: "bad_answer"},
 		{name: "short token", status: 200, body: `{"data":{"store_id":"` + recStore + `","device_id":"` + rotOwnDevice + `","device_token":"short"}}`, wantCode: "bad_answer"},
