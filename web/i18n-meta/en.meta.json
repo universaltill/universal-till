@@ -1852,5 +1852,19 @@
   "settings.template.offer.tidy_for_type": {"description": "Button on the Shop type card of a shop that has not yet applied its template; {type} is the localized shop type label.", "review": "standard", "max_length": 40},
   "settings.template.offer.error": {"description": "Inline error under the offer card when hiding it failed.", "review": "standard"},
   "settings.template.preview.title_apply": {"description": "Heading of the shop type review for a shop that already has a type but was never tidied: {to} is the shop type label.", "review": "standard"},
-  "settings.template.preview.group_shown_settings": {"description": "Heading of the list of settings cards that will leave More settings and show in their own section after a shop type change.", "review": "standard"}
+  "settings.template.preview.group_shown_settings": {"description": "Heading of the list of settings cards that will leave More settings and show in their own section after a shop type change.", "review": "standard"},
+  "settings.payments.tips_enabled": {"description": "Settings, Payments card: label of the checkbox that turns the tip row at checkout on or off.", "review": "standard"},
+  "settings.payments.tips_help": {"description": "Settings, Payments card: short explanation above the tip checkbox. Says what the tip row does and which shops have it on by default.", "review": "standard"},
+  "settings.payments.tip_presets": {"description": "Settings, Payments card: label of the text field holding the tip percentages offered at checkout.", "review": "standard", "max_length": 40},
+  "settings.payments.tip_presets_help": {"description": "Settings, Payments card: hint under the tip percentages field. The example 10,15,20 and 12.5 are literal, keep the digits and commas.", "review": "standard"},
+  "settings.payments.tip_presets_invalid": {"description": "Settings, Payments card: error when the tip percentages field has no usable percentage. The example is literal.", "review": "standard"},
+  "elevation.summary.payments_tips": {"description": "Manager PIN prompt summary: what approving does, it changes the tip settings used at checkout.", "review": "standard"},
+  "tender.tip.label": {"description": "Payment panel: heading of the tip row above the payment method buttons.", "review": "standard", "max_length": 20},
+  "tender.tip.none": {"description": "Payment panel, tip row: button for no tip. It is the pre-selected choice. Short, it sits on a touch button.", "review": "standard", "max_length": 20},
+  "tender.tip.custom": {"description": "Payment panel, tip row: button that opens a field to type a tip amount instead of a percentage.", "review": "standard", "max_length": 24},
+  "tender.tip.amount_label": {"description": "Label of a money field where the cashier types the tip amount, in the payment panel and on the Split tab.", "review": "standard", "max_length": 30},
+  "tender.tip.total_with_tip": {"description": "Payment panel, tip row: the bill plus the chosen tip, shown before the cashier taps a payment method.", "review": "standard", "placeholders": ["bill total plus tip, formatted as money"]},
+  "tender.tip.too_large": {"description": "Payment panel, tip row: shown when the typed tip is more than the whole bill. Nothing is charged until it is corrected.", "review": "standard"},
+  "tender.tip.pill": {"description": "Split tab: note on a pending payment line showing the part of it that is a tip.", "review": "standard", "placeholders": ["tip amount, formatted as money"], "max_length": 30},
+  "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"}
 }

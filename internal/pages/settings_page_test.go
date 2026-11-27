@@ -2559,6 +2559,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	cases := []matrixCase{
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
+		{"payments-tips", http.MethodPost, "/api/settings/payments-tips", url.Values{"enabled": {"on"}, "presets": {"10,15,20"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
 		{"registration-stop", http.MethodPost, "/api/settings/registration-stop", url.Values{"stop": {"1"}}, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}}, gateElevation},

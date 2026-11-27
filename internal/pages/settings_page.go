@@ -595,6 +595,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
 		payMethods = withoutExternalCardMethod(payMethods) // ut-docs#6755: no grid button, so no default/fee rule
 		payDefault, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
+		tipPresetsValue := pos.FormatTipPresets(common.TipPresetBPs(r.Context(), d.Settings))
 		type feeRow struct {
 			ID, Name   string
 			PercentMaj string
@@ -984,6 +985,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"restartSupported":      backupRestartSupported(),
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,
+			"tipsEnabled":           common.TipsEnabled(r.Context(), d.Settings),
+			"tipPresetsValue":       tipPresetsValue,
 			"payFees":               feeRows,
 			"tapSettingsAvailable":  tapSettingsAvailable(), // ut-docs#6458: link only with a native bridge
 			"exportEntries":         exportEntries,
@@ -1136,6 +1139,48 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsAudit(r, posRepo, elev, "settings", "payments.default_method", "payments_default_changed",
 			map[string]any{"method": method})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
+	// Cashier tip entry at checkout: the on/off switch and the preset
+	// percentages. An unchecked box is an explicit "0" (not unset), because
+	// unset means "on for a service shop". Same elevation + audit shape as
+	// payments-default.
+	mux.HandleFunc("POST /api/settings/payments-tips", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		enabled := "0"
+		if v := strings.ToLower(strings.TrimSpace(r.Form.Get("enabled"))); v == "on" || v == "1" || v == "true" {
+			enabled = "1"
+		}
+		rawPresets := strings.TrimSpace(r.Form.Get("presets"))
+		presets := ""
+		if rawPresets != "" {
+			bps := pos.ParseTipPresetList(rawPresets)
+			if len(bps) == 0 {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, "settings.payments.tip_presets_invalid")))
+				return
+			}
+			presets = pos.FormatTipPresets(bps)
+		} else {
+			presets = pos.TipPresetsDefault
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/payments-tips", "#pay-tips-msg",
+				httpx.T(locale, "elevation.summary.payments_tips"),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}, {Name: "presets", Value: rawPresets}}, elev)
+			return
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyTipsEnabled: enabled, common.KeyTipPresets: presets}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyTipsEnabled, "payments_tips_changed",
+			map[string]any{"enabled": enabled, "presets": presets})
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 

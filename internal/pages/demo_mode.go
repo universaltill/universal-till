@@ -858,6 +858,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/order-type-prompt":              true,
 	"POST /api/settings/osk":                            true,
 	"POST /api/settings/payments-default":               true,
+	"POST /api/settings/payments-tips":                  true,
 	"POST /api/settings/payments-fee":                   true,
 	"POST /api/settings/remove-demo-catalogue":          true,
 	"POST /api/settings/save":                           true,
