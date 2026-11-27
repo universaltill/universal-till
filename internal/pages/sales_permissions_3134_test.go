@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -122,12 +123,23 @@ func TestRefund3134_CashierWithoutGrantNoPINRefused(t *testing.T) {
 
 func TestRefund3134_CashierWithManagerPINElevatesAndRecordsBoth(t *testing.T) {
 	t.Setenv("UT_AUTH", "")
+	elevationApprovals.reset()
+	t.Cleanup(elevationApprovals.reset)
 	mux, dp, _ := newRefundTestDeps(t)
 	seed3134Users(t, dp.Db)
 	_, receipt := seedCompletedSaleForRefund(t, dp)
 
-	rec := postRefund3134(t, mux, receipt, cashier3134, perm3134MgrPIN)
-	if rec.Code != http.StatusOK {
+	// ut-docs#7134: the PIN only counts with the prompt's bound approval.
+	u := cashier3134
+	form := url.Values{"receipt": {receipt}, "qty_0": {"2"}}
+	prompt := postFormHtmx(mux, "/api/refund", form, &u)
+	if !isElevationPrompt(prompt) {
+		t.Fatalf("want the elevation prompt, got %d %q", prompt.Code, prompt.Body.String())
+	}
+	retry := promptHiddenFields(t, prompt.Body.String())
+	retry.Set("override_pin", perm3134MgrPIN)
+	rec := postFormHtmx(mux, "/api/refund", retry, &u)
+	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("want 200 with a manager PIN, got %d %q", rec.Code, rec.Body.String())
 	}
 	rows := audit3134(t, dp.Db, refundAuditWhere3134)
@@ -196,14 +208,15 @@ func getRefundPage3134(t *testing.T, mux *http.ServeMux, receipt string, u auth.
 	return rec.Body.String()
 }
 
-func TestRefundPage3134_PINFieldOnlyWhenSessionCannotRefund(t *testing.T) {
+func TestRefundPage3134_NoPINFieldForAnySession(t *testing.T) {
 	t.Setenv("UT_AUTH", "")
 	mux, dp, _ := newRefundTestDeps(t)
 	seed3134Users(t, dp.Db)
 	_, receipt := seedCompletedSaleForRefund(t, dp)
 
-	if body := getRefundPage3134(t, mux, receipt, cashier3134); !strings.Contains(body, pinInput3134) {
-		t.Fatal("a cashier (no refund grant) must see the manager-PIN field")
+	// ut-docs#7134: the PIN is asked in the elevation prompt, never inline.
+	if body := getRefundPage3134(t, mux, receipt, cashier3134); strings.Contains(body, pinInput3134) {
+		t.Fatal("a cashier (no refund grant) must not be shown an inline manager-PIN field")
 	}
 	if body := getRefundPage3134(t, mux, receipt, manager3134); strings.Contains(body, pinInput3134) {
 		t.Fatal("a manager (refund granted) must not be shown a manager-PIN field")

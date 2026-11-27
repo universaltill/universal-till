@@ -586,7 +586,7 @@ func TestOffsite_CardCredentialRefusalSaysWhatToDo(t *testing.T) {
 	_ = d.Settings.Set(ctx, data.OffsiteFailingSinceKey, time.Now().UTC().Format(time.RFC3339))
 	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "true")
 	b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
-	if !strings.Contains(b, `data-state="refused"`) || !strings.Contains(b, "no longer accepts this till") ||
+	if !strings.Contains(b, `data-state="refused"`) || !strings.Contains(b, "not connected to your shop") ||
 		!strings.Contains(b, `data-testid="backup-cloud-reason-link"`) || !strings.Contains(b, `href="/settings#registration"`) ||
 		!strings.Contains(b, `class="set-row set-below"><a class="btn secondary"`) {
 		t.Fatalf("owned store card: %s", b)
@@ -595,7 +595,7 @@ func TestOffsite_CardCredentialRefusalSaysWhatToDo(t *testing.T) {
 		t.Fatalf("falls back to the restore line: %s", b)
 	}
 	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "false")
-	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); !strings.Contains(b, "Reconnect the till") {
+	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); !strings.Contains(b, "Reconnect it in Settings") {
 		t.Fatalf("anonymous store card: %s", b)
 	}
 	// A replaced till has no card.

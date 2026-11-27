@@ -750,17 +750,30 @@ func TestFinalDeviceRevokedReasonDeletesTheKeyFile(t *testing.T) {
 	}
 }
 
-// The real cloud answers a plain removal with no reason (ut-docs#6612).
-func TestReasonlessDeviceRevokedDeletesTheKeyFile(t *testing.T) {
-	e := newTill(t)
-	e.snapshot()
-	e.round(false)
-	e.cloud.revokedNoReason = true
-	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
-	e.round(true)
-	if _, _, err := e.up.Keys.Load("st_1"); err == nil {
-		t.Fatal("the key file survived a reason-less device_revoked")
+// ADR-0222 T3: a device_revoked with no reason says nothing about WHY, and
+// since ADR-0222 an older cloud's silence and a healable tombstone look alike:
+// the key file is NOT deleted (the till may heal and keep its shop key).
+func TestReasonlessDeviceRevokedKeepsTheKeyFile(t *testing.T) {
+	for _, reason := range []string{"", "store_deleted", "pair_abandoned"} {
+		t.Run("reason="+reason, func(t *testing.T) {
+			e := newTill(t)
+			e.snapshot()
+			e.round(false)
+			if reason == "" {
+				e.cloud.revokedNoReason = true
+			} else {
+				e.cloud.revokedReason = reason
+			}
+			e.now = e.now.Add(25 * time.Hour)
+			e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
+			e.round(true)
+			if _, _, err := e.up.Keys.Load("st_1"); err != nil {
+				t.Fatalf("the key file was deleted on an unexplained device_revoked (%q): %v", reason, err)
+			}
+			if got := e.get(data.OffsiteRefusedReasonKey); got != ReasonTillRemoved {
+				t.Fatalf("the refusal must still be recorded: refused_reason = %q", got)
+			}
+		})
 	}
 }
 

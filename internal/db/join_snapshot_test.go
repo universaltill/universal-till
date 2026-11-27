@@ -114,6 +114,37 @@ func TestRedactedJoinSnapshot_NullsBearerHashOnCopyOnly(t *testing.T) {
 	}
 }
 
+// ut-docs#7097 review: the joining replica never learns the other tills'
+// device ids (they are the input of a rename-takes-the-row attack).
+func TestRedactedJoinSnapshot_NullsTillDeviceIDs(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT INTO tills (id, name, bearer_hash, device_id) VALUES ('till-1', 'Till 1', 'h', 'till-aaaa')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	sd, err := sql.Open("sqlite", "file:"+escapeSQLiteURIPath(copyPath)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sd.Close()
+	var n int
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM tills WHERE device_id IS NOT NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d tills in the join snapshot still carry a device_id", n)
+	}
+	var live string
+	if err := d.QueryRow(`SELECT device_id FROM tills WHERE id = 'till-1'`).Scan(&live); err != nil || live != "till-aaaa" {
+		t.Fatalf("the live row lost its device id: %q %v", live, err)
+	}
+}
+
 // ut-docs#426 (review finding): SQL-level NULL is not enough. SQLite doesn't
 // zero the bytes a shrunk record frees, so a plain `UPDATE ... SET
 // bearer_hash = NULL` leaves the real hash strings physically present in the
