@@ -2147,9 +2147,13 @@ func TestSyncEnroll_RenameKeepsTheRowForTheSameDevice(t *testing.T) {
 		t.Fatalf("an unapproved enrol took the quiet row: %+v", row)
 	}
 	// The manager-approved request of THAT device does.
-	if list, _ := repo.ListTills(t.Context()); len(list) == 2 {
-		if err := repo.DeleteTill(t.Context(), list[1].ID); err != nil && list[1].ID != first.ID {
-			t.Fatal(err)
+	// Remove the extra row of the unapproved enrol by id, never by list
+	// position (the list order of two same-second rows is not defined).
+	for _, row := range func() []data.TillRow { l, _ := repo.ListTills(t.Context()); return l }() {
+		if row.ID != first.ID {
+			if err := repo.DeleteTill(t.Context(), row.ID); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if rec := enrolApprovedForDevice(t, mux, dp, "Phone renamed", dev); rec.Code != http.StatusOK {
