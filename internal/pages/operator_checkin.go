@@ -5,6 +5,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -36,6 +37,11 @@ var openOperatorWindow = cloudsync.OpenOperatorWindow
 // one pending kick, and a nil channel (no loop) or nil deps is a no-op.
 func requestOperatorCheckin(d *common.Deps, window time.Duration) {
 	openOperatorWindow(window)
+	// An operator asking for a check-in is also a reason to look at a dead
+	// credential now: the engine probes first and heals only if the cloud
+	// refuses it (ADR-0222; also the desktop caller of credheal.Resume, which
+	// the phone shells call through mobile.Resume).
+	credheal.Resume()
 	if d == nil || d.CloudSyncNow == nil {
 		return
 	}

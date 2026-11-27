@@ -172,6 +172,8 @@ targets:
     sources:
       - path: UniversalTillTests
       - path: UniversalTill/TapToPay/Core
+      # Foreground credential-check throttle (ut-docs#7097 T8): pure Swift.
+      - path: UniversalTill/Lifecycle
       # Reader mode (ut-docs#6538): pure Swift, no Stripe, no Mobile.
       - path: UniversalTill/Reader/Core
       # The reader frame goldens the Go and Kotlin tests share (Go owns them;

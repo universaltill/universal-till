@@ -355,3 +355,25 @@ func TestCatalogPullAndStockUploadReportA401(t *testing.T) {
 		waitFor(t, "the stock 401 to be probed", func() bool { return r.probes.Load() == 1 })
 	})
 }
+
+// A till holding no credential (not registered yet, or a restored phone) sends
+// nothing on a resume probe: no request at all, and the result says nothing.
+func TestProbeCredentialWithoutACredentialSendsNothing(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	for _, drop := range []func(*config.Config){
+		func(c *config.Config) { c.Marketplace.MerchantToken = "" },
+		func(c *config.Config) { c.Marketplace.StoreID = "" },
+	} {
+		cfg := testCfg(srv.URL)
+		drop(cfg)
+		got := ProbeCredential(context.Background(), cfg)
+		if got.Err == nil || got.OK || got.Code != "" {
+			t.Fatalf("probe = %+v, want only an error", got)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("%d requests sent without a credential", hits.Load())
+	}
+}

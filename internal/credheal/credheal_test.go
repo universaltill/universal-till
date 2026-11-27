@@ -616,6 +616,71 @@ func TestWaitingLooksAgainDaily(t *testing.T) {
 	}
 }
 
+// ---- resume (phones, ut-docs#7097 T8) ------------------------------------------------
+
+// A phone suspended in the background wakes with a dead credential nobody has
+// reported yet: resume asks the cloud once and heals in that round.
+func TestResumeWithDeadCredentialHeals(t *testing.T) {
+	r := newRig(t)
+	r.e.resume(bg)
+	if r.probes.Load() != 1 || r.recovers.Load() != 1 {
+		t.Fatalf("probes %d recovers %d, want 1 and 1", r.probes.Load(), r.recovers.Load())
+	}
+	if st := r.e.status(); st.State != StateOK || st.LastHealedAt.IsZero() || r.healed.Load() != 1 {
+		t.Fatalf("status %+v healed %d", st, r.healed.Load())
+	}
+}
+
+// A working credential, an offline phone and a final answer are all left alone.
+func TestResumeLeavesAWorkingOrUnreachableCredentialAlone(t *testing.T) {
+	r := newRig(t)
+	r.probe = func() ProbeResult { return ProbeResult{OK: true} }
+	r.e.resume(bg)
+	r.probe = func() ProbeResult { return ProbeResult{Err: errors.New("offline")} }
+	r.e.resume(bg)
+	if r.recovers.Load() != 0 || r.e.status().State != StateOK || r.kv.val(data.CredHealStateKey) != "" {
+		t.Fatalf("recovers %d status %+v", r.recovers.Load(), r.e.status())
+	}
+	// A removed till is told by the probe and never calls recover.
+	r.probe = func() ProbeResult { return ProbeResult{Code: "device_revoked", Reason: "removed"} }
+	r.e.resume(bg)
+	if st := r.e.status(); st.State != StateNeedsPerson || st.Reason != "removed" || r.recovers.Load() != 0 {
+		t.Fatalf("status %+v recovers %d", st, r.recovers.Load())
+	}
+	// And a final state is not probed again on the next resume.
+	before := r.probes.Load()
+	r.e.resume(bg)
+	if r.probes.Load() != before {
+		t.Fatal("a final state was probed on resume")
+	}
+}
+
+// A waiting till whose date passed while the app was suspended (its timer did
+// not run) looks again at once; one whose date is still ahead does not.
+func TestResumeWakesAnOverdueWaitingTillOnly(t *testing.T) {
+	r := newRig(t)
+	until := r.clk.now().Add(5 * time.Hour)
+	r.outcome = func() enroll.RecoverOutcome { return enroll.RecoverOutcome{Code: "key_quarantined", Until: until} }
+	r.e.handle(bg, unauth(true))
+	r.outcome = func() enroll.RecoverOutcome { return enroll.RecoverOutcome{Healed: true} }
+	r.clk.add(time.Hour)
+	r.e.resume(bg)
+	if r.recovers.Load() != 1 || r.e.status().State != StateWaiting {
+		t.Fatalf("early resume: recovers %d status %+v", r.recovers.Load(), r.e.status())
+	}
+	r.clk.add(5 * time.Hour)
+	r.e.resume(bg)
+	if r.recovers.Load() != 2 || r.e.status().State != StateOK {
+		t.Fatalf("overdue resume: recovers %d status %+v", r.recovers.Load(), r.e.status())
+	}
+}
+
+// Resume is a no-op without a running engine and never blocks.
+func TestResumeWithoutEngineIsANoop(t *testing.T) {
+	active.Store(nil)
+	Resume()
+}
+
 // Review 2026-11-27: a till that is paired (identity reset) or works again while
 // a round sleeps its jitter must not have its healthy credential rotated.
 func TestRoundDoesNotRecoverACredentialThatBecameHealthyDuringTheJitter(t *testing.T) {
