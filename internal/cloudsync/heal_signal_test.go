@@ -347,3 +347,11 @@ func TestCatalogPullAndStockUploadReportA401(t *testing.T) {
 		waitFor(t, "the stock 401 to be probed", func() bool { return r.probes.Load() == 1 })
 	})
 }
+
+// resetRefusalLog clears the once-per-change refusal log between tests. It lives
+// here, not in heal.go, because only tests call it (the deadcode baseline guard).
+func resetRefusalLog() {
+	refusalLog.Lock()
+	refusalLog.last = nil
+	refusalLog.Unlock()
+}
