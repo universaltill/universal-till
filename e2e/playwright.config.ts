@@ -73,14 +73,25 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // after login.spec.ts (a name before it completes the first-boot wizard first).
 // ut-docs#5066's cloud-restore cashier spec is named restore-… for the same reason.
 export const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|phone-lock-over-scrim-6118|phone-record-dialog-confirm-lock-6131|record-dialog-lock-status-reachable-6125|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366|prompt-line-reduction-hint-5417|new-sale-approved-closes-payment-overlay-5416|restore-cloud-cashier-5066)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|phone-lock-over-scrim-6118|phone-record-dialog-confirm-lock-6131|record-dialog-lock-status-reachable-6125|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366|prompt-line-reduction-hint-5417|new-sale-approved-closes-payment-overlay-5416|restore-cloud-cashier-5066|template-cashier-6332)\.spec\.ts$/;
 
-// ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
-// real plugins/layout-salon installed, which HIDES /tables and
-// /kitchen-stations and re-labels /items. Installing that into the shared
-// default till would move the ground under every other menu/nav assertion
-// in the suite, so it gets its own server + project.
-export const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
+// ut-docs#1904 / ADR-0088 / ADR-0190: the service-layout spec drives a till
+// whose shop type is service in legacy template mode, which HIDES /tables
+// and /kitchen-stations and re-labels /items (the layout the retired salon
+// plugin used to supply). Doing that to the shared default till would move
+// the ground under every other menu/nav assertion in the suite, so it gets
+// its own server + project.
+export const LAYOUT_ONLY_SPECS = /template-menu-service-legacy-6332\.spec\.ts$/;
+
+// ut-docs#6332 / ADR-0190: the shop-type template matrix changes the shop
+// type of its till many times (and starts as a shop that predates templates),
+// which re-shapes the Menu and Settings for every spec on a shared till, so it
+// gets its own server + project. The satellite spec needs a till that follows
+// a main till (type locked), so it gets another. Ports are overridable for
+// local runs beside other sessions: UT_E2E_TEMPLATES_PORT (satellite = +1).
+export const TEMPLATES_ONLY_SPECS = /template-matrix-6332\.spec\.ts$/;
+export const TEMPLATES_SATELLITE_ONLY_SPECS = /template-satellite-6332\.spec\.ts$/;
+export const TEMPLATES_PORT = Number(process.env.UT_E2E_TEMPLATES_PORT) || 8106;
 
 // ut-docs#2169 / ADR-0092: the diagnostic-mode spec REGISTERS its till
 // against an in-process fake ut-cloud (run-till-diagnostics.sh points
@@ -141,7 +152,7 @@ export const NOTICES_ONLY_SPECS = /notices-5366\.spec\.ts$/;
 // Every spec set that needs its own till; the `default` project ignores all
 // of them (and playwright.webkit.config.ts reuses the list). Order is the
 // order the project used before it was extracted.
-export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS];
+export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, TEMPLATES_ONLY_SPECS, TEMPLATES_SATELLITE_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS];
 
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
@@ -224,6 +235,18 @@ export default defineConfig<{}, WorkerOptions>({
       reuseExistingServer: !process.env.CI,
     },
     {
+      command: `bash ./run-till-templates.sh ${TEMPLATES_PORT} retail`,
+      url: `http://127.0.0.1:${TEMPLATES_PORT}/healthz`,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: `bash ./run-till-templates.sh ${TEMPLATES_PORT + 1} cafe http://127.0.0.1:1`,
+      url: `http://127.0.0.1:${TEMPLATES_PORT + 1}/healthz`,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
       command: 'bash ./run-till-diagnostics.sh',
       url: 'http://127.0.0.1:8095/healthz',
       timeout: 120_000,
@@ -291,6 +314,28 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8094',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'templates',
+      testMatch: TEMPLATES_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: `http://127.0.0.1:${TEMPLATES_PORT}`,
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'templates-satellite',
+      testMatch: TEMPLATES_SATELLITE_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: `http://127.0.0.1:${TEMPLATES_PORT + 1}`,
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

@@ -2,9 +2,6 @@ package plugins
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -205,21 +202,84 @@ func TestManagerReload_LoadsLayoutAmendmentsFromActivePluginsOnly(t *testing.T) 
 	}
 }
 
-// AC3: a real first-party layout plugin, not a fixture. plugins/layout-salon
-// is a salon/barber layout: no Tables, no Kitchen stations, "Items"
-// re-labelled to Services and moved first. It installs through the same
-// PersistManifest every marketplace/store install uses, and ships its own
-// locale files for every key it introduces, in every core locale.
-func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
-	root := filepath.Join("..", "..", "plugins", "layout-salon")
-	f, err := os.Open(filepath.Join(root, "plugin.json"))
+// frozenSalonLayoutManifest is the salon/barber layout plugin as it last
+// shipped (plugins/layout-salon, retired by ADR-0190 when shop-type templates
+// took its layout over). It stays here as a realistic, multi-slot layout
+// manifest: it installs through the same PersistManifest every marketplace
+// install uses and exercises all four ADR-0088 slots.
+const frozenSalonLayoutManifest = `{
+  "id": "com.universaltill.layout-salon",
+  "name": "Salon layout",
+  "version": "0.4.1",
+  "provides": ["layout.shop_type:service"],
+  "description": "A hair salon / barber shop Menu: no Tables, no Kitchen stations, Items shown as Services and listed first — the Items screen's own Library row reads Services and moves first too, the nav rail lists Orders ahead of Inventory, and the Settings sidebar puts Theme first and groups Printer with Tills under Hardware. Changes only navigation and labels — the catalog, options and stock underneath are untouched.",
+  "author": "Universal Till Contributors",
+  "website": "https://universaltill.com",
+  "runtime": "none",
+  "canonical_type": "layout",
+  "device_arch": "any",
+  "min_pos_version": "1.0.0",
+  "entries": [
+    {
+      "type": "layout",
+      "key": "menu",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "menu",
+        "amendments": [
+          { "key": "/tables", "hide": true },
+          { "key": "/kitchen-stations", "hide": true },
+          { "key": "/items", "label_key": "layout.salon.services", "icon": "scissors", "order": 50 }
+        ]
+      }
+    },
+    {
+      "type": "layout",
+      "key": "items",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "items",
+        "amendments": [
+          { "key": "/catalog", "label_key": "layout.salon.services", "order": 50 }
+        ]
+      }
+    },
+    {
+      "type": "layout",
+      "key": "rail",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "rail",
+        "amendments": [
+          { "key": "/orders", "order": 250 }
+        ]
+      }
+    },
+    {
+      "type": "layout",
+      "key": "settings",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "settings",
+        "amendments": [
+          { "key": "settings-theme", "order": 50 },
+          { "key": "settings-printer", "group": "layout.salon.settings_group" },
+          { "key": "settings-tills", "group": "layout.salon.settings_group" }
+        ]
+      }
+    }
+  ],
+  "permissions": []
+}
+`
+
+// AC3: a realistic layout plugin, not a hand-built fixture: the retired
+// salon layout is a barber layout with no Tables, no Kitchen stations,
+// "Items" re-labelled to Services and moved first.
+func TestFrozenSalonLayoutManifest_InstallsAndDeclaresItsAmendments(t *testing.T) {
+	m, err := ParseManifest(strings.NewReader(frozenSalonLayoutManifest))
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	m, err := ParseManifest(f)
-	if err != nil {
-		t.Fatalf("plugins/layout-salon/plugin.json must parse: %v", err)
+		t.Fatalf("frozen salon manifest must parse: %v", err)
 	}
 	if m.CanonicalType != "layout" || m.Runtime != "none" {
 		t.Fatalf("a layout plugin is asset-only structure: canonical_type=%q runtime=%q", m.CanonicalType, m.Runtime)
@@ -298,95 +358,5 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 	tillsRow, ok := byKey["settings-tills"]
 	if !ok || tillsRow.Slot != uislot.SettingsSlot || tillsRow.Group != printerRow.Group {
 		t.Fatalf("salon layout must group settings-tills with settings-printer under the SAME group key, got printer=%+v tills=%+v", printerRow, tillsRow)
-	}
-
-	// Every locale key the plugin introduces ships in its own locale files,
-	// for every core locale (Decision G: the label resolves through the
-	// same overlay mechanism language packs use).
-	introduced := []string{items.LabelKey}
-	for _, e := range m.Entries {
-		introduced = append(introduced, e.Label)
-	}
-	for _, a := range pm.LayoutAmendments {
-		if a.Group != "" {
-			introduced = append(introduced, a.Group)
-		}
-	}
-	coreLocales, err := filepath.Glob(filepath.Join("..", "..", "web", "locales", "*.json"))
-	if err != nil || len(coreLocales) == 0 {
-		t.Fatalf("core locales: %v", err)
-	}
-	for _, core := range coreLocales {
-		locale := strings.TrimSuffix(filepath.Base(core), ".json")
-		raw, err := os.ReadFile(filepath.Join(root, "locales", locale+".json"))
-		if err != nil {
-			t.Errorf("salon layout ships no locale file for core locale %s: %v", locale, err)
-			continue
-		}
-		var msgs map[string]string
-		if err := json.Unmarshal(raw, &msgs); err != nil {
-			t.Errorf("locales/%s.json: %v", locale, err)
-			continue
-		}
-		for _, key := range introduced {
-			if strings.TrimSpace(msgs[key]) == "" {
-				t.Errorf("locales/%s.json is missing %q", locale, key)
-			}
-		}
-	}
-}
-
-// shippingLocalesBeyondCore are the locales this product ships as external
-// LANGUAGE BUNDLES (com.universaltill.language-<code>, ADR-0160) rather than in web/locales.
-// They are listed explicitly because no test in this repo can see those
-// sibling repos, and the consequence of forgetting one is silent: a plugin
-// label with no translation for the locale falls back to the core label
-// (ADR-0088 Decision G, correctly), so the amendment simply does nothing
-// and nothing anywhere reports it.
-//
-// That is not hypothetical — it is what the independent review of
-// ut-docs#1904 (F4) found: the salon plugin shipped en/ar/fa/tr only, so on
-// the GERMAN pilot till, the one market with a real merchant, its re-label
-// of Items to "Services" was a silent no-op. The test above globs
-// web/locales/*.json and by construction could never catch that.
-var shippingLocalesBeyondCore = []string{"de", "es"}
-
-func TestLayoutSalonPlugin_ShipsLocalesForTheLanguagePackMarketsToo(t *testing.T) {
-	root := filepath.Join("..", "..", "plugins", "layout-salon")
-
-	raw, err := os.ReadFile(filepath.Join(root, "locales", "en.json"))
-	if err != nil {
-		t.Fatalf("salon layout must ship en.json: %v", err)
-	}
-	var base map[string]string
-	if err := json.Unmarshal(raw, &base); err != nil {
-		t.Fatalf("locales/en.json: %v", err)
-	}
-	if len(base) == 0 {
-		t.Fatal("locales/en.json declares no keys — this test would assert nothing")
-	}
-
-	for _, locale := range shippingLocalesBeyondCore {
-		got, err := os.ReadFile(filepath.Join(root, "locales", locale+".json"))
-		if err != nil {
-			t.Errorf("salon layout ships no locale file for language-pack market %q — "+
-				"its amendments would silently fall back to English there: %v", locale, err)
-			continue
-		}
-		var msgs map[string]string
-		if err := json.Unmarshal(got, &msgs); err != nil {
-			t.Errorf("locales/%s.json: %v", locale, err)
-			continue
-		}
-		for key, english := range base {
-			switch v := strings.TrimSpace(msgs[key]); {
-			case v == "":
-				t.Errorf("locales/%s.json is missing %q", locale, key)
-			case v == english:
-				// The ut-docs#292 failure mode: present, non-empty, and still
-				// English. A key-set-only check passes it; a merchant reads it.
-				t.Errorf("locales/%s.json leaves %q untranslated (still %q)", locale, key, english)
-			}
-		}
 	}
 }

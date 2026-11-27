@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/readerlink"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/shoptemplate"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
@@ -100,7 +101,15 @@ type Deps struct {
 	// needs restoring yet). Rebuilt beside the other three in ReloadPlugins
 	// under PluginMu — read it only through SettingsAmendmentsSnapshot.
 	SettingsAmendments []uislot.Amendment
-	Engine             *pos.Service
+	// ShopTemplates is the loaded, catalog-validated shop-type template set
+	// (ADR-0190); nil when it failed to load or in a bare test Deps, which
+	// means no template for any shop (TemplateState).
+	ShopTemplates *shoptemplate.Set
+	// templateKey and templateAmends record the template state the four
+	// slot amendment lists above were built for; both guarded by PluginMu.
+	templateKey    string
+	templateAmends map[string][]uislot.Amendment
+	Engine         *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -601,11 +610,35 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	defer d.PluginMu.Unlock()
 	err := d.Pm.Reload(ctx)
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
-	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
-	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
-	d.RailAmendments = BuildRailAmendments(d.Pm)
-	d.SettingsAmendments = BuildSettingsAmendments(d.Pm)
+	d.rebuildLayoutLocked(ctx)
 	return err
+}
+
+var layoutSlots = [...]string{uislot.MenuSlot, uislot.ItemsSlot, uislot.RailSlot, uislot.SettingsSlot}
+
+// rebuildLayoutLocked recomputes the four slot amendment lists from the
+// plugin pool, the template state and the owner's restores. Caller holds
+// PluginMu for writing.
+func (d *Deps) rebuildLayoutLocked(ctx context.Context) {
+	ts := d.TemplateState(ctx)
+	restored := RestoredMenuKeys(ctx, d.Settings)
+	d.templateKey = ts.key()
+	d.templateAmends = nil
+	if ts.Mode != TemplateNone {
+		for _, slot := range layoutSlots {
+			if am := ts.Amendments(slot); len(am) > 0 {
+				if d.templateAmends == nil {
+					d.templateAmends = map[string][]uislot.Amendment{}
+				}
+				d.templateAmends[slot] = am
+			}
+		}
+	}
+	t := d.templateAmends
+	d.MenuAmendments = withTemplate(t[uislot.MenuSlot], BuildMenuAmendments(d.Pm, restored), restored)
+	d.ItemsAmendments = withTemplate(t[uislot.ItemsSlot], BuildItemsAmendments(d.Pm), nil)
+	d.RailAmendments = withTemplate(t[uislot.RailSlot], BuildRailAmendments(d.Pm), nil)
+	d.SettingsAmendments = withTemplate(t[uislot.SettingsSlot], BuildSettingsAmendments(d.Pm), nil)
 }
 
 // ReloadMenuAmendments recomputes MenuAmendments from the plugin manager's
@@ -615,7 +648,8 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 func (d *Deps) ReloadMenuAmendments(ctx context.Context) {
 	d.PluginMu.Lock()
 	defer d.PluginMu.Unlock()
-	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
+	restored := RestoredMenuKeys(ctx, d.Settings)
+	d.MenuAmendments = withTemplate(d.templateAmends[uislot.MenuSlot], BuildMenuAmendments(d.Pm, restored), restored)
 }
 
 // MenuAmendmentsSnapshot returns the Menu-slot amendments in force under
@@ -662,11 +696,11 @@ func (d *Deps) SettingsAmendmentsSnapshot() []uislot.Amendment {
 // the plugin declares, shown as "restored" with the way back. Nil-safe on
 // Pm like InstalledPlugin.
 func (d *Deps) LayoutAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
 	if d.Pm == nil {
 		return nil
 	}
-	d.PluginMu.RLock()
-	defer d.PluginMu.RUnlock()
 	return d.Pm.LayoutAmendments
 }
 

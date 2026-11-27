@@ -32,7 +32,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/settingsnav"
-	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
@@ -912,8 +911,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#3208: same gates as GET /users and GET /users/permissions.
 		canManageUsers := canPerform(d, r, "user_management")
 		canEditPermissions := canPerform(d, r, lockoutAction)
+		// ut-docs#6332 (ADR-0190): the shop-type template's classes demote
+		// rows to More settings; nil (unset type / legacy mode) = as before.
+		tmpl := settingsTemplateResolved(r.Context(), d)
 		settingsNav := filterSettingsNavForRender(
-			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
+			settingsnav.ResolveClassed(locale, d.SettingsAmendmentsSnapshot(), settingsTemplateClassFunc(tmpl)),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 			canManageUsers || canEditPermissions,
 		)
@@ -1072,8 +1074,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// — see settingsnav's own doc comment for why this resolves the
 			// sidebar and its categories only, not the on-page card
 			// content/order.
-			"settingsNav":    settingsNav,
-			"pluginSections": pluginSections,
+			"settingsNav":  settingsNav,
+			"settingsTmpl": settingsTemplateViewFor(locale, shopType, isManager, tmpl != nil),
+			// S7: the Shop type card body, the 7 day undo banner, the status line after an undo.
+			"shopTypePanel":      shopTypePanelFor(r.Context(), d, r, locale),
+			"shopTypeBanner":     shopTypeUndoBannerFor(d, r, locale),
+			"templateOffer":      templateOfferFor(r, d, locale),
+			"shopTypeUndoneNote": shopTypeUndoneNotice(r.Context(), d, r, locale),
+			"pluginSections":     pluginSections,
 			// ut-docs#3090: the landing grid's category tiles, built from
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.
@@ -2660,60 +2668,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
-	// Manager-only, same gate as the other store-level settings.
-	mux.HandleFunc("POST /api/settings/shop-type", func(w http.ResponseWriter, r *http.Request) {
-		// Validate BEFORE the elevation gate (ut-docs#557 convention) — a
-		// bad shop type 400s without burning an approver's live PIN entry.
-		_ = r.ParseForm()
-		v := strings.TrimSpace(r.Form.Get("shop_type"))
-		if v != "" && !isValidShopType(v) {
-			http.Error(w, "unknown shop type", http.StatusBadRequest)
-			return
-		}
-		// Mutating + audit-writing (ut-docs#796): in-place PIN re-auth
-		// instead of the flat 403.
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			locale := httpx.ResolveLocale(w, r)
-			// Same label the picker itself shows; "—" mirrors the
-			// template's own empty (clear) option.
-			label := "—"
-			if v != "" {
-				label = httpx.T(locale, "setup.shop_type."+v)
-			}
-			renderElevationPrompt(w, r, "/api/settings/shop-type", "#shop-type-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.shop_type"), label),
-				[]elevationHiddenField{{Name: "shop_type", Value: v}}, elev)
-			return
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyShopType: v}); err != nil {
-			if !respondSettingsSyncError(w, r, err) {
-				http.Error(w, "could not save", http.StatusInternalServerError)
-			}
-			return
-		}
-		// ut-docs#1902: shop_type=service activates the builtin Salon layout
-		// (ADR-0088); any other value (including clearing it back to "")
-		// deactivates it if it was active. Best-effort — a failure here must
-		// never block a shop-type save over a cosmetic menu personalization.
-		// ut-docs#2006: reload unless it's a genuine no-op (no error,
-		// nothing changed) — an error still reloads, since a failed
-		// reinstall can leave the DB changed (removeBuiltin succeeded) even
-		// though Sync itself returned an error.
-		changed, syncErr := builtinlayouts.Sync(r.Context(), d.Db, v)
-		if syncErr != nil {
-			logging.L().Warnf("settings: could not sync builtin layout for shop_type %q: %v", v, syncErr)
-		}
-		if syncErr != nil || changed {
-			if err := d.ReloadPlugins(r.Context()); err != nil {
-				logging.L().Warnf("settings: could not reload plugins after shop_type layout sync: %v", err)
-			}
-		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
-			map[string]any{"shop_type": v})
-		settingsRespondSaved(w, r, elev)
-	})
+	// Shop type (ut-docs#539, taxonomy per ADR-0026): pick, preview,
+	// PIN-confirm and 7 day undo (ADR-0190, S7) live in shop_type_change.go.
+	registerShopTypeChange(mux, d, posRepo)
 
 	// Shop name (ut-docs#3115): store.name, editable after the setup
 	// wizard. Shop-wide, so an additional till forwards it to the main till

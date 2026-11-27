@@ -204,8 +204,8 @@ func TestDemoAlwaysDeniedSurfaces(t *testing.T) {
 		"GET /api/catalog/lookup",
 		"POST /api/catalog/item/image",
 		"POST /api/receipt-designer/logo",
-		// Shop type re-syncs the built-in layout plugins
-		// (builtinlayouts.Sync → plugins.PersistManifest) — a plugin install.
+		// Shop type re-lays-out the menu and seeds apply-once defaults
+		// from the shop-type template (ADR-0190).
 		"POST /api/settings/shop-type",
 	} {
 		if !demoDeniedRoutes[p] || demoAllowedRoutes[p] {

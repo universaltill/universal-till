@@ -98,6 +98,14 @@ type Entry struct {
 	// never a file (Decision H). Empty for a plugin page with no mapping;
 	// the renderer applies its generic fallback.
 	Icon string
+	// Class is how prominently the row is offered (ADR-0190). Every core row
+	// declares one (the zero value is invalid; guarded by
+	// TestEveryCoreRowDeclaresValidClass and guard-visibility-class.sh). It is
+	// the BASE class, preserving today's behaviour: a row already under
+	// Advanced is advanced, everything else common, except the few cards every
+	// shop needs (essential). A shop-type template may override it; nothing
+	// reads it yet. Plugin-contributed entries leave it empty.
+	Class Class
 	// Order sorts the slot; the core table is declared ascending so the
 	// zero-amendment path never sorts (Decision I).
 	Order int
@@ -243,50 +251,50 @@ var CoreMenu = []Entry{
 	// or remove quick buttons freely. The routes are now server-side
 	// gated too (buttons_api.go/checkOrElevate); this hides the entry
 	// point for an operator who'd only hit an elevation prompt anyway.
-	{Key: "/designer", Href: "/designer", LabelKey: "nav.designer", Icon: "palette", Order: 100, InNav: true, VisibleIf: "catalog_management"},
-	{Key: "/shifts", Href: "/shifts", LabelKey: "nav.shifts", Icon: "clock", Order: 200, InNav: true},
-	{Key: "/journal", Href: "/journal", LabelKey: "nav.journal", Icon: "book-open", Order: 300, InNav: true},
-	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400, InNav: true},
+	{Key: "/designer", Class: ClassCommon, Href: "/designer", LabelKey: "nav.designer", Icon: "palette", Order: 100, InNav: true, VisibleIf: "catalog_management"},
+	{Key: "/shifts", Class: ClassCommon, Href: "/shifts", LabelKey: "nav.shifts", Icon: "clock", Order: 200, InNav: true},
+	{Key: "/journal", Class: ClassCommon, Href: "/journal", LabelKey: "nav.journal", Icon: "book-open", Order: 300, InNav: true},
+	{Key: "/orders", Class: ClassCommon, Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400, InNav: true},
 	// ut-docs#3079: a cashier is sale-only — Reports, Settings and Plugins
 	// are hidden unless the viewer holds that action (the pages themselves
 	// now 403 on the same action, requirePage in internal/pages/authz.go).
-	{Key: "/reports", Href: "/reports", LabelKey: "nav.reports", Icon: "chart-column", Order: 500, InNav: true, VisibleIf: "reports"},
-	{Key: "/settings", Href: "/settings", LabelKey: "nav.settings", Icon: "settings", Order: 600, InNav: true, VisibleIf: "settings"},
-	{Key: "/plugins", Href: "/plugins", LabelKey: "nav.plugins", Icon: "puzzle", Order: 700, InNav: true, VisibleIf: "plugin_management"},
+	{Key: "/reports", Class: ClassCommon, Href: "/reports", LabelKey: "nav.reports", Icon: "chart-column", Order: 500, InNav: true, VisibleIf: "reports"},
+	{Key: "/settings", Class: ClassCommon, Href: "/settings", LabelKey: "nav.settings", Icon: "settings", Order: 600, InNav: true, VisibleIf: "settings"},
+	{Key: "/plugins", Class: ClassCommon, Href: "/plugins", LabelKey: "nav.plugins", Icon: "puzzle", Order: 700, InNav: true, VisibleIf: "plugin_management"},
 	// ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one.
 	// ut-docs#2312: VisibleIf "catalog_management" -- see /designer's
 	// identical comment above; /items is the rail entry point to the same
 	// item/variant/modifier-group/option-set/barcode CRUD this card gates
 	// server-side in internal/pages/catalog/handlers.go.
-	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true, VisibleIf: "catalog_management"},
+	{Key: "/items", Class: ClassCommon, Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true, VisibleIf: "catalog_management"},
 
 	// ut-docs#1918: parked baskets -- a cashier surface (the sale screen's
 	// held strip as a full list), so it sits ungated, not in baseMenu (which
 	// also feeds the top nav rail, where a second orders entry next to the
 	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
 	// it must be declared here to render at all.
-	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
+	{Key: "/open-orders", Class: ClassCommon, Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	// ADR-0169 §9 (ut-docs#4768): orders taken at a web shop or marketplace.
 	// Launcher tile only, not the rail (sell-screen space wins); the same
 	// "reports" gate as the page (a cashier is sale-only, ut-docs#3079).
-	{Key: "/channel-orders", Href: "/channel-orders", LabelKey: "channel_orders.title", Icon: "download", Order: 1950, VisibleIf: "reports"},
-	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
-	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
+	{Key: "/channel-orders", Class: ClassCommon, Href: "/channel-orders", LabelKey: "channel_orders.title", Icon: "download", Order: 1950, VisibleIf: "reports"},
+	{Key: "/help", Class: ClassCommon, Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
+	{Key: "/users", Class: ClassCommon, Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	// ut-docs#4251: every gift voucher, its history, CSV export and the
 	// opening-balance import (moved here from Settings > Data management).
 	// Same "settings" gate as the page itself (vouchers_page.go).
-	{Key: "/vouchers", Href: "/vouchers", LabelKey: "vouchers.title", Icon: "gift", Order: 2150, VisibleIf: "settings"},
-	{Key: "/kitchen-stations", Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
+	{Key: "/vouchers", Class: ClassCommon, Href: "/vouchers", LabelKey: "vouchers.title", Icon: "gift", Order: 2150, VisibleIf: "settings"},
+	{Key: "/kitchen-stations", Class: ClassCommon, Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
 	// bluetoothdevices.title, not a separate nav.bluetooth_devices key — it
 	// duplicated the exact same string across all locales with nothing to
 	// keep the two in sync (ut-docs#1582 independent-review finding).
-	{Key: "/bluetooth-devices", Href: "/bluetooth-devices", LabelKey: "bluetoothdevices.title", Icon: "bluetooth", Order: 2300, VisibleIf: "settings"}, // ut-docs#76
-	{Key: "/tables", Href: "/tables", LabelKey: "tables.title", Icon: "utensils-crossed", Order: 2400, VisibleIf: "settings"},
+	{Key: "/bluetooth-devices", Class: ClassCommon, Href: "/bluetooth-devices", LabelKey: "bluetoothdevices.title", Icon: "bluetooth", Order: 2300, VisibleIf: "settings"}, // ut-docs#76
+	{Key: "/tables", Class: ClassCommon, Href: "/tables", LabelKey: "tables.title", Icon: "utensils-crossed", Order: 2400, VisibleIf: "settings"},
 	// ut-docs#1959: moved ahead of the Administration group below (was
 	// Order 2700, between /translations and /fiscal-register) so the
 	// group's members stay contiguous in this declaration — see the
 	// package doc comment above for why that matters.
-	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "issue_reporting"}, // ut-docs#3135: same action as the page
+	{Key: "/report-issue", Class: ClassCommon, Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "issue_reporting"}, // ut-docs#3135: same action as the page
 	// ut-docs#2008: the single gated "Administration" tile that replaces
 	// #1959's group heading below — opens /admin, a tree page listing
 	// whichever of the six grouped destinations below the viewer can see.
@@ -304,7 +312,7 @@ var CoreMenu = []Entry{
 	// is still "the slot the removed group heading vacated" in every way
 	// that matters: strictly between /report-issue (2500) and the group's
 	// own band (2600+), i.e. immediately ahead of it.
-	{Key: "/admin", Href: "/admin", LabelKey: "menu.group.administration", Icon: "lock", Order: 2550, VisibleIf: "administration"},
+	{Key: "/admin", Class: ClassCommon, Href: "/admin", LabelKey: "menu.group.administration", Icon: "lock", Order: 2550, VisibleIf: "administration"},
 	// ut-docs#1959: "Administration" — setup/onboarding destinations a
 	// merchant touches once and rarely returns to, grouped per the product
 	// owner's 2026-09-10 feedback. /users, /kitchen-stations and
@@ -313,16 +321,16 @@ var CoreMenu = []Entry{
 	// Kitchen Stations and Bluetooth Devices are reconfigured as often as
 	// the floor/hardware changes, not one-time setup like the entries
 	// below.
-	{Key: "/country-settings", Href: "/country-settings", LabelKey: "countrysettings.title", Icon: "flag", Order: 2600, VisibleIf: "settings", Group: "menu.group.administration"},
-	{Key: "/translations", Href: "/translations", LabelKey: "translations.title", Icon: "globe", Order: 2700, VisibleIf: "settings", Group: "menu.group.administration"},
+	{Key: "/country-settings", Class: ClassCommon, Href: "/country-settings", LabelKey: "countrysettings.title", Icon: "flag", Order: 2600, VisibleIf: "settings", Group: "menu.group.administration"},
+	{Key: "/translations", Class: ClassCommon, Href: "/translations", LabelKey: "translations.title", Icon: "globe", Order: 2700, VisibleIf: "settings", Group: "menu.group.administration"},
 	// Fiscal register (DE) and Fiscal device (TR) are the two statutory
 	// hardware/registration pages: connected once during setup, same as
 	// Locations/Registers below — structurally the twin of the entry the
 	// product owner named explicitly, so grouped alongside it.
-	{Key: "/fiscal-register", Href: "/fiscal-register", LabelKey: "fiscalregister.title", Icon: "clipboard-list", Order: 2800, VisibleIf: "fiscal_register_de", Group: "menu.group.administration"},
-	{Key: "/fiscal-device", Href: "/fiscal-device", LabelKey: "fiscaldevice.title", Icon: "receipt", Order: 2900, VisibleIf: "fiscal_device_tr", Group: "menu.group.administration"},
-	{Key: "/locations", Href: "/locations", LabelKey: "locations.title", Icon: "map-pin", Order: 3000, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
-	{Key: "/registers", Href: "/registers", LabelKey: "registers.title", Icon: "calculator", Order: 3100, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
+	{Key: "/fiscal-register", Class: ClassCommon, Href: "/fiscal-register", LabelKey: "fiscalregister.title", Icon: "clipboard-list", Order: 2800, VisibleIf: "fiscal_register_de", Group: "menu.group.administration"},
+	{Key: "/fiscal-device", Class: ClassCommon, Href: "/fiscal-device", LabelKey: "fiscaldevice.title", Icon: "receipt", Order: 2900, VisibleIf: "fiscal_device_tr", Group: "menu.group.administration"},
+	{Key: "/locations", Class: ClassCommon, Href: "/locations", LabelKey: "locations.title", Icon: "map-pin", Order: 3000, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
+	{Key: "/registers", Class: ClassCommon, Href: "/registers", LabelKey: "registers.title", Icon: "calculator", Order: 3100, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
 }
 
 var coreMenuIndex = func() map[string]int {
@@ -393,11 +401,11 @@ func IsProtectedRailKey(key string) bool {
 // I). Label/subtitle keys and hrefs are unchanged from itemsnav.Sections —
 // this is a relocation of the same five rows, not a redesign of them.
 var CoreItems = []Entry{
-	{Key: "/catalog", Href: "/catalog", LabelKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Order: 100},
-	{Key: "/categories", Href: "/categories", LabelKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Order: 200},
-	{Key: "/inventory", Href: "/inventory", LabelKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Order: 300},
-	{Key: "/modifiers", Href: "/modifiers", LabelKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Order: 400},
-	{Key: "/catalog/option-sets", Href: "/catalog/option-sets", LabelKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Order: 500},
+	{Key: "/catalog", Class: ClassCommon, Href: "/catalog", LabelKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Order: 100},
+	{Key: "/categories", Class: ClassCommon, Href: "/categories", LabelKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Order: 200},
+	{Key: "/inventory", Class: ClassCommon, Href: "/inventory", LabelKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Order: 300},
+	{Key: "/modifiers", Class: ClassCommon, Href: "/modifiers", LabelKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Order: 400},
+	{Key: "/catalog/option-sets", Class: ClassCommon, Href: "/catalog/option-sets", LabelKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Order: 500},
 }
 
 var coreItemsIndex = func() map[string]int {
@@ -431,10 +439,10 @@ func CoreItemsEntry(key string) (Entry, bool) {
 // checker pages.Init installs with httpx.InitRailVisibility — so a cashier's
 // rail has no Stock. Sell/Menu/Orders stay ungated (the sale flow).
 var CoreRail = []Entry{
-	{Key: "/", Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", Order: 100},
-	{Key: "/menu", Href: "/menu", LabelKey: "nav.menu", Icon: "menu", Order: 200},
-	{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300, VisibleIf: "stock_management"},
-	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400},
+	{Key: "/", Class: ClassCommon, Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", Order: 100},
+	{Key: "/menu", Class: ClassCommon, Href: "/menu", LabelKey: "nav.menu", Icon: "menu", Order: 200},
+	{Key: "/inventory", Class: ClassCommon, Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300, VisibleIf: "stock_management"},
+	{Key: "/orders", Class: ClassCommon, Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400},
 }
 
 var coreRailIndex = func() map[string]int {
@@ -544,32 +552,32 @@ var SettingsCategories = []Category{
 // settingsnav.Resolve gathers rows by category, so the declaration order
 // below stays the template's card order.
 var CoreSettings = []Entry{
-	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
+	{Key: "registration", Class: ClassCommon, Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
 	// ADR-0200: Privacy, manager-only, right after Till registration in
 	// settings.html. The registration notice names "Settings > Privacy" and
 	// the "Send usage facts" switch inside it; filtered from a cashier's
 	// sidebar like subscription.
-	{Key: "settings-privacy", Href: "#settings-privacy", LabelKey: "settings.privacy.title", Order: 125, Group: "settings.cat.staff.label"},
+	{Key: "settings-privacy", Class: ClassCommon, Href: "#settings-privacy", LabelKey: "settings.privacy.title", Order: 125, Group: "settings.cat.staff.label"},
 	// ut-docs#2569 (ADR-0060 §6): Subscription, manager-only, right after
 	// Till registration in settings.html — beside the cloud link whose paid
 	// features it explains; filtered from a cashier's sidebar like
 	// settings-diagnostics.
-	{Key: "subscription", Href: "#subscription", LabelKey: "subscription.nav", Order: 150, Group: "settings.cat.devices.label"},
-	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200, Group: "settings.cat.advanced.label"},
+	{Key: "subscription", Class: ClassCommon, Href: "#subscription", LabelKey: "subscription.nav", Order: 150, Group: "settings.cat.devices.label"},
+	{Key: "settings-issuereport", Class: ClassAdvanced, Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200, Group: "settings.cat.advanced.label"},
 	// ADR-0092 §7 / ut-docs#2169: diagnostic mode (activation code entry,
 	// "ON since" copy, local stop). Manager-only card right after
 	// Report-an-issue in settings.html — the two are the till's support
 	// surfaces — and filtered from the sidebar for a cashier the same way.
-	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250, Group: "settings.cat.advanced.label"},
-	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300, Group: "settings.cat.look.label"},
-	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400, Group: "settings.cat.backup.label"},
+	{Key: "settings-diagnostics", Class: ClassAdvanced, Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250, Group: "settings.cat.advanced.label"},
+	{Key: "settings-menulayout", Class: ClassCommon, Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300, Group: "settings.cat.look.label"},
+	{Key: "settings-update", Class: ClassCommon, Href: "#settings-update", LabelKey: "settings.update.title", Order: 400, Group: "settings.cat.backup.label"},
 	// ut-docs#3091: About (version, first run, What's new), right after the
 	// Software update card in the template.
-	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450, Group: "settings.cat.backup.label"},
-	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500, Group: "settings.cat.look.label"},
-	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600, Group: "settings.cat.look.label"},
-	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700, Group: "settings.payments.title"},
-	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800, Group: "settings.cat.selling.label"},
+	{Key: "settings-about", Class: ClassCommon, Href: "#settings-about", LabelKey: "settings.about.title", Order: 450, Group: "settings.cat.backup.label"},
+	{Key: "settings-theme", Class: ClassEssential, Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500, Group: "settings.cat.look.label"},
+	{Key: "settings-display", Class: ClassCommon, Href: "#settings-display", LabelKey: "settings.display.title", Order: 600, Group: "settings.cat.look.label"},
+	{Key: "settings-payments", Class: ClassEssential, Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700, Group: "settings.payments.title"},
+	{Key: "settings-order-no", Class: ClassCommon, Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800, Group: "settings.cat.selling.label"},
 	// ut-docs#2282: added right after settings-order-no in both places (the
 	// template declares it immediately after that card too) — see this
 	// slot's own doc comment: a matching CoreSettings entry is what keeps a
@@ -577,35 +585,35 @@ var CoreSettings = []Entry{
 	// amendments (settings_page_test.go's own
 	// TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate pins the
 	// template's .card ids against this list, in order).
-	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850, Group: "settings.cat.selling.label"},
-	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900, Group: "settings.cat.advanced.label"},
-	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000, Group: "settings.cat.advanced.label"},
-	{Key: "settings-catalog-pre-pack-unit-price", Href: "#settings-catalog-pre-pack-unit-price", LabelKey: "settings.catalog_pre_pack_unit_price.title", Order: 1025, Group: "settings.cat.advanced.label"},
-	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050, Group: "settings.cat.selling.label"},
-	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100, Group: "settings.cat.selling.label"},
-	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
-	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
-	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
-	{Key: "settings-cloud-staff", Href: "#settings-cloud-staff", LabelKey: "settings.cloud_staff.title", Order: 1450, Group: "settings.cat.advanced.label"},
-	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
-	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
-	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
-	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800, Group: "settings.cat.staff.label"},
+	{Key: "settings-order-type-prompt", Class: ClassCommon, Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850, Group: "settings.cat.selling.label"},
+	{Key: "settings-barcode", Class: ClassAdvanced, Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900, Group: "settings.cat.advanced.label"},
+	{Key: "settings-catalog-import-barcode-default", Class: ClassAdvanced, Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000, Group: "settings.cat.advanced.label"},
+	{Key: "settings-catalog-pre-pack-unit-price", Class: ClassAdvanced, Href: "#settings-catalog-pre-pack-unit-price", LabelKey: "settings.catalog_pre_pack_unit_price.title", Order: 1025, Group: "settings.cat.advanced.label"},
+	{Key: "settings-sell-screen", Class: ClassCommon, Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050, Group: "settings.cat.selling.label"},
+	{Key: "settings-stock-tracking", Class: ClassCommon, Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100, Group: "settings.cat.selling.label"},
+	{Key: "settings-backup", Class: ClassEssential, Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
+	{Key: "settings-data", Class: ClassAdvanced, Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
+	{Key: "settings-retention", Class: ClassAdvanced, Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
+	{Key: "settings-cloud-staff", Class: ClassAdvanced, Href: "#settings-cloud-staff", LabelKey: "settings.cloud_staff.title", Order: 1450, Group: "settings.cat.advanced.label"},
+	{Key: "settings-printer", Class: ClassCommon, Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
+	{Key: "settings-tills", Class: ClassCommon, Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
+	{Key: "settings-invoice", Class: ClassCommon, Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
+	{Key: "settings-idle-lock", Class: ClassCommon, Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800, Group: "settings.cat.staff.label"},
 	// ut-docs#3208: links to the Users (PINs) and Permissions pages.
-	{Key: "settings-staff-links", Href: "#settings-staff-links", LabelKey: "settings.staff_links.title", Order: 1850, Group: "settings.cat.staff.label"},
-	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
-	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
-	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
-	{Key: "settings-notices", Href: "#settings-notices", LabelKey: "settings.notices.title", Order: 2125, Group: "settings.cat.devices.label"},
+	{Key: "settings-staff-links", Class: ClassCommon, Href: "#settings-staff-links", LabelKey: "settings.staff_links.title", Order: 1850, Group: "settings.cat.staff.label"},
+	{Key: "settings-kiosk-idle-reset", Class: ClassCommon, Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
+	{Key: "settings-kiosk-payment-mode", Class: ClassCommon, Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
+	{Key: "settings-telemetry", Class: ClassAdvanced, Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
+	{Key: "settings-notices", Class: ClassCommon, Href: "#settings-notices", LabelKey: "settings.notices.title", Order: 2125, Group: "settings.cat.devices.label"},
 	// ut-docs#3115: Shop name, first in My shop (the template declares it
 	// right before the Currency card).
-	{Key: "settings-store-name", Href: "#settings-store-name", LabelKey: "settings.store_name.title", Order: 2150, Group: "settings.cat.shop.label"},
-	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200, Group: "settings.cat.shop.label"},
-	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300, Group: "settings.cat.shop.label"},
+	{Key: "settings-store-name", Class: ClassEssential, Href: "#settings-store-name", LabelKey: "settings.store_name.title", Order: 2150, Group: "settings.cat.shop.label"},
+	{Key: "settings-currency", Class: ClassEssential, Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200, Group: "settings.cat.shop.label"},
+	{Key: "settings-language", Class: ClassEssential, Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300, Group: "settings.cat.shop.label"},
 	// ut-docs#3086: Languages shown to staff, right after the Language card.
-	{Key: "settings-staff-languages", Href: "#settings-staff-languages", LabelKey: "settings.staff_languages.title", Order: 2350, Group: "settings.cat.shop.label"},
-	{Key: "settings-shop-type", Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400, Group: "settings.cat.shop.label"},
-	{Key: "settings-all", Href: "#settings-all", LabelKey: "settings.all", Order: 2500, Group: "settings.cat.advanced.label"},
+	{Key: "settings-staff-languages", Class: ClassCommon, Href: "#settings-staff-languages", LabelKey: "settings.staff_languages.title", Order: 2350, Group: "settings.cat.shop.label"},
+	{Key: "settings-shop-type", Class: ClassEssential, Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400, Group: "settings.cat.shop.label"},
+	{Key: "settings-all", Class: ClassAdvanced, Href: "#settings-all", LabelKey: "settings.all", Order: 2500, Group: "settings.cat.advanced.label"},
 }
 
 var coreSettingsIndex = func() map[string]int {
@@ -812,7 +820,7 @@ var menuSpec = slotSpec{name: MenuSlot, lookup: CoreMenuEntry, protected: IsProt
 
 // itemsSpec allows neither hide (no restore surface exists for this slot
 // yet — Decision D) nor icon/group (items_rail.html draws neither): only
-// relabel and reorder, exactly what the shipped plugins/layout-salon demo
+// relabel and reorder, exactly what the retired salon layout plugin (now the service template's legacy_layout)
 // needs. Widen this once the render side and a restore surface exist.
 var itemsSpec = slotSpec{name: ItemsSlot, lookup: CoreItemsEntry, protected: IsProtectedItemsKey}
 
