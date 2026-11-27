@@ -669,9 +669,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			fiscalOverrideActive = true
 			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
 		}
-		// NeedsManagerPIN (ut-docs#3134): the manager-PIN field renders only
-		// for a session whose role isn't granted "refund".
-		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
 			"theme":                d.ResolvedTheme(r),
@@ -681,7 +678,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"Methods":              methods,
 			"LegGroups":            legGroups,
 			"AuthOff":              authOff,
-			"NeedsManagerPIN":      needsManagerPIN,
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
 			// RefundAttemptID (ut-docs#2415): a stable id for this ONE
@@ -773,28 +769,16 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 
 		// The refund permission (ut-docs#3134): a role granted "refund" on
 		// /users/permissions refunds with no PIN (actor = session user); any
-		// other session needs a manager PIN, whose owner becomes the actor
-		// (pos-auth) and the blocked session user is recorded alongside it
-		// on the refund audit row (blockedActorID, ut-docs#557). The
-		// refused response keeps its pre-#3134 shape (403 "manager PIN
-		// required", 429 on lockout) — refund.html's own PIN field and the
-		// e2e specs read it.
-		actorID := getSessionUserID(r)
-		blockedActorID := ""
-		if !authOff {
-			elev := checkOrElevate(d, r, "refund", strings.TrimSpace(r.Form.Get("manager_pin")))
-			switch elev.Outcome {
-			case needsElevation:
-				status := http.StatusForbidden
-				if errors.Is(elev.Err, auth.ErrLockedOut) {
-					status = http.StatusTooManyRequests
-				}
-				http.Error(w, "manager PIN required", status)
-				return
-			case elevated:
-				actorID = elev.ApproverID
-				blockedActorID = elev.ActorID
-			}
+		// other session needs a manager's approval, whose owner becomes the
+		// actor (pos-auth) and the blocked session user is recorded alongside
+		// it on the refund audit row (blockedActorID, ut-docs#557). The
+		// approval is the prompt's single-use, bound one (ut-docs#7134,
+		// #7085): checked below, after every refusable input error, because
+		// it covers values only known by then. A non-HTMX client has no
+		// prompt to show, so it is refused here, before any PIN look-up.
+		if !authOff && r.Header.Get("HX-Request") == "" && !canPerform(d, r, "refund") {
+			http.Error(w, "manager PIN required", http.StatusForbidden)
+			return
 		}
 
 		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#731, fiscal.RequiresHardGate): a refund moves real
@@ -904,14 +888,6 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		if method == "" {
 			method = "cash"
 		}
-		if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
-			// Same reasoning as EnsureStockLocation above: generic internal DB
-			// failure on the refund path, so the refund-flow key, not
-			// pos_api.go's sale-worded pos.toast.tender_failed.
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
-			return
-		}
-
 		// Engine computes the refund total from the same inputs as the
 		// original sale; the payment must cover it exactly. (`inclusive`
 		// was already resolved above, before the service-charge proration.)
@@ -985,6 +961,50 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 					legRefunds = append(legRefunds, data.RefundLegRefund{OriginalPaymentID: l.PaymentID, Amount: alloc[i]})
 				}
 			}
+		}
+
+		// The bound manager approval (ut-docs#7134). Everything that can
+		// refuse the refund has run, nothing state-changing has. PIN checked
+		// under refundSaleLocks on purpose: the binding covers state only
+		// stable under the lock; the lock is already held across the provider
+		// call. A cashier without the permission gets the prompt (HTTP 200,
+		// also for a lockout, so htmx swaps it); the retry is only honoured
+		// if every bound value is unchanged.
+		actorID := getSessionUserID(r)
+		blockedActorID := ""
+		if !authOff {
+			locale := httpx.ResolveLocale(w, r)
+			hidden := refundApprovalFields(detail, method, r.Form)
+			// The summary names the method as the screen does (UX M1); the
+			// hidden field and the binding keep the raw id.
+			methodName := legMethodLabels(r.Context(), d, locale)[method]
+			if methodName == "" {
+				methodName = receiptMethodLabel(locale, method)
+			}
+			elev, tok := checkOrElevateBound(d, r, approvalBinding("/api/refund", actorID,
+				[]string{"refund"}, hidden, refundApprovalExtras(detail, guard, refundTotal, legs, legRefunds)...), "refund")
+			switch elev.Outcome {
+			case needsElevation:
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
+				w.Header().Set("HX-Retarget", "#refund-msg")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				renderElevationPrompt(w, r, "/api/refund", "#refund-msg",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.refund"),
+						httpx.FormatMoneyDisplay(refundTotal.Minor(), locale), detail.ReceiptNo, methodName),
+					hidden, elev)
+				return // deferred unlock releases the sale lock
+			case elevated:
+				actorID = elev.ApproverID
+				blockedActorID = elev.ActorID
+			}
+		}
+
+		if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
+			// Same reasoning as EnsureStockLocation above: generic internal DB
+			// failure on the refund path, so the refund-flow key, not
+			// pos_api.go's sale-worded pos.toast.tender_failed.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
 		}
 
 		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
