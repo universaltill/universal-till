@@ -401,14 +401,6 @@ func (s *Store) SignRecover(storeID, deviceID, challengeID, nonce, expiresAt str
 	})
 }
 
-// SignRejoin signs the same-device pairing proof (ADR-0217 §3.8): the device
-// id, this key and the hex SHA-256 of the pairing code (never the code).
-func (s *Store) SignRejoin(deviceID, codeHash string) (kid, publicKey, sig string, err error) {
-	return s.sign(func(pub string) ([]byte, error) {
-		return joinSigned(rejoinDomain, deviceID, pub, codeHash)
-	})
-}
-
 var (
 	sharedMu sync.Mutex
 	shared   *Store

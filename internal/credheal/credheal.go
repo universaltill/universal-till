@@ -186,6 +186,7 @@ type Engine struct {
 	settled  time.Time // the last round or heal finished
 	healed   time.Time
 	heals    []time.Time
+	gen      uint64 // bumped when the credential's story changes under a running round (reset, working)
 
 	sig      chan Signal
 	resumeCh chan struct{}
@@ -392,6 +393,8 @@ func (e *Engine) untilNext() (time.Duration, bool) {
 
 // handle folds one signal in (loop goroutine only).
 func (e *Engine) handle(ctx context.Context, s Signal) {
+	// Server-supplied words are clamped before they are logged or saved.
+	s.Code, s.Reason = clamp(s.Code, 40), clamp(s.Reason, 40)
 	v := classify(s)
 	if v.kind == kindNeedsPerson && !s.FromCheckin {
 		// Another route's device_revoked carries no reason: the probe (a
@@ -498,6 +501,9 @@ func (e *Engine) round(ctx context.Context, skipProbe bool, s Signal) {
 		e.mu.Unlock()
 	}()
 	log := logging.L()
+	e.mu.Lock()
+	gen := e.gen
+	e.mu.Unlock()
 	if h := getHooks(); !skipProbe && h.Probe != nil {
 		pr := h.Probe(ctx)
 		switch {
@@ -535,6 +541,18 @@ func (e *Engine) round(ctx context.Context, skipProbe bool, s Signal) {
 		// A cloud restore makes every keyed till fail at once: spread them.
 		e.d.Pause(ctx, time.Duration(e.d.Jitter()*float64(firstJitter)))
 		if ctx.Err() != nil {
+			return
+		}
+		// The till may have been paired, reset or have worked again while the
+		// round slept: never rotate a credential that is healthy now.
+		e.mu.Lock()
+		changed := e.gen != gen || e.st.State != StateHealing
+		e.mu.Unlock()
+		if changed {
+			return
+		}
+		if ok, why := e.d.CanRecover(ctx); !ok {
+			e.cannotRecover(ctx, why)
 			return
 		}
 	}
@@ -666,6 +684,9 @@ func (e *Engine) markOK(ctx context.Context) {
 func (e *Engine) working() {
 	e.mu.Lock()
 	idle := e.st.State == StateOK && e.pending.IsZero()
+	if !idle {
+		e.gen++
+	}
 	e.mu.Unlock()
 	if idle {
 		return
@@ -678,6 +699,7 @@ func (e *Engine) reset() {
 	last := e.st.LastHealedAt
 	e.st = Status{State: StateOK, LastHealedAt: last}
 	e.attempts, e.refused, e.nextAt, e.code, e.pending, e.heals = 0, 0, time.Time{}, "", time.Time{}, nil
+	e.gen++
 	e.mu.Unlock()
 	e.notify()
 }
@@ -805,10 +827,24 @@ func (e *Engine) save(ctx context.Context) {
 			vals[k] = ""
 		}
 	}
-	for k, v := range vals {
-		if err := e.d.KV.Set(ctx, k, v); err != nil {
+	// Not atomic, so ordered: heals and the details first, the state key last
+	// (a crash then leaves the old state, which start-up re-runs a round for);
+	// going back to ok clears the state key first.
+	setOne := func(k string) {
+		if err := e.d.KV.Set(ctx, k, vals[k]); err != nil {
 			logging.L().Warnf("credheal: save %s: %v", k, err)
 		}
+	}
+	if st.State == StateOK {
+		setOne(data.CredHealStateKey)
+	}
+	for k := range vals {
+		if k != data.CredHealStateKey {
+			setOne(k)
+		}
+	}
+	if st.State != StateOK {
+		setOne(data.CredHealStateKey)
 	}
 }
 

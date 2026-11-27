@@ -680,3 +680,34 @@ func TestResumeWithoutEngineIsANoop(t *testing.T) {
 	active.Store(nil)
 	Resume()
 }
+
+// Review 2026-11-27: a till that is paired (identity reset) or works again while
+// a round sleeps its jitter must not have its healthy credential rotated.
+func TestRoundDoesNotRecoverACredentialThatBecameHealthyDuringTheJitter(t *testing.T) {
+	for name, interrupt := range map[string]func(e *Engine){
+		"identity reset": func(e *Engine) { e.reset() },
+		"working again":  func(e *Engine) { e.working() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			r.e.d.Pause = func(context.Context, time.Duration) { interrupt(r.e) }
+			r.e.handle(bg, unauth(true))
+			if r.recovers.Load() != 0 {
+				t.Fatalf("recover calls = %d, want 0: the credential was healthy after the pause", r.recovers.Load())
+			}
+			if st := r.e.status(); st.State != StateOK {
+				t.Fatalf("status = %+v, want ok", st)
+			}
+		})
+	}
+}
+
+// Server-supplied reason words are clamped before they are saved.
+func TestServerReasonIsClampedBeforeItIsSaved(t *testing.T) {
+	r := newRig(t)
+	long := strings.Repeat("x", 500) + "\nforged log line"
+	r.e.handle(bg, Signal{Source: "checkin", Code: "device_revoked", Reason: long, FromCheckin: true})
+	if got := r.kv.val(data.CredHealCodeKey); len(got) > 90 || strings.ContainsAny(got, "\n\r") {
+		t.Fatalf("saved code %q is not clamped", got)
+	}
+}

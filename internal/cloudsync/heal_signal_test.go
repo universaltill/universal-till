@@ -76,6 +76,14 @@ func serve401(body string) *httptest.Server {
 	}))
 }
 
+// resetRefusalLog clears the once-per-change refusal log between tests. It lives
+// here, not in heal.go, because only tests call it (the deadcode baseline guard).
+func resetRefusalLog() {
+	refusalLog.Lock()
+	refusalLog.last = nil
+	refusalLog.Unlock()
+}
+
 // The revoke signal carries reason and the recover hint on every route.
 func TestRevokeSignalCarriesReasonAndRecoverHint(t *testing.T) {
 	body := `{"data":{"reason":"pair_abandoned","recover":true},"error":{"code":"device_revoked"}}`
@@ -94,7 +102,7 @@ func TestRevokeSignalCarriesReasonAndRecoverHint(t *testing.T) {
 
 func TestRevokeSignalDetailAndReasonsAreClamped(t *testing.T) {
 	cases := map[string]string{
-		`{"data":{"reason":"moved","moved_to":"Other shop"},"error":{"code":"device_revoked"}}`:      "Other shop",
+		`{"data":{"reason":"moved","moved_to":"Other shop"},"error":{"code":"device_revoked"}}`:      "", // a store id, never kept
 		`{"data":{"reason":"replaced","replaced_by":"Counter 2"},"error":{"code":"device_revoked"}}`: "Counter 2",
 		`{"data":{"reason":"removed","removed_by":"owner"},"error":{"code":"device_revoked"}}`:       "",
 		`{"data":{"reason":"moved","moved_to":"x"},"error":{"code":"unauthorized"}}`:                 "",

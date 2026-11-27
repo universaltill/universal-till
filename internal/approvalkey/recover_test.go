@@ -111,17 +111,3 @@ func TestSignRecoverVerifies(t *testing.T) {
 		t.Fatal("signature or kid wrong")
 	}
 }
-
-func TestSignRejoinVerifies(t *testing.T) {
-	st := storeWithSeed(t, strings.Repeat("09", 32))
-	kid, pub, sig, err := st.SignRejoin("till-1", strings.Repeat("ab", 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pk, _ := base64.RawURLEncoding.DecodeString(pub)
-	want := "universaltill/till-rejoin/v1\ntill-1\n" + pub + "\n" + strings.Repeat("ab", 32)
-	raw, _ := base64.RawURLEncoding.DecodeString(sig)
-	if !ed25519.Verify(pk, []byte(want), raw) || kid != KID(pk) {
-		t.Fatal("rejoin signature wrong")
-	}
-}

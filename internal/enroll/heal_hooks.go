@@ -2,7 +2,9 @@ package enroll
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -17,19 +19,55 @@ import (
 // code, data.reason, data.recover) for its cloud call.
 var deadCredentialHook atomic.Pointer[func(source, code, reason string, recover bool)]
 
+// earlyDead is the first dead-credential answer that arrived before the
+// engine was installed (the approval-key report at start-up runs before the
+// engine exists). SetDeadCredentialHook replays it once, so a till with a dead
+// credential and no cloud plan does not wait for the next retry 15 minutes
+// later; the engine probes with a real check-in first, so a stray 401 never
+// rotates anything (ADR-0217 as amended, ADR-0148).
+var earlyDead struct {
+	sync.Mutex
+	set                  bool
+	at                   time.Time
+	source, code, reason string
+	recover              bool
+}
+
+// earlyDeadMaxAge keeps a signal from an engine that never started from being
+// replayed much later.
+const earlyDeadMaxAge = 5 * time.Minute
+
 // SetDeadCredentialHook installs (or, with nil, removes) the engine's signal.
+// Installing it replays a recent early signal once.
 func SetDeadCredentialHook(f func(source, code, reason string, recover bool)) {
 	if f == nil {
 		deadCredentialHook.Store(nil)
+		earlyDead.Lock()
+		earlyDead.set = false
+		earlyDead.Unlock()
 		return
 	}
 	deadCredentialHook.Store(&f)
+	earlyDead.Lock()
+	e := earlyDead
+	earlyDead.set = false
+	earlyDead.Unlock()
+	if e.set && time.Since(e.at) < earlyDeadMaxAge {
+		f(e.source, e.code, e.reason, e.recover)
+	}
 }
 
 func reportDeadCredential(source, code, reason string, recover bool) {
 	if f := deadCredentialHook.Load(); f != nil {
 		(*f)(source, code, reason, recover)
+		return
 	}
+	earlyDead.Lock()
+	if !earlyDead.set {
+		earlyDead.set, earlyDead.at = true, time.Now()
+		earlyDead.source, earlyDead.code, earlyDead.reason, earlyDead.recover = source, code, reason, recover
+	}
+	earlyDead.Unlock()
 }
 
 // identityResetHook: this till's cloud identity was reset (a pairing, a new
