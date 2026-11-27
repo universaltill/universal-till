@@ -31,11 +31,60 @@ import (
 )
 
 // approvalRetryDelays are the waits between attempts after a failure
-// (network down, 5xx): slow, and then it gives up until the next start/pair.
+// (network down, 5xx, a refused credential): slow, and after the last one it
+// goes on every approvalRetryTail, for ever (ADR-0222 T3: a till that could
+// not pin its key must still do so once it can, or it can never heal).
 // Guarded by approvalReport's mutex: kickApprovalKeyReport copies it under the
 // lock before its goroutine starts, so a report still running in the
 // background never reads it while a test swaps it (ut-docs#7009).
 var approvalRetryDelays = []time.Duration{15 * time.Minute, time.Hour, 6 * time.Hour}
+
+// approvalRetryTail is the wait after the listed ones; guarded like them.
+var approvalRetryTail = 24 * time.Hour
+
+// KeyApprovalKeyConflictAt (RFC 3339) is when the cloud last answered 409 to
+// the key report (a different key is pinned): saved so the Tills page can say
+// "this till can't prove who it is" after a restart. Per till
+// ("till_identity." prefix); cleared when the cloud takes the key.
+const KeyApprovalKeyConflictAt = "till_identity.approval_key_conflict_at"
+
+// approvalWake lets a heal cut a long wait short: the report retries at once.
+var approvalWake = make(chan struct{}, 1)
+
+func wakeApprovalReport() {
+	select {
+	case approvalWake <- struct{}{}:
+	default:
+	}
+}
+
+// approvalKV is where a 409 is saved; set by Init.
+var approvalKV atomic.Pointer[Settings]
+
+func setApprovalReportKV(kv Settings) {
+	if kv == nil {
+		approvalKV.Store(nil)
+		return
+	}
+	approvalKV.Store(&kv)
+}
+
+func saveApprovalConflict(ctx context.Context, on bool) {
+	p := approvalKV.Load()
+	if p == nil {
+		return
+	}
+	kv := *p
+	v := ""
+	if on {
+		v = time.Now().UTC().Format(time.RFC3339)
+	} else if cur, _, _ := kv.Get(ctx, KeyApprovalKeyConflictAt); cur == "" {
+		return
+	}
+	if err := kv.Set(ctx, KeyApprovalKeyConflictAt, v); err != nil {
+		logging.L().Debugf("approval key: save conflict state: %v", err)
+	}
+}
 
 type reportOutcome int
 
@@ -91,12 +140,34 @@ func reportApprovalKeyOnce(ctx context.Context, m config.MarketplaceConfig) repo
 		return reportRetry
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		log.Debugf("approval key reported (kid %s)", rep["kid"])
+		approvalConflict.Store(false)
+		saveApprovalConflict(ctx, false)
 		return reportDone
+	case resp.StatusCode == http.StatusUnauthorized:
+		// A refused credential: tell the heal engine (an envelope code only;
+		// a proxy's bare 401 is not evidence) and keep retrying: the report
+		// works again once the till has healed.
+		var env struct {
+			Data struct {
+				Reason  string `json:"reason"`
+				Recover bool   `json:"recover"`
+			} `json:"data"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &env) == nil && env.Error.Code != "" {
+			reportDeadCredential("approval_key", env.Error.Code, env.Data.Reason, env.Data.Recover)
+		} else {
+			log.Debugf("approval key report refused (HTTP 401 without an error code)")
+		}
+		return reportRetry
 	case resp.StatusCode == http.StatusConflict:
+		saveApprovalConflict(ctx, true)
 		if approvalConflict.CompareAndSwap(false, true) {
 			log.Infof("approval key: the cloud has a different key pinned for this till (kid %s); moving a till needs a support reset", rep["kid"])
 		}
@@ -140,7 +211,7 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 		approvalReport.inflight = map[string]bool{}
 	}
 	approvalReport.inflight[key] = true
-	delays := approvalRetryDelays // the slice is never mutated in place, only replaced
+	delays, tail := approvalRetryDelays, approvalRetryTail // the slice is never mutated in place, only replaced
 	approvalReport.Unlock()
 	if wg != nil {
 		wg.Add(1)
@@ -168,13 +239,18 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 				}
 				return
 			}
-			if attempt >= len(delays) {
-				return
+			wait := tail
+			if attempt < len(delays) {
+				wait = delays[attempt]
 			}
+			t := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return
-			case <-time.After(delays[attempt]):
+			case <-approvalWake:
+				t.Stop()
+			case <-t.C:
 			}
 		}
 	}()

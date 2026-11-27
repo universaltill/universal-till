@@ -1976,12 +1976,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			if elev.Outcome == elevated {
 				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", auditEntityID, reason,
-					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					lineTargetDetail(key, code), now, ""); err != nil {
 					logging.L().Errorf("insert elevated shrinkage audit: %v", err)
 				}
 			} else {
 				if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", auditEntityID, reason,
-					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					lineTargetDetail(key, code), now, ""); err != nil {
 					logging.L().Errorf("insert shrinkage audit: %v", err)
 				}
 			}
@@ -2250,19 +2250,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			} else {
 				hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
 			}
+			// ut-docs#7096: the line identity too, so a code-addressed post cannot
+			// be approved and then land on a replaced line.
+			lineExtras := []string{strconv.FormatInt(cur.PriceCents.Minor(), 10), cur.LineKey, cur.SKU}
 			var tok string
 			switch {
 			case reduction && raise:
 				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
-					[]string{"void_comp_waste", "price_override"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					[]string{"void_comp_waste", "price_override"}, hidden, lineExtras...),
 					"void_comp_waste", "price_override")
 			case reduction:
 				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
-					[]string{"void_comp_waste"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					[]string{"void_comp_waste"}, hidden, lineExtras...),
 					"void_comp_waste")
 			default:
 				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
-					[]string{"price_override"}, hidden, strconv.FormatInt(cur.PriceCents.Minor(), 10)),
+					[]string{"price_override"}, hidden, lineExtras...),
 					"price_override")
 			}
 			if elev.Outcome == needsElevation {
@@ -2325,7 +2328,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
 				logging.L().Errorf("insert shrinkage event: %v", err)
 			}
-			detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
+			detail := lineTargetDetail(key, code)
+			detail["from_qty"], detail["to_qty"] = cur.Qty, qty
 			if elev.Outcome == elevated {
 				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
 					logging.L().Errorf("insert elevated line-reduction audit: %v", err)
@@ -2339,7 +2343,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// A line that left (qty 0) or a voucher line carries no discount.
 		if updateErr == nil && cur != nil && cur.GiftVoucher == nil && qty > 0 && discount != cur.LineDiscount.Minor() {
 			auditValueGate(r.Context(), repo, r, elev, "pos_line", cur.LineKey, "line_discount",
-				map[string]any{"key": key, "code": code, "from_discount": cur.LineDiscount.Minor(), "to_discount": discount})
+				withDetail(lineTargetDetail(key, code), "from_discount", cur.LineDiscount.Minor(), "to_discount", discount))
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -2686,16 +2690,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
 				return
 			}
-			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			hidden := []elevationHiddenField{
+				{Name: "from_lines", Value: strconv.Itoa(lineCount)},
+				{Name: "from_total", Value: strconv.FormatInt(snap.Total.Minor(), 10)},
+			}
+			// ut-docs#7096: bind the whole basket the approver saw, not just its
+			// count and total, so the PIN cannot clear a swapped basket or be replayed.
+			var tok string
+			elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/reset", getSessionUserID(r),
+				[]string{"void_comp_waste"}, hidden, resetApprovalExtras(snap)...), "void_comp_waste")
 			if elev.Outcome == needsElevation {
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				w.Header().Set("HX-Retarget", "#shrinkage-hint")
 				w.Header().Set("HX-Reswap", "innerHTML")
 				renderElevationPrompt(w, r, "/api/pos/reset", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.clear_sale"), lineCount, httpx.FormatMoneyDisplay(snap.Total.Minor(), locale)),
-					[]elevationHiddenField{
-						{Name: "from_lines", Value: strconv.Itoa(lineCount)},
-						{Name: "from_total", Value: strconv.FormatInt(snap.Total.Minor(), 10)},
-					}, elev)
+					hidden, elev)
 				return
 			}
 		}
@@ -4650,4 +4660,44 @@ func maskTxnRef(ref string) string {
 		return "…"
 	}
 	return "…" + ref[len(ref)-4:]
+}
+
+// resetApprovalExtras (ut-docs#7096) is everything New sale would destroy that
+// from_lines/from_total do not pin: each line's identity and value, the
+// add-by-hand lines, the sale discount and the table. One element per field.
+func resetApprovalExtras(snap pos.BasketSnapshot) []string {
+	var out []string
+	for _, l := range snap.Lines {
+		out = append(out, "line", l.LineKey, l.SKU,
+			strconv.FormatFloat(l.Qty, 'f', -1, 64),
+			strconv.FormatInt(l.PriceCents.Minor(), 10),
+			strconv.FormatInt(l.LineDiscount.Minor(), 10))
+	}
+	for _, h := range snap.AddByHand {
+		out = append(out, "hand", h.Name, strconv.FormatFloat(h.Qty, 'f', -1, 64),
+			strconv.Itoa(len(h.Modifiers)))
+		out = append(out, h.Modifiers...)
+	}
+	out = append(out, "sale_discount", snap.DiscountType,
+		strconv.FormatInt(snap.DiscountValue.Minor(), 10),
+		strconv.FormatInt(snap.DiscountPercentBP, 10),
+		"table", snap.TableID)
+	return out
+}
+
+// lineTargetDetail (ut-docs#7096): key wins over code (the handlers act on
+// the key), so an unbound code never lands in an audit row.
+func lineTargetDetail(key, code string) map[string]any {
+	if key != "" {
+		return map[string]any{"key": key}
+	}
+	return map[string]any{"key": "", "code": code}
+}
+
+// withDetail adds key/value pairs to m and returns it.
+func withDetail(m map[string]any, kv ...any) map[string]any {
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i].(string)] = kv[i+1]
+	}
+	return m
 }

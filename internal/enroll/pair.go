@@ -219,7 +219,7 @@ func storeLeft(oldStore, newStore string) {
 // holds the attempt slot.
 func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) (oldStore string) {
 	log := logging.L()
-	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID}
+	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID, keyRegisterRearms, keyInUseElsewhere}
 	if !replica {
 		wipe = append(wipe, keyStoreID, keyMerchantID)
 		// The caller reports the left shop (storeLeft) only once the new
@@ -234,6 +234,7 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 	}
 	// A new identity is not the replaced one (ut-docs#5058).
 	clearReplaced(ctx, kv)
+	clearHeal(ctx, kv)
 	// And a pairing ends a restored-install reset (ut-docs#5157).
 	if err := kv.Set(ctx, keyRestoredAt, ""); err != nil {
 		log.Warnf("enrolment: pair: clear %s: %v", keyRestoredAt, err)

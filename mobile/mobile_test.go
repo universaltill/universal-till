@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/devicepay"
@@ -1142,5 +1143,44 @@ func TestSetUpdateBridge_RegistersWithAndroidupdate(t *testing.T) {
 	SetUpdateBridge(nil)
 	if got := apkprefetch.RegisteredPrefetcher(); got != nil {
 		t.Fatalf("after SetUpdateBridge(nil): %#v, want nil", got)
+	}
+}
+
+// Resume is safe to call at any time, including before Start and after Stop
+// (a shell fires it on every foreground): it never blocks and never panics.
+func TestResume_SafeWhenNotRunning(t *testing.T) {
+	done := make(chan struct{})
+	go func() { Resume(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume blocked with no server running")
+	}
+}
+
+// ADR-0222 / ut-docs#7097 T8: when the app comes back to the foreground the
+// heal engine inside the running server asks the cloud about the credential
+// at once, instead of waiting for a timer that did not run while the phone was
+// suspended. The probe hook is replaced after Start to count the ask.
+func TestResume_AsksTheHealEngineAboutTheCredential(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	if _, err := Start(dataDir); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	probes := make(chan struct{}, 4)
+	credheal.SetHooks(credheal.Hooks{Probe: func(context.Context) credheal.ProbeResult {
+		probes <- struct{}{}
+		return credheal.ProbeResult{OK: true}
+	}})
+	t.Cleanup(func() { credheal.SetHooks(credheal.Hooks{}) })
+
+	Resume()
+	select {
+	case <-probes:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Resume did not reach the heal engine: no credential probe within 5s")
+	}
+	if !IsRunning() {
+		t.Fatal("Resume must never restart or stop a healthy server (a sale may be open)")
 	}
 }

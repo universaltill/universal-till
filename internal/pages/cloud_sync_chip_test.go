@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -132,6 +133,9 @@ func TestCloudSyncChip_EmptyWhen(t *testing.T) {
 		},
 		"refused credential": func(t *testing.T, d *common.Deps) {
 			cloudAuthChipStatus = func() cloudsync.AuthChip { return cloudsync.AuthChip{Show: true} }
+		},
+		"heal engine reconnecting": func(t *testing.T, d *common.Deps) {
+			pinHealStatus(t, credheal.Status{State: credheal.StateHealing, Reason: credheal.ReasonReconnecting})
 		},
 		"replaced": func(t *testing.T, d *common.Deps) {
 			enroll.MarkReplaced(t.Context(), d.Settings, "Till 2", time.Now().UTC().Format(time.RFC3339))

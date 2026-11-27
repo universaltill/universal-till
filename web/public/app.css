@@ -6176,6 +6176,12 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
+/* ADR-0222: the heal chip is one control (short words · button label). Visible pill stays
+   one text line; ::after widens the hit area to 44px like Sync now. A till that fixes itself is plain
+   status text, not the amber pill: the words carry the state. */
+.statusbar .sb-cloud-auth[href] { position: relative; }
+.statusbar .sb-cloud-auth.is-selfhealing { color: inherit; background: transparent; font-weight: 400; padding-inline: 0; }
+.statusbar .sb-cloud-auth-btn { text-decoration: underline; }
 /* ut-docs#6977: last cloud sync (cloud_sync_chip.html). Plain status text
    while fresh (like the network light); the amber pill of sb-cloud-auth when
    stale. Words carry the state. The text may wrap; the button never does. */
@@ -6196,7 +6202,8 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
   background: transparent; color: inherit; font: inherit; font-weight: 700;
   white-space: nowrap; cursor: pointer;
 }
-.statusbar .sb-cloud-sync-now::after { content: ""; position: absolute; inset-inline: 0; inset-block: calc((100% - 44px) / 2); }
+.statusbar .sb-cloud-sync-now::after,
+.statusbar .sb-cloud-auth[href]::after { content: ""; position: absolute; inset-inline: 0; inset-block: calc((100% - 44px) / 2); }
 .statusbar .sb-cloud-sync-now:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .statusbar .sb-cloud-sync-now:disabled { cursor: progress; opacity: .8; }
 .statusbar .sb-cloud-sync-now-busy { display: none; }
@@ -7493,7 +7500,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-move-pending, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth:not(.is-selfhealing), .sb-move-pending, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
@@ -7507,6 +7514,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
   body.nav-drawer-open .statusbar .sb-cloud-sync-now { min-block-size: 44px; }
+  body.nav-drawer-open .statusbar .sb-cloud-auth[href] { min-block-size: 44px; display: inline-flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
   body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-cloud-sync, .sb-move-pending, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky

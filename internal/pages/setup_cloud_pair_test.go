@@ -459,7 +459,7 @@ func TestCloudPairHeldStoreFieldsAreRenderedOnlyFromTheCloud(t *testing.T) {
 func TestJoinScreenOffersMainTillChoice(t *testing.T) {
 	mux, _, _, _ := cloudWizard(t)
 	html := getSetup(mux, "?lang=en", "en").Body.String()
-	for _, want := range []string{`value="main"`, "Main till (first till of the shop)", `/api/setup/cloud-pair`, `hx-headers`} {
+	for _, want := range []string{`value="main"`, "Main till (only if the shop has no till yet", `/api/setup/cloud-pair`, `hx-headers`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("join screen lacks %q", want)
 		}

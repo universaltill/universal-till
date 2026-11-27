@@ -102,8 +102,8 @@ const (
 // sync.primary_url — a replica never dials, whatever tier it has cached;
 // its role is then primary or backoffice, both main-till roles to the
 // cloud), and the cached cloud_link tier realtime in "always" mode
-// (on_demand needs the check-in's link_wanted_for_s, not built — ADR-0117
-// §2). cloudLinkTarget's own boolean result is the same whatever order
+// (or on_demand while the check-in's link_wanted_for_s deadline is in force —
+// ADR-0117 §2, ADR-0219). cloudLinkTarget's own boolean result is the same whatever order
 // these three run in; only the reason (for the status row) depends on it.
 func cloudLinkGate(ctx context.Context, cfg *config.Config, s entitlement.Reader, now time.Time) (cloudlink.Target, cloudLinkGateReason) {
 	m := enroll.Effective(cfg).Marketplace
@@ -113,7 +113,12 @@ func cloudLinkGate(ctx context.Context, cfg *config.Config, s entitlement.Reader
 	if v, _, _ := s.Get(ctx, "sync.primary_url"); strings.TrimSpace(v) != "" {
 		return cloudlink.Target{}, gateNotMainTill
 	}
-	if tier, mode := entitlement.CloudLink(ctx, s, now); tier != "realtime" || mode != "always" {
+	tier, mode := entitlement.CloudLink(ctx, s, now)
+	// on_demand (ut-docs#7101, ADR-0219): dial only while the cloud's wake-up is
+	// in force; the client re-reads this gate every 30 s while linked, so a
+	// lapsed wake-up closes the socket and the till is back to its 2-minute poll.
+	onDemand := mode == "on_demand" && entitlement.LinkWanted(ctx, s, now)
+	if tier != "realtime" || (mode != "always" && !onDemand) {
 		return cloudlink.Target{}, gateTierPeriodic
 	}
 	return cloudlink.Target{
