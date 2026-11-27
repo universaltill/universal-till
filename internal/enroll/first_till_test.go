@@ -397,7 +397,8 @@ func TestSettingsPairFailureProblemClearsOnSuccessfulPair_5098(t *testing.T) {
 		t.Fatalf("open problems after the refusal = %+v, want 1", open)
 	}
 	cloud.mu.Lock()
-	cloud.status, cloud.reply = 200, firstTillAnswer
+	// An older cloud names no device in its answer; Pair accepts that.
+	cloud.status, cloud.reply = 200, `{"data":{"store_id":"store-paired","merchant_id":"merchant-paired","device_token":"`+pairToken+`"},"error":null}`
 	cloud.mu.Unlock()
 	if _, err := Pair(context.Background(), cfg, kv, pairCode); err != nil {
 		t.Fatal(err)
