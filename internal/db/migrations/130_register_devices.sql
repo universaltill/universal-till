@@ -16,24 +16,33 @@ CREATE TABLE IF NOT EXISTS register_devices (
 );
 
 -- Backfill from the latest till_enrolled audit row per till. INSERT OR IGNORE:
--- a register that is gone, or a device id already linked, is skipped. A till
--- row with no device id links with '' (unknown). The self register is not a
--- joined till's register and gets no row.
+-- a register that is gone is skipped. A till row with no device id links with
+-- '' (unknown). The self register is not a joined till's register and gets no
+-- row. Several tills rows can share one device id (a phone that re-joined under
+-- new names, tills.device_id has no unique index): the NEWEST enrolment keeps
+-- the device link, the older registers are still linked but with '' (unknown),
+-- so no row is lost and the unique index below cannot fail at boot.
 INSERT OR IGNORE INTO register_devices (register_id, device_id, till_id, source)
-SELECT x.reg_id, COALESCE(t.device_id, ''), x.till_id, 'backfill'
+SELECT y.reg_id,
+       CASE WHEN y.dev <> '' AND y.rn > 1 THEN '' ELSE y.dev END,
+       y.till_id, 'backfill'
 FROM (
-    SELECT a.entity_id AS till_id,
-           CASE WHEN json_valid(a.data_json) THEN json_extract(a.data_json, '$.register_id') END AS reg_id
-    FROM audit_log a
-    WHERE a.entity_type = 'till' AND a.action = 'till_enrolled'
-      AND a.rowid = (SELECT a2.rowid FROM audit_log a2
-                     WHERE a2.entity_type = 'till' AND a2.entity_id = a.entity_id AND a2.action = 'till_enrolled'
-                     ORDER BY a2.created_at DESC, a2.rowid DESC LIMIT 1)
-) x
-LEFT JOIN tills t ON t.id = x.till_id
-WHERE x.reg_id IS NOT NULL
-  AND x.reg_id IN (SELECT id FROM registers)
-  AND x.reg_id NOT IN (SELECT value FROM settings WHERE key = 'sync.till_register_id');
+    SELECT x.reg_id, x.till_id, x.dev,
+           ROW_NUMBER() OVER (PARTITION BY x.dev ORDER BY x.at DESC, x.rid DESC) AS rn
+    FROM (
+        SELECT a.entity_id AS till_id, a.created_at AS at, a.rowid AS rid,
+               CASE WHEN json_valid(a.data_json) THEN json_extract(a.data_json, '$.register_id') END AS reg_id,
+               COALESCE((SELECT t.device_id FROM tills t WHERE t.id = a.entity_id), '') AS dev
+        FROM audit_log a
+        WHERE a.entity_type = 'till' AND a.action = 'till_enrolled'
+          AND a.rowid = (SELECT a2.rowid FROM audit_log a2
+                         WHERE a2.entity_type = 'till' AND a2.entity_id = a.entity_id AND a2.action = 'till_enrolled'
+                         ORDER BY a2.created_at DESC, a2.rowid DESC LIMIT 1)
+    ) x
+    WHERE x.reg_id IS NOT NULL
+      AND x.reg_id IN (SELECT id FROM registers)
+      AND x.reg_id NOT IN (SELECT value FROM settings WHERE key = 'sync.till_register_id')
+) y;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_register_devices_device ON register_devices (device_id) WHERE device_id <> '';
 CREATE INDEX IF NOT EXISTS idx_register_devices_till ON register_devices (till_id) WHERE till_id <> '';

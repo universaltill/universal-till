@@ -61,3 +61,47 @@ func TestMigration130BackfillsFromEnrolmentAudit(t *testing.T) {
 		t.Fatalf("an unknown device id may repeat: %v", err)
 	}
 }
+
+// A phone that re-joined under three names leaves three tills rows with the
+// same device id. The upgrade must boot, the NEWEST enrolment keeps the device
+// link, the two older registers stay linked with "" (unknown): no row lost.
+func TestMigration130ThreeTillsSharingOneDeviceBoots(t *testing.T) {
+	d := openMigratedTo(t, filepath.Join(t.TempDir(), "r.db"), 119)
+	defer d.Close()
+	for _, s := range []string{
+		`INSERT INTO registers (id, name, is_active) VALUES ('rOld','phone',1),('rMid','iphone',1),('rNew','phone2',1)`,
+		`INSERT INTO tills (id, name, device_id) VALUES ('t1','phone','dev-P'),('t2','iphone','dev-P'),('t3','phone2','dev-P')`,
+		`INSERT INTO audit_log (id, entity_type, entity_id, action, data_json, created_at) VALUES
+		  ('a1','till','t1','till_enrolled','{"register_id":"rOld"}','2026-01-01T00:00:00Z'),
+		  ('a2','till','t2','till_enrolled','{"register_id":"rMid"}','2026-02-01T00:00:00Z'),
+		  ('a3','till','t3','till_enrolled','{"register_id":"rNew"}','2026-03-01T00:00:00Z')`,
+	} {
+		if _, err := d.DB.Exec(s); err != nil {
+			t.Fatalf("seed %.40s: %v", s, err)
+		}
+	}
+	if err := d.migrateUpTo(131); err != nil {
+		t.Fatalf("migration with duplicate device ids must boot: %v", err)
+	}
+	got := map[string]string{}
+	rows, err := d.DB.Query(`SELECT register_id, device_id FROM register_devices`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r, dev string
+		if err := rows.Scan(&r, &dev); err != nil {
+			t.Fatal(err)
+		}
+		got[r] = dev
+	}
+	want := map[string]string{"rNew": "dev-P", "rMid": "", "rOld": ""}
+	if len(got) != 3 || got["rNew"] != "dev-P" || got["rMid"] != "" || got["rOld"] != "" {
+		t.Fatalf("link rows = %v, want %v", got, want)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM tills`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("tills rows = %d (%v), want 3 untouched", n, err)
+	}
+}
