@@ -128,7 +128,7 @@ func TestRailEntries_ZeroAmendmentsMatchesCoreRail(t *testing.T) {
 	}
 }
 
-// A `layout` plugin's rail-slot reorder (the plugins/layout-salon demo:
+// A `layout` plugin's rail-slot reorder (the retired salon layout demo, now the service template:
 // Orders ahead of Inventory) changes the DOM order and nothing else — the
 // moved anchor keeps its testid, its .nav-rail-only class and its icon.
 func TestNavRail_ReorderAmendmentMovesTheAnchor(t *testing.T) {

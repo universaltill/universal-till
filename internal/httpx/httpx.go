@@ -1553,6 +1553,14 @@ var renderFiles = []string{
 	// already staged from an earlier visit) both need this exact markup,
 	// so it's a partial riding along here rather than duplicated inline.
 	"ui/partials/backup_restore_staged.html",
+	// design-B S7: the Plugins page banner for secrets to enter again after a restore.
+	"ui/partials/restored_secrets_banner.html",
+	// ut-docs#6332 S7: the shop-type tile group (setup step 5 + Settings pick
+	// step) and the Settings/Menu undo banner are included by file name.
+	"ui/partials/shop_type_tiles.html",
+	"ui/partials/shop_type_panel.html",
+	"ui/partials/shop_type_undo_banner.html",
+	"ui/partials/template_offer.html",
 	// ut-docs#1060: same reasoning again — GET /ui/settings/window-mode-status's
 	// own htmx poll response AND settings.html's page render both need this
 	// exact markup, so it's a partial riding along here too.

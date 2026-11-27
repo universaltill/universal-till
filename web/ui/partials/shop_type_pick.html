@@ -1,0 +1,11 @@
+{{/* ut-docs#6332 S7: pick step. Input: {Tiles}. Continue loads the preview
+     (no write) into #shop-type-panel; Cancel restores the card body. */}}
+<div class="shop-type-pick" x-data="{ shopType: '' }">
+  <h3 id="shop-type-title">{{ T "settings.template.pick.title" }}</h3>
+  {{ template "shop_type_tiles.html" .Tiles }}
+  <input type="hidden" name="to" id="shop-type-to" :value="shopType">
+  <div class="shop-type-bar">
+    <button type="button" class="btn secondary" hx-get="/api/settings/shop-type/panel" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.cancel" }}</button>
+    <button type="button" class="btn primary" :disabled="!shopType" :aria-disabled="!shopType ? 'true' : 'false'" hx-get="/api/settings/shop-type/preview" hx-include="#shop-type-to" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "setup.next" }}</button>
+  </div>
+</div>

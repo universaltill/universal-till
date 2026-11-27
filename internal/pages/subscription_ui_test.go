@@ -14,7 +14,6 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 )
 
 // ut-docs#2569 (ADR-0060 §6): the subscription chip, the Settings →
@@ -376,7 +375,7 @@ func TestSubscriptionViewPausedOnly(t *testing.T) {
 func TestSettingsSubscriptionCard_NavRowFilteredForNonManager(t *testing.T) {
 	for _, isManager := range []bool{true, false} {
 		found := false
-		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true, true) {
+		for _, r := range filterSettingsNavForRender(settingsNavPlain("en", nil), isManager, true, true, true, true) {
 			if r.Key == "subscription" {
 				found = true
 			}

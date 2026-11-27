@@ -380,6 +380,10 @@ jobs:
           bash scripts/ci/guard-core-neutral.sh
       - name: Core-neutral guard regression test
         run: bash scripts/ci/guard-core-neutral_test.sh
+      - name: Visibility-class guard (ADR-0190)
+        run: bash scripts/ci/guard-visibility-class.sh
+      - name: Visibility-class guard regression test
+        run: bash scripts/ci/guard-visibility-class_test.sh
       - name: Deadcode-baseline growth guard (ut-docs#3406)
         # A PR may not add its own dead code to deadcode-baseline.txt; new
         # entries land in a baseline-only PR. Fetches origin/main itself

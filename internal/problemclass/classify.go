@@ -104,7 +104,7 @@ type areaRule struct {
 // keys) is network). Prefixes are lower case.
 var areaRules = []areaRule{
 	{AreaCloudSync, []string{"cloudsync", "[cloudsync]", "cloudlink", "cloud ", "catalogpull:", "catalog pull", "enrolment:", "enrol till:", "issuereport:", "stock upload", "releasenotes:"}, []string{"cloudsync", "cloud"}},
-	{AreaPlugins, []string{"wasm", "[wasm", "plugin", "[plugin", "[pluginupdatescheduler]", "[pluginstore]", "[marketplaceinstaller]", "[verifier]", "[download]", "[revocationchecker]", "[installreporter]", "[rollback]", "catalog snapshot:", "builtinlayouts:", "[selfupdate]", "update v", "android update"}, []string{"plugin", "wasm", "selfupdate.", "androidupdate."}},
+	{AreaPlugins, []string{"wasm", "[wasm", "plugin", "[plugin", "[pluginupdatescheduler]", "[pluginstore]", "[marketplaceinstaller]", "[verifier]", "[download]", "[revocationchecker]", "[installreporter]", "[rollback]", "catalog snapshot:", "[selfupdate]", "update v", "android update"}, []string{"plugin", "wasm", "selfupdate.", "androidupdate."}},
 	{AreaPayments, []string{"paybroker:", "devicepay:", "tap:", "readerlink:", "card readers:", "payment", "psp"}, []string{"pay"}},
 	{AreaDatabase, []string{"[backup]", "[housekeeping]", "offsitebackup:", "restore:", "restore jump:", "begin tx:", "db:", "database", "sqlite", "disk"}, []string{"disk.", "backup"}},
 	{AreaNetwork, []string{"lantls:", "lan discovery:", "lan ", "join:", "grp:", "sync link:", "sync:", "sync pull:", "sync push:", "builtin locale bundle:", "sales mirror", "unexpected primary call", "network", "dns"}, []string{"lan", "grp", "net", "sync."}},

@@ -320,7 +320,7 @@ auditor.
 
 Your cloud reports can show sales for each staff member. This is **off
 unless you turn it on**, and only a manager or owner can change it:
-open **Settings → Advanced → Staff sales in cloud reports** (cashiers do
+open **Settings → More settings → Staff sales in cloud reports** (cashiers do
 not see the card), tick **Send sales per staff member to cloud reports**
 and tap **Save**. Untick it and save to turn it off again.
 

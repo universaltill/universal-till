@@ -17,7 +17,7 @@
      outside the dialog and is empty until then. -->
 <div id="pfand-notice" class="pfand-notice" aria-live="polite" data-testid="pfand-notice"></div>
 
-<div class="menu-grid">
+{{ if .shopTypeBanner }}{{ template "shop_type_undo_banner.html" .shopTypeBanner }}{{ end }}<div class="menu-grid">
   {{ range .Tiles }}
   {{/* ADR-0088: a `layout` plugin may group tiles; the heading spans the
        grid row and appears only where the group changes, so a till with
@@ -40,6 +40,14 @@
     <span class="menu-label">{{ T "pfand.action" }}</span>
   </button>
 </div>
+
+{{- if .templateTucked }}
+
+<p class="menu-tucked muted" data-testid="menu-template-tucked">
+  {{ T "menu.template.tucked_away" }}
+  <a class="btn secondary btn-touch menu-tucked-link" href="/settings/menu">{{ T "menu.template.show_all" }}</a>
+</p>
+{{ end }}
 
 <!-- Pfandrückgabe (ut-docs#248): a manager-gated cash payout unrelated to
      any specific earlier sale — a customer can walk in with only empty

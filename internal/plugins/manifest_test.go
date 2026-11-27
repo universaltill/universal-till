@@ -721,6 +721,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 		scope TEXT NOT NULL DEFAULT 'global',
 		scope_id TEXT,
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+		ver INTEGER NOT NULL DEFAULT 1,
+		origin TEXT NOT NULL DEFAULT 'till',
+		ver_at TEXT,
 		FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE,
 		UNIQUE (plugin_id, key, scope, scope_id)
 	);

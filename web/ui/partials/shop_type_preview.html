@@ -1,0 +1,58 @@
+{{/* ut-docs#6332 S7: the type-change preview. Input: shopTypePreviewData.
+     Nothing here writes; the form posts to /api/settings/shop-type (PIN
+     elevation happens there) and only the ticked, server-rechecked values
+     are applied. The action bar stays pinned under the scrolling body. */}}
+<div class="shop-type-preview" data-testid="shop-type-preview">
+{{ if .Error }}
+  <p class="login-error" role="alert">{{ T "settings.template.preview.error" }}</p>
+  <div class="shop-type-bar">
+    <button type="button" class="btn secondary" hx-get="/api/settings/shop-type/panel" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.cancel" }}</button>
+    <button type="button" class="btn primary" hx-get="/api/settings/shop-type/preview?to={{ .To }}" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.retry" }}</button>
+  </div>
+{{ else }}
+  <form hx-post="/api/settings/shop-type" hx-target="#shop-type-msg" hx-swap="innerHTML show:#settings-shop-type:top" hx-disabled-elt="#shop-type-confirm">
+    <input type="hidden" name="to" value="{{ .To }}">
+    <div class="shop-type-preview-body">
+      <h3 id="shop-type-preview-title" tabindex="-1">{{ .Title }}</h3>
+      <p class="muted">{{ T "settings.template.preview.intro" }}</p>
+      {{ if .LabelOnly }}
+      <p>{{ T "settings.template.preview.label_only" }}</p>
+      {{ end }}
+      {{ if .ShownMenu }}
+      <h4>{{ T "settings.template.preview.group_shown" }}</h4>
+      <ul class="shop-type-list">{{ range .ShownMenu }}<li>{{ .Label }}</li>{{ end }}</ul>
+      {{ end }}
+      {{ if .ShownSettings }}
+      <h4>{{ T "settings.template.preview.group_shown_settings" }}</h4>
+      <ul class="shop-type-list">{{ range .ShownSettings }}<li>{{ .Label }}</li>{{ end }}</ul>
+      {{ end }}
+      {{ if .Hidden }}
+      <h4>{{ T "settings.template.preview.group_hidden" }}</h4>
+      <ul class="shop-type-list">{{ range .Hidden }}<li>{{ .Label }}</li>{{ end }}</ul>
+      {{ end }}
+      {{ if .Values }}
+      <fieldset class="shop-type-values">
+        <legend>{{ T "settings.template.preview.group_values" }}</legend>
+        {{ range .Values }}
+        <label class="shop-type-value"><input type="checkbox" name="apply_values[]" value="{{ .Key }}"> <span><strong>{{ .Label }}</strong><br><span class="muted">{{ .NowSuggested }}</span></span></label>
+        {{ end }}
+      </fieldset>
+      {{ end }}
+      {{ if .Kept }}
+      <h4>{{ T "settings.template.preview.group_kept" }}</h4>
+      <ul class="shop-type-list">{{ range .KeptHead }}<li>{{ . }}</li>{{ end }}</ul>
+      {{ if .KeptRest }}
+      <details class="shop-type-more"><summary>{{ .KeptMore }}</summary>
+        <ul class="shop-type-list">{{ range .KeptRest }}<li>{{ . }}</li>{{ end }}</ul>
+      </details>
+      {{ end }}
+      {{ end }}
+      <p class="muted">{{ T "settings.template.preview.never_changed_line" }}</p>
+    </div>
+    <div class="shop-type-bar">
+      <button type="button" class="btn secondary" hx-get="/api/settings/shop-type/panel" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.cancel" }}</button>
+      <button type="submit" class="btn primary" id="shop-type-confirm">{{ T "settings.template.preview.confirm" }}</button>
+    </div>
+  </form>
+{{ end }}
+</div>

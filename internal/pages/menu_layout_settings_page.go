@@ -7,6 +7,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/shoptemplate"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
 
@@ -20,6 +21,34 @@ import (
 //
 // Same gate as every other settings surface: canPerform(d, r, "settings")
 // (ut-docs#901/#902's lesson — not a raw session check).
+
+// menuLayoutPool is every amendment this page explains: the shop-type
+// template's (ADR-0190, listed first, the way they are applied) then every
+// active layout plugin's. The template hides are restorable here exactly
+// like a plugin's, through the same menu.restored_keys set.
+func menuLayoutPool(d *common.Deps) []uislot.Amendment {
+	tmpl := d.TemplateLayoutAmendments()
+	plug := d.LayoutAmendmentsSnapshot()
+	if len(tmpl) == 0 {
+		return plug
+	}
+	return append(tmpl[:len(tmpl):len(tmpl)], plug...)
+}
+
+// menuLayoutSourceName is what the "Hidden by" / "Changed by" column says:
+// the plugin's display name, or for the shop-type template the shop type
+// it follows ("Shop type: Retail shop").
+func menuLayoutSourceName(r *http.Request, d *common.Deps, pluginID string) string {
+	if pluginID == shoptemplate.PluginID {
+		locale := httpx.RequestLocale(r)
+		st := d.TemplateState(r.Context())
+		return strings.ReplaceAll(httpx.T(locale, "menulayout.source.shop_type"), "{type}", httpx.T(locale, "setup.shop_type."+st.ShopType))
+	}
+	if p, ok := d.InstalledPlugin(pluginID); ok && strings.TrimSpace(p.Name) != "" {
+		return p.Name
+	}
+	return pluginID
+}
 
 // hiddenMenuRow is one hidden destination as the page shows it.
 type hiddenMenuRow struct {
@@ -37,7 +66,7 @@ func hiddenMenuRows(r *http.Request, d *common.Deps) []hiddenMenuRow {
 	restored := common.RestoredMenuKeys(r.Context(), d.Settings)
 	var rows []hiddenMenuRow
 	index := map[string]int{}
-	for _, a := range d.LayoutAmendmentsSnapshot() {
+	for _, a := range menuLayoutPool(d) {
 		// LayoutAmendmentsSnapshot is every active plugin's amendments of
 		// EVERY registered slot (ut-docs#1911), not Menu-only any more —
 		// this page is the Menu slot's own findability surface, so it must
@@ -52,10 +81,7 @@ func hiddenMenuRows(r *http.Request, d *common.Deps) []hiddenMenuRow {
 		if !a.Hide {
 			continue
 		}
-		name := a.PluginID
-		if p, ok := d.InstalledPlugin(a.PluginID); ok && strings.TrimSpace(p.Name) != "" {
-			name = p.Name
-		}
+		name := menuLayoutSourceName(r, d, a.PluginID)
 		if i, seen := index[a.Key]; seen {
 			rows[i].Plugins = append(rows[i].Plugins, name)
 			continue
@@ -115,8 +141,8 @@ type amendedMenuRow struct {
 // contradiction on the same page. So skip any key some amendment hides,
 // even one belonging to a different plugin than the restructure under
 // consideration (independent review finding, ut-docs#1921).
-func amendedMenuRows(d *common.Deps) []amendedMenuRow {
-	amendments := d.LayoutAmendmentsSnapshot()
+func amendedMenuRows(r *http.Request, d *common.Deps) []amendedMenuRow {
+	amendments := menuLayoutPool(d)
 	hiddenKeys := map[string]bool{}
 	for _, a := range amendments {
 		if a.Hide {
@@ -135,10 +161,7 @@ func amendedMenuRows(d *common.Deps) []amendedMenuRow {
 		if !ok {
 			continue // cannot happen post-validation; mirrors hiddenMenuRows
 		}
-		name := a.PluginID
-		if p, ok := d.InstalledPlugin(a.PluginID); ok && strings.TrimSpace(p.Name) != "" {
-			name = p.Name
-		}
+		name := menuLayoutSourceName(r, d, a.PluginID)
 		// Reuse uislot.Resolve itself for the label/icon before-value —
 		// LabelFallback/IconFallback are exactly "the core default this
 		// amendment replaced" (see slot.go's Resolve), so this page shows
@@ -191,7 +214,7 @@ func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
 			"title":   httpx.T(httpx.RequestLocale(r), "page.title.hidden_menu_tiles"),
 			"theme":   d.ResolvedTheme(r),
 			"rows":    hiddenMenuRows(r, d),
-			"amended": amendedMenuRows(d),
+			"amended": amendedMenuRows(r, d),
 			"errKey":  errKey,
 		})(w, r)
 	})
@@ -208,7 +231,7 @@ func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			key := strings.TrimSpace(r.FormValue("key"))
 			hidden := false
-			for _, a := range d.LayoutAmendmentsSnapshot() {
+			for _, a := range menuLayoutPool(d) {
 				// Same Menu-slot filter as hiddenMenuRows above, and for
 				// the same reason: this page/form only ever means the Menu
 				// slot, and the amendment pool is no longer Menu-only.

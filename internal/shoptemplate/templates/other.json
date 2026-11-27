@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "other",
+  "version": 1,
+  "shop_types": [
+    "other"
+  ],
+  "label_key": "setup.shop_type.other",
+  "summary_key": "shoptemplate.other.summary",
+  "menu": {
+    "/tables": "advanced",
+    "/kitchen-stations": "advanced"
+  }
+}

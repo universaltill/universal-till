@@ -18,7 +18,7 @@ var pluginIconsDir = "./data/plugins"
 // pluginIconTypes is the whole set of files the icon route will serve,
 // keyed by lower-cased extension, with the Content-Type sent for each
 // (never sniffed, never taken from the OS mime table). Real plugins ship
-// PNG icons (ut-plugin-faq, layout-salon: assets/icon.png); the rest are
+// PNG icons (ut-plugin-faq: assets/icon.png); the rest are
 // the image formats a plugin author could reasonably use. Anything else a
 // bundle ships -- docs HTML, JS, JSON -- is not reachable here
 // (ut-docs#2892 security review).

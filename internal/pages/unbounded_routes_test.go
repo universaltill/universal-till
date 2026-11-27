@@ -62,6 +62,7 @@ var timedOnPurpose = map[string]string{
 	"POST /api/sync/settings/apply":                     "till-to-till sync, not a browser request",
 	"POST /api/sync/users/apply":                        "till-to-till sync, not a browser request",
 	"POST /ui/join-notice/dismiss":                      "dismisses a banner, fast",
+	"POST /plugins/restored-secrets/dismiss":            "dismisses a banner, fast",
 	"POST /api/settings/catalog-import-barcode-default": "stores a setting, fast",
 	"/v1/install/bundles/import":                        "local marketplace stub for the plugin store, called with fetch()",
 	// Review of ut-docs#5456 (F1): export|upload|restart|install|update keywords.
