@@ -101,6 +101,32 @@ var approvalReport struct {
 	inflight map[string]bool
 }
 
+// approvalBG tracks every report goroutine, including those kicked with no
+// WaitGroup (Recover's heal, pair, move), so a test can stop and wait for them
+// before its t.TempDir is removed (ut-docs#7153). Production never cancels
+// stop, so it changes nothing there. Add and the stop swap share the lock, so a
+// kick racing a reset is either stopped (perhaps before its first attempt) or
+// sees the new context. A reset must not overlap a kick (WaitGroup reuse) and
+// must never run inside a report goroutine (it would wait on itself).
+var approvalBG struct {
+	sync.Mutex
+	wg   sync.WaitGroup
+	stop context.Context // lazily made; cancelled only by a test's reset
+	end  context.CancelFunc
+}
+
+// approvalBGAdd registers one report goroutine and returns the stop context it
+// must honour.
+func approvalBGAdd() context.Context {
+	approvalBG.Lock()
+	defer approvalBG.Unlock()
+	if approvalBG.stop == nil {
+		approvalBG.stop, approvalBG.end = context.WithCancel(context.Background())
+	}
+	approvalBG.wg.Add(1)
+	return approvalBG.stop
+}
+
 // approvalConflict: the cloud answered 409, a different key is pinned.
 var approvalConflict atomic.Bool
 
@@ -216,7 +242,9 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 	if wg != nil {
 		wg.Add(1)
 	}
+	stop := approvalBGAdd()
 	go func() {
+		defer approvalBG.wg.Done()
 		defer logging.RecoverAndLog("enroll.approvalKeyReport")
 		if wg != nil {
 			defer wg.Done()
@@ -226,7 +254,15 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 			delete(approvalReport.inflight, key)
 			approvalReport.Unlock()
 		}()
+		// An in-flight attempt ends with stop too (cancelled context), so a
+		// reset never waits out the 15 s request timeout.
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer context.AfterFunc(stop, cancel)()
 		for attempt := 0; ; attempt++ {
+			if stop.Err() != nil {
+				return
+			}
 			out := reportApprovalKeyOnce(ctx, m)
 			if out != reportRetry {
 				if out != reportSkipped {
@@ -245,7 +281,7 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 			}
 			t := time.NewTimer(wait)
 			select {
-			case <-ctx.Done():
+			case <-ctx.Done(): // the caller's, or stop (via cancel)
 				t.Stop()
 				return
 			case <-approvalWake:
