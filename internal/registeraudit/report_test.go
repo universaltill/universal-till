@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -247,3 +248,22 @@ func TestAuditOnOlderSchema(t *testing.T) {
 }
 
 var _ = sql.ErrNoRows
+
+// Empty comparison lists are JSON [] (not null) and the main till's own cloud
+// row is not listed as a device without a register.
+func TestAuditEmptyListsAreArraysAndMainTillNotAGap(t *testing.T) {
+	cloud := []CloudDevice{{DeviceID: "dev-main-self", TillID: "t-main-self", Role: "main"}}
+	rep := buildReport(t, ownerFixture(t), cloud)
+	b, err := json.Marshal(rep.Comparison)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Fatalf("comparison JSON has null: %s", b)
+	}
+	for _, id := range rep.Comparison.CloudWithoutRegister {
+		if id == "t-main-self" {
+			t.Fatalf("main till listed as cloud device without a register: %v", rep.Comparison.CloudWithoutRegister)
+		}
+	}
+}

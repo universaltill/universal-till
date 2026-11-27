@@ -168,6 +168,10 @@ func Build(ctx context.Context, q data.AuditQuerier, o Options) (Report, error) 
 	}
 
 	rep := Report{Build: o.Build, QuietDays: o.QuietDays, Counts: map[string]int{}}
+	// Empty lists print as [] in JSON (not null), matching the table.
+	rep.Comparison.RegistersWithoutTill = []string{}
+	rep.Comparison.TillsWithoutRegister = []string{}
+	rep.Comparison.CloudWithoutRegister = []string{}
 	rep.Comparison.CloudListProvided = cloudProvided
 	rep.Comparison.LinkTableSchema = "present"
 	if !hasLink {
@@ -251,6 +255,10 @@ func Build(ctx context.Context, q data.AuditQuerier, o Options) (Report, error) 
 			}
 		}
 		for _, c := range o.Cloud {
+			// The main till (this one) has no register link by design: not a gap.
+			if c.Role == "main" {
+				continue
+			}
 			if !knownDev[c.DeviceID] && !knownTill[c.TillID] {
 				rep.Comparison.CloudWithoutRegister = append(rep.Comparison.CloudWithoutRegister, firstNonEmpty(c.TillID, c.DeviceID))
 			}
