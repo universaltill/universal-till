@@ -98,16 +98,21 @@ func rawRecordsStatus(col, dst []byte) int32 {
 	if !slices.Contains(h.RecordCollections, string(col)) {
 		return ErrDenied.Code
 	}
+	// Same order as the host: rejected rows first, then the rest, newest
+	// first within each group, at most recordStatusRows.
 	rows := []RecordStatus{}
-	for _, r := range h.Outbox {
-		if r.Collection != string(col) || len(rows) == recordStatusRows {
-			continue
+	for _, wantRejected := range []bool{true, false} {
+		for i := len(h.Outbox) - 1; i >= 0; i-- {
+			r := h.Outbox[i]
+			if r.Collection != string(col) || (r.Status == "rejected") != wantRejected || len(rows) == recordStatusRows {
+				continue
+			}
+			st := r.Status
+			if st == "" {
+				st = "pending"
+			}
+			rows = append(rows, RecordStatus{ID: r.ID, Status: st, Reason: r.Reason, Attempts: r.Attempts})
 		}
-		st := r.Status
-		if st == "" {
-			st = "pending"
-		}
-		rows = append(rows, RecordStatus{ID: r.ID, Status: st, Reason: r.Reason, Attempts: r.Attempts})
 	}
 	out, _ := json.Marshal(rows)
 	return fill(dst, out)

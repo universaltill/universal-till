@@ -98,12 +98,15 @@ func TestRecordsStatus(t *testing.T) {
 	h := recordsHost(t, true)
 	_, _ = RecordsForward("entries", "a", map[string]int{})
 	_, _ = RecordsForward("entries", "b", map[string]int{})
+	_, _ = RecordsForward("entries", "c", map[string]int{})
 	h.Outbox[1].Status, h.Outbox[1].Reason = "rejected", "invalid"
 	st, err := RecordsStatus("entries")
-	if err != nil || len(st) != 2 {
+	if err != nil || len(st) != 3 {
 		t.Fatalf("status=%+v err=%v", st, err)
 	}
-	if st[0] != (RecordStatus{ID: "a", Status: "pending"}) || st[1].Status != "rejected" || st[1].Reason != "invalid" {
+	// Same order as the host: rejected first, then newest first.
+	if st[0] != (RecordStatus{ID: "b", Status: "rejected", Reason: "invalid"}) ||
+		st[1] != (RecordStatus{ID: "c", Status: "pending"}) || st[2] != (RecordStatus{ID: "a", Status: "pending"}) {
 		t.Fatalf("status rows = %+v", st)
 	}
 	if _, err := RecordsStatus("other"); !errors.Is(err, ErrDenied) {

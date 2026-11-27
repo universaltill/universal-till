@@ -173,7 +173,7 @@ func TestRecordsRetryAndReject_3697(t *testing.T) {
 	}
 }
 
-func TestRecordsStatus_OwnPluginOnlyOldestFirstCapped_3697(t *testing.T) {
+func TestRecordsStatus_OwnPluginOnlyCapped_3697(t *testing.T) {
 	r, _ := recordsRepo(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -494,6 +494,41 @@ func TestDeletePluginRecords_OnlyThatPlugin_3697(t *testing.T) {
 		_ = r.db.QueryRow(`SELECT COUNT(*) FROM ` + tbl + ` WHERE plugin_id = 'p.b'`).Scan(&b)
 		if a != 0 || b != 1 {
 			t.Fatalf("%s: p.a=%d (want 0) p.b=%d (want 1)", tbl, a, b)
+		}
+	}
+}
+
+// Review M3: records_status shows rejected rows first, then the newest, so a
+// plugin with more than RecordStatusMaxRows rows still sees what failed and
+// what it just forwarded.
+func TestRecordsStatus_RejectedFirstThenNewest_3697(t *testing.T) {
+	r, _ := recordsRepo(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < RecordStatusMaxRows+5; i++ {
+		_, _ = r.Enqueue(ctx, "p.a", "entries", fmt.Sprintf("id-%d", i), []byte(`{}`), now)
+	}
+	if _, err := r.db.Exec(`UPDATE plugin_record_outbox SET status='rejected', reason='invalid', rejected_at=? WHERE record_id IN ('id-0','id-1')`,
+		now.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.Status(ctx, "p.a", "entries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st) != RecordStatusMaxRows {
+		t.Fatalf("rows = %d", len(st))
+	}
+	if st[0].ID != "id-1" || st[1].ID != "id-0" || st[0].Status != "rejected" || st[1].Status != "rejected" {
+		t.Fatalf("rejected rows must come first (newest first): %+v %+v", st[0], st[1])
+	}
+	newest := fmt.Sprintf("id-%d", RecordStatusMaxRows+4)
+	if st[2].ID != newest {
+		t.Fatalf("after the rejected rows comes the newest pending row %s, got %s", newest, st[2].ID)
+	}
+	for _, s := range st {
+		if s.ID == "id-2" {
+			t.Fatal("the oldest pending rows are the ones dropped past the cap")
 		}
 	}
 }

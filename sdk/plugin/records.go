@@ -50,9 +50,9 @@ type RecordStatus struct {
 	Attempts int    `json:"attempts"`
 }
 
-// RecordsStatus lists this plugin's outbox rows for a collection, oldest
-// first, at most 200. A delivered row is gone, so absence means delivered
-// or never forwarded.
+// RecordsStatus lists this plugin's outbox rows for a collection, at most
+// 200: rejected rows first, then the rest, newest first within each group. A
+// delivered row is gone, so absence means delivered or never forwarded.
 func RecordsStatus(collection string) ([]RecordStatus, error) {
 	c := []byte(collection)
 	out, err := bufCall("records_status", recordsStatusMax, func(dst []byte) int32 { return rawRecordsStatus(c, dst) })

@@ -149,8 +149,9 @@ func hostRecordsRole(ctx context.Context, m api.Module, dstPtr, dstCap uint32) i
 }
 
 // hostRecordsStatus lists this plugin's outbox rows for a collection as a
-// JSON array [{id,status,reason,attempts}], oldest first, at most 200 rows
-// and 256 KiB. Delivered rows are gone, so absence means delivered or never
+// JSON array [{id,status,reason,attempts}]: rejected rows first, then the
+// rest, newest first within each group, at most 200 rows and 256 KiB (the
+// tail is dropped). Delivered rows are gone, so absence means delivered or never
 // forwarded.
 func hostRecordsStatus(ctx context.Context, m api.Module, colPtr, colLen, dstPtr, dstCap uint32) int32 {
 	s, rf, code := recordsGate(ctx)

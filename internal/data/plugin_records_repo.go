@@ -273,11 +273,14 @@ func DeletePluginRecords(ctx context.Context, tx SyncQuerier, pluginID string) (
 	return total, nil
 }
 
-// Status lists one plugin's rows for a collection, oldest first, capped.
+// Status lists one plugin's rows for a collection, capped: rejected rows
+// first, then the rest, newest first within each group (review M3), so past
+// the cap a plugin still sees what failed and what it just forwarded.
 func (r *PluginRecordsRepo) Status(ctx context.Context, pluginID, collection string) ([]RecordStatusRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT record_id, status, reason, attempts FROM plugin_record_outbox
-WHERE plugin_id = ? AND collection = ? ORDER BY seq LIMIT ?`, pluginID, collection, RecordStatusMaxRows)
+WHERE plugin_id = ? AND collection = ?
+ORDER BY CASE status WHEN 'rejected' THEN 0 ELSE 1 END, seq DESC LIMIT ?`, pluginID, collection, RecordStatusMaxRows)
 	if err != nil {
 		return nil, err
 	}
