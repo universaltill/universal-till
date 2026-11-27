@@ -40,6 +40,9 @@ type fakeCloud struct {
 	ownerApproved   bool   // the owner approved a new key on my. (ADR-0199 D12)
 	revokedNoReason bool   // 401 device_revoked with no reason, as the real cloud answers a plain removal
 	revokedReason   string // when set, every till call answers 401 device_revoked with it
+	authStatus      int    // when set, every till call answers this status with authCode (ut-docs#7058)
+	authCode        string
+	authCalls       int // till calls that reached auth()
 	deletes         int
 	generations     int
 	keyReleases     int // polls that released the DEK
@@ -112,6 +115,11 @@ func apiErr(w http.ResponseWriter, status int, code string) {
 }
 
 func (f *fakeCloud) auth(w http.ResponseWriter, r *http.Request, bodyStore string) bool {
+	f.authCalls++
+	if f.authStatus != 0 {
+		apiErr(w, f.authStatus, f.authCode)
+		return false
+	}
 	if f.revokedNoReason {
 		writeJSON(w, 401, map[string]any{"error": map[string]string{"code": "device_revoked", "message": "revoked"}})
 		return false

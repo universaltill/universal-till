@@ -14,6 +14,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/offsitebackup"
@@ -98,6 +99,25 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		case get(data.OffsiteFailingSinceKey) != "":
 			state = "failing"
 			view["reason"] = get(data.OffsiteLastErrorKey)
+		}
+		// ADR-0222: while the heal engine owns the connection the line says so in
+		// the same words as the chip: "reconnecting by itself" or a person step.
+		hasOwner := storeHasOwner(r.Context(), s.Settings)
+		if state != "not_in_plan" {
+			if key, link, ok := healBackupKey(healChipStatus(), hasOwner); ok {
+				state, view["reason"] = "refused", "heal"
+				view["reasonText"] = httpx.T(locale, key)
+				if link && canPerform(d, r, "settings") {
+					view["reasonLink"] = "/settings#registration"
+				}
+			}
+		}
+		if reason, _ := view["reason"].(string); reason != "" && reason != "heal" {
+			key, link := cardReasonKey(reason, hasOwner)
+			view["reasonText"] = httpx.T(locale, key)
+			if link && canPerform(d, r, "settings") {
+				view["reasonLink"] = "/settings#registration"
+			}
 		}
 		if t, err := time.Parse(time.RFC3339, get(data.OffsiteLastSuccessAtKey)); err == nil {
 			view["lastSuccess"] = httpx.FormatDateTime(t.Local(), locale)
@@ -525,6 +545,59 @@ func offsiteErrCode(err error) string {
 	return "other"
 }
 
+// cardReasonKey is the Cloud backups card's line for a stored reason; the
+// upload's own fallback, never the restore's "nothing was changed". The bool
+// says the line is followed by a link to Settings → Till registration.
+func cardReasonKey(reason string, hasOwner bool) (string, bool) {
+	switch reason {
+	case offsitebackup.ReasonPairAgain:
+		if !hasOwner {
+			return "backup.cloud.err.register_new", true
+		}
+		return "backup.cloud.err.pair_again", true
+	case offsitebackup.ReasonTillMoved, offsitebackup.ReasonTillRemoved:
+		return offsiteErrKeys[reason], true
+	case offsitebackup.ReasonOwnerApproval:
+		return "backup.cloud.key.err.owner_approval", false
+	case "", offsitebackup.ReasonOther:
+		return "backup.cloud.err.upload_other", false
+	}
+	if k, ok := offsiteErrKeys[reason]; ok {
+		return k, false
+	}
+	return "backup.cloud.err.upload_other", false
+}
+
+// healBackupKey is the Backups card's line while the heal engine owns the
+// connection (ux-notes 3, Backups column). ok=false leaves the stored reason's
+// line alone. The bool says the line is followed by the Till registration link.
+func healBackupKey(st credheal.Status, hasOwner bool) (key string, link, ok bool) {
+	if !st.ShowsChip() {
+		return "", false, false
+	}
+	if st.State == credheal.StateHealing || st.State == credheal.StateWaiting {
+		return "backup.cloud.err.reconnecting", false, true
+	}
+	switch st.Reason {
+	case credheal.ReasonRemoved:
+		return "backup.cloud.err.till_removed", true, true
+	case credheal.ReasonReplaced:
+		return "backup.cloud.err.till_replaced", false, true
+	case credheal.ReasonMoved:
+		return "backup.cloud.err.till_moved", true, true
+	case credheal.ReasonStoreDeleted:
+		return "backup.cloud.err.shop_deleted", false, true
+	case credheal.ReasonRoleConflict:
+		return "backup.cloud.err.not_main_till", false, true
+	case credheal.ReasonInUseElsewhere:
+		return "backup.cloud.err.in_use_elsewhere", true, true
+	}
+	if !hasOwner {
+		return "backup.cloud.err.register_new", true, true
+	}
+	return "backup.cloud.err.cannot_prove", true, true
+}
+
 // offsiteErrKeys maps an error code to its translated line.
 var offsiteErrKeys = map[string]string{
 	"disk":                     "backup.cloud.err.disk",
@@ -546,6 +619,12 @@ var offsiteErrKeys = map[string]string{
 	"busy":                     "backup.cloud.err.busy",
 	"not_found":                "backup.cloud.err.not_found",
 	"other":                    "backup.cloud.err.other",
+	"pair_again":               "backup.cloud.err.pair_again",
+	"till_replaced":            "backup.cloud.err.till_replaced",
+	"till_moved":               "backup.cloud.err.till_moved",
+	"till_removed":             "backup.cloud.err.till_removed",
+	"service_unavailable":      "backup.cloud.err.service_unavailable",
+	"owner_approval":           "backup.cloud.key.err.owner_approval",
 }
 
 // offsiteErrText is the translated line for code; unknown codes read as other.

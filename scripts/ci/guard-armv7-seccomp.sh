@@ -49,7 +49,10 @@ check_log() {
   fi
   # Native qemu writes "<tid> write(1,0x..,7)" to the same file just before the
   # program's own output, so the marker usually follows a ')' on that line.
-  if ! grep -aqE '(^|\))OK 200' "${log}"; then
+  # Another thread's strace line can land in between and end without a
+  # newline (" = 0"), so the marker may also follow a syscall return value
+  # (ut-docs#6755: a clean exit_group(0) run was reported as failed).
+  if ! grep -aqE '(^|\)|= -?[0-9]+)OK 200' "${log}"; then
     echo "guard-armv7-seccomp: the smoke did not print 'OK 200' (boot or GET / failed); log tail:" >&2
     tail -n 5 "${log}" | cut -c1-200 | sed 's/^/  /' >&2
     rc=1

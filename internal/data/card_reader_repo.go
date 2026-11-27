@@ -2,7 +2,9 @@ package data
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,11 @@ const (
 	CardReaderKindTapToPay = "tap_to_pay"
 	CardReaderKindPhone    = "phone"
 	CardReaderKindExternal = "external" // the shop's own unconnected terminal (ADR-0205 §7)
+
+	// PaymentMethodCardExternal is the built-in tender id of a card taken on
+	// the shop's own terminal; the id itself is the "external" flag the X/Z
+	// reports group by (ut-docs#6755).
+	PaymentMethodCardExternal = "card_external"
 
 	CardReaderTransportInternet  = "internet"
 	CardReaderTransportBluetooth = "bluetooth"
@@ -284,11 +291,28 @@ func (r *CardReaderRepo) createTx(ctx context.Context, tx *sql.Tx, in CardReader
 	if !ok {
 		return "", ErrCardReaderName
 	}
-	if !ValidCardReaderRef(in.ReaderRef) || strings.TrimSpace(in.MethodKey) == "" || strings.TrimSpace(in.PluginID) == "" {
-		return "", ErrCardReaderRef
-	}
 	if in.Kind == "" {
 		in.Kind = CardReaderKindCloud
+	}
+	// ut-docs#6755: an external row is core's own (no plugin, server-made ref)
+	// and is the only kind that may carry the card_external method.
+	if (in.Kind == CardReaderKindExternal) != (in.MethodKey == PaymentMethodCardExternal) {
+		return "", ErrCardReaderRef
+	}
+	if in.Kind == CardReaderKindExternal {
+		in.PluginID = ""
+		if in.ReaderRef == "" {
+			var b [8]byte
+			if _, err := rand.Read(b[:]); err != nil {
+				return "", cardReaderObs.wrap("create", err)
+			}
+			in.ReaderRef = "ext-" + hex.EncodeToString(b[:])
+		}
+	} else if strings.TrimSpace(in.PluginID) == "" {
+		return "", ErrCardReaderRef
+	}
+	if !ValidCardReaderRef(in.ReaderRef) || strings.TrimSpace(in.MethodKey) == "" {
+		return "", ErrCardReaderRef
 	}
 	if in.Transport == "" {
 		in.Transport = defaultCardReaderTransport(in.Kind)

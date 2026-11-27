@@ -444,7 +444,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	ctx := context.Background()
 
 	// No tills at all: nothing is taken.
-	taken, err := repo.NameTaken(ctx, "Till 2")
+	taken, err := repo.NameTakenExcept(ctx, "Till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// Exact match.
-	taken, err = repo.NameTaken(ctx, "Till 2")
+	taken, err = repo.NameTakenExcept(ctx, "Till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// Case-insensitive match.
-	taken, err = repo.NameTaken(ctx, "till 2")
+	taken, err = repo.NameTakenExcept(ctx, "till 2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 	}
 
 	// A different name is free.
-	taken, err = repo.NameTaken(ctx, "Till 3")
+	taken, err = repo.NameTakenExcept(ctx, "Till 3", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func TestTillsRepo_NameTaken(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, probe := range []string{"ünite", "üNite", "café", "CAFÉ"} {
-		taken, err = repo.NameTaken(ctx, probe)
+		taken, err = repo.NameTakenExcept(ctx, probe, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -538,6 +538,47 @@ func TestInstallStatusRepo_DeleteForPlugin(t *testing.T) {
 	// A plugin id with no records is a no-op, not an error.
 	if err := repo.DeleteForPlugin(ctx, "never-installed"); err != nil {
 		t.Fatalf("expected no error for an unknown plugin id, got %v", err)
+	}
+}
+
+func TestInstallStatusRepo_DeleteForListing(t *testing.T) {
+	dbc, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbc.Close()
+	if _, err := dbc.Exec(`CREATE TABLE plugin_install_status (listing_id TEXT PRIMARY KEY, plugin_id TEXT, plugin_name TEXT, target_version TEXT, current_version TEXT, state TEXT NOT NULL, message_key TEXT, retryable INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	repo := NewInstallStatusRepo(dbc)
+	for _, r := range []InstallStatusRow{
+		{ListingID: "l1", PluginID: "com.example.a"},
+		{ListingID: "l2", PluginID: "com.example.a"},
+		{ListingID: "l3", PluginID: "com.example.other"},
+	} {
+		r.State, r.UpdatedAt = "installed", "2026-01-01T00:00:00Z"
+		if err := repo.Upsert(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Same listing, different plugin: kept (compare-and-delete).
+	if err := repo.DeleteForListing(ctx, "l3", "com.example.a"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := repo.List(ctx); len(rows) != 3 {
+		t.Fatalf("a row re-keyed to another plugin was deleted: %+v", rows)
+	}
+	if err := repo.DeleteForListing(ctx, "l1", "com.example.a"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.List(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows = %+v (%v), want l2 and l3 left", rows, err)
+	}
+	// A missing row is a no-op.
+	if err := repo.DeleteForListing(ctx, "gone", "com.example.a"); err != nil {
+		t.Fatalf("missing row: %v", err)
 	}
 }
 

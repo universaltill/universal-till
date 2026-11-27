@@ -25,7 +25,7 @@ import { watchConsole } from './helpers';
 // would otherwise replace it before the assertion could observe it.
 test('Find a main till on this network runs a real scan through to a result', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/tills');
+  await page.goto('/tills?tab=add&need=join');
 
   const btn = page.locator('#discover-btn');
   const msg = page.locator('#discover-msg');

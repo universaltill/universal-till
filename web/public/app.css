@@ -1100,6 +1100,14 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
                    margin-block: .2rem 0; margin-inline: 0; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
+/* ut-docs#7064: refund link / status chip under a journal receipt number. */
+.journal-refund { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center;
+                  margin-block-start: .2rem; font-size: .8rem; }
+.journal-refund a { display: inline-block; padding-block: .5rem; }
+@media (pointer: coarse) {
+  .journal-refund a { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
+}
+body.kiosk .journal-refund a { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 /* .catalog-form-head: see the .item-form-modal block below (ut-docs#1956
    made it the dialog's pinned action bar). */
 
@@ -4453,6 +4461,23 @@ body.osk-padded #table-add-modal .modifier-actions {
    quick-pay button's one-tap job, now one tap after Pay. */
 .pay-grid > .pay-default { grid-column: 1 / -1; }
 
+/* Tip row above the method buttons (payments.tips_enabled). Same 44px+ touch
+   floor as .btn; the options wrap, so a long locale or 360px never clips one.
+   Logical properties only (RTL). The selected option is marked by weight and
+   an outline as well as colour, never colour alone. */
+.tip-row { display: flex; flex-direction: column; gap: .4rem; padding-block-end: .5rem; }
+.tip-row-label { font-weight: 700; }
+.tip-options { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tip-opt { flex: 1 1 4.25rem; min-block-size: 3rem; padding-inline: .4rem; display: inline-flex; flex-direction: column;
+           align-items: center; justify-content: center; line-height: 1.15; }
+.tip-opt-amt { font-size: .8rem; font-weight: 400; }
+.btn.secondary.tip-opt.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn.secondary.tip-opt.active .tip-opt-amt { color: inherit; }
+.tip-custom { display: flex; flex-direction: column; gap: .25rem; }
+.tip-custom input { min-block-size: 2.75rem; }
+.tip-total { font-weight: 700; }
+.tip-total.error { color: var(--danger, #b00020); }
+
 /* The popup body. Scrolls internally rather than growing the dialog past the
    viewport -- a till with a dozen parked tables must still show its Close
    button. */
@@ -6168,6 +6193,12 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
+/* ADR-0222: the heal chip is one control (short words · button label). Visible pill stays
+   one text line; ::after widens the hit area to 44px like Sync now. A till that fixes itself is plain
+   status text, not the amber pill: the words carry the state. */
+.statusbar .sb-cloud-auth[href] { position: relative; }
+.statusbar .sb-cloud-auth.is-selfhealing { color: inherit; background: transparent; font-weight: 400; padding-inline: 0; }
+.statusbar .sb-cloud-auth-btn { text-decoration: underline; }
 /* ut-docs#6977: last cloud sync (cloud_sync_chip.html). Plain status text
    while fresh (like the network light); the amber pill of sb-cloud-auth when
    stale. Words carry the state. The text may wrap; the button never does. */
@@ -6188,7 +6219,8 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
   background: transparent; color: inherit; font: inherit; font-weight: 700;
   white-space: nowrap; cursor: pointer;
 }
-.statusbar .sb-cloud-sync-now::after { content: ""; position: absolute; inset-inline: 0; inset-block: calc((100% - 44px) / 2); }
+.statusbar .sb-cloud-sync-now::after,
+.statusbar .sb-cloud-auth[href]::after { content: ""; position: absolute; inset-inline: 0; inset-block: calc((100% - 44px) / 2); }
 .statusbar .sb-cloud-sync-now:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .statusbar .sb-cloud-sync-now:disabled { cursor: progress; opacity: .8; }
 .statusbar .sb-cloud-sync-now-busy { display: none; }
@@ -7485,7 +7517,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-move-pending, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth:not(.is-selfhealing), .sb-move-pending, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
@@ -7499,6 +7531,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
   body.nav-drawer-open .statusbar .sb-cloud-sync-now { min-block-size: 44px; }
+  body.nav-drawer-open .statusbar .sb-cloud-auth[href] { min-block-size: 44px; display: inline-flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
   body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-cloud-sync, .sb-move-pending, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
@@ -8430,6 +8463,10 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
   .card-reader-actions { flex-direction: column; }
   .card-reader-actions .card-reader-confirm, .card-reader-actions .card-reader-back { flex-basis: auto; inline-size: 100%; }
 }
+.card-reader-external { flex: 1 1 100%; display: grid; gap: .6rem; text-align: start; }
+.card-reader-external[hidden] { display: none; }
+.card-reader-external label { display: grid; gap: .25rem; }
+.card-reader-external input { min-block-size: 48px; }
 /* Settings page */
 .card-reader-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
                             padding-block: .6rem; border-block-end: 1px solid var(--border); }
@@ -8546,3 +8583,62 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .pay-attn-reason input { flex: none; margin: 0; }
 .pay-attn-choices { display: flex; flex-direction: column; gap: .6rem; }
 .pay-attn-q { margin: 0; font-weight: 600; }
+
+/* ---- Tills & devices: one page, five tabs (ut-docs#7057) ---- */
+.tills-tabs .tab-bar .tab { display: flex; align-items: center; justify-content: center; gap: .4rem; min-block-size: 48px; padding-inline: 1rem; text-decoration: none; white-space: nowrap; }
+.tills-tabs .tab-bar .tab:focus-visible, .tills-tabs select:focus-visible, .choice:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.tills-tabs .tag.count { min-inline-size: 1.4rem; text-align: center; }
+.tills-tabs .tab-select { display: none; }
+.tills-panel h2 { margin-block: 1rem .5rem; font-size: 1.1rem; }
+.tills-panel h2:focus { outline: none; }
+.tills-sentence { font-size: 1.15rem; font-weight: 600; margin: 0 0 .4rem; display: flex; align-items: center; gap: .6rem; }
+.tills-sentence .dot { flex: none; inline-size: .8rem; block-size: .8rem; border-radius: 50%; background: var(--success); }
+.tills-sentence .dot.warn { background: var(--warning); }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .75rem; }
+.choice { display: flex; flex-direction: column; gap: .25rem; min-block-size: 44px; padding: .8rem 1rem; border: 2px solid var(--border); border-radius: .5rem; background: var(--surface); color: var(--text); text-decoration: none; }
+.choice[aria-current="true"] { border-color: var(--accent); background: var(--accent-tint, var(--surface)); }
+.tills-links { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
+.tills-links .btn { min-block-size: 44px; margin-inline-end: .5rem; }
+.tills-merged th { text-align: start; }
+.tills-merged .btn, .tills-panel .tills-roster .btn { min-block-size: 44px; }
+.tills-bulk { margin-block: .75rem; }
+.tills-phones { margin-block-start: 1rem; }
+@media (max-width: 640px) {
+  .tills-tabs .tab-bar { display: none; }
+  .tills-tabs .tab-select { display: flex; flex-direction: column; gap: .25rem; margin-block: .5rem; }
+  .tills-tabs .tab-select select { inline-size: 100%; min-block-size: 48px; font-size: 16px; }
+  .tills-merged, .tills-merged tbody, .tills-merged tr, .tills-merged td { display: block; inline-size: 100%; }
+  .tills-merged thead { display: none; }
+  .tills-merged tr { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; background: var(--surface); }
+  .tills-merged .btn { inline-size: 100%; }
+}
+/* ut-docs#3428: scanned pairing code on the join forms. The code is a long
+   base64url string: keep it on one truncated line (never a wall of text) and
+   read left-to-right in RTL. The chip and Clear wrap on narrow screens. */
+.join-scanned { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
+.join-scanned[hidden] { display: none; }
+input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
+
+/* ut-docs#7057: tap targets of at least 44px on the Tills page. The "?" keeps its
+   look and gains an invisible 44px hit area; the Registers link gets block padding. */
+.tills-page .help-hint { position: relative; }
+.tills-page .help-hint::after { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 44px; block-size: 44px; transform: translate(-50%, -50%); } /* rtl:allow centred by a symmetric translate */
+.tills-panel a[href="/registers"] { display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: .5rem; }
+
+/* Refund screen: pick which payment of a split bill to refund (ut-docs#6648). */
+.refund-legs { border: 1px solid var(--control-border); border-radius: 6px; margin: .6rem 0 0;
+               padding-block: .35rem; padding-inline: .6rem; display: flex; flex-direction: column; gap: .3rem; }
+.refund-legs[hidden] { display: none; }
+.refund-legs legend { font-weight: 600; padding-inline: .2rem; }
+.refund-leg { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .6rem; margin: 0;
+              min-block-size: 48px; padding-inline: .4rem; border-radius: 6px; cursor: pointer; }
+.refund-leg input[type="radio"] { flex: 0 0 auto; inline-size: 1.4rem; block-size: 1.4rem; margin: 0; accent-color: var(--accent); }
+.refund-leg > span { overflow-wrap: anywhere; min-inline-size: 0; }
+/* Keep the radio and its text on one row at 360px; only the "left" note wraps. */
+.refund-leg > span:not(.muted) { flex: 1 1 10rem; }
+.refund-leg .muted { margin-inline-start: auto; }
+.refund-leg:has(input:checked) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.refund-leg:has(input:focus-visible) { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+.refund-leg:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+/* The sticky status bar must not cover a refusal scrolled into view (1024x600, 360). */
+#refund-msg { scroll-margin-block: 5rem; }

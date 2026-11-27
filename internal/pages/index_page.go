@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 func registerIndex(mux *http.ServeMux, d *common.Deps) {
@@ -85,7 +86,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// for it.
 		// ut-docs#4626: the option text is the method's translated Name
 		// (the same `T .Name` the Pay grid renders), not its raw id.
-		methods := append([]data.PaymentMethod(nil), payMethods...)
+		// ut-docs#6755: a split leg cannot do the Paid/Declined step, so the
+		// own-terminal method is not offered here.
+		methods := withoutExternalCardMethod(payMethods)
 		// The Pay grid (its first button is the one-tap preferred method) gets the list WITHOUT
 		// voucher-type methods: those buttons tender "everything owed" in
 		// one tap with no further input, and a voucher redemption needs a
@@ -141,6 +144,20 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			methods = []data.PaymentMethod{
 				{ID: "cash", Name: "tender.cash"},
 				{ID: "card", Name: "tender.card"},
+			}
+		}
+		// Cashier tip entry: the row shows only when the shop turned it on
+		// (or is a service shop and never chose). Presets are the shop's
+		// percentages; Label is the figure the button shows ("12.5").
+		tipsEnabled := common.TipsEnabled(r.Context(), d.Settings)
+		type tipPreset struct {
+			BP    int64
+			Label string
+		}
+		var tipPresets []tipPreset
+		if tipsEnabled {
+			for _, bp := range common.TipPresetBPs(r.Context(), d.Settings) {
+				tipPresets = append(tipPresets, tipPreset{BP: bp, Label: pos.FormatTipPresets([]int64{bp})})
 			}
 		}
 		defaultMethod := methods[0].ID
@@ -221,6 +238,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           gridMethods,
+			"tipsEnabled":          tipsEnabled,
+			"tipPresets":           tipPresets,
 			"cardReaders":          cardReaders,
 			// ut-docs#3873: a plugin (the AI Assistant, ut-docs#2851)
 			// answers catalog.identify — the sell screen shows core's one

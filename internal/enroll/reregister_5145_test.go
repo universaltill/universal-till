@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -279,8 +280,8 @@ func TestReconnectRefusesAnAnswerForAnotherShop(t *testing.T) {
 	kv := newFakeKV()
 	cfg := registeredTill(t, cloud.srv.URL, kv)
 	_, err := Reconnect(context.Background(), cfg, kv)
-	if err == nil || !IsStoreNotReusable(err) {
-		t.Fatalf("err = %v, want store_not_reusable", err)
+	if err == nil || !IsReconnectOtherShop(err) || IsStoreNotReusable(err) || IsServerError(err) {
+		t.Fatalf("err = %v, want the other-shop sentinel and not store_not_reusable", err)
 	}
 	if kv.get(keyToken) != "tok-old" || kv.get(keyStoreID) != "store-abc" || CurrentStatus().StoreID == "store-OTHER" {
 		t.Fatalf("till moved: token=%q store=%q status=%q", kv.get(keyToken), kv.get(keyStoreID), CurrentStatus().StoreID)
@@ -443,5 +444,68 @@ func TestStartAsNewStoreReportsTheLeftShop(t *testing.T) {
 				t.Fatalf("left shops = %v, want [st_old]", left)
 			}
 		})
+	}
+}
+
+// ut-docs#6424 (L5): a 5xx is the cloud answering; a transport error and the
+// other-shop sentinel are not.
+func TestIsServerError(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"500":        {&RegisterHTTPError{Status: 500}, true},
+		"503":        {&RegisterHTTPError{Status: 503}, true},
+		"wrapped":    {fmt.Errorf("x: %w", &RegisterHTTPError{Status: 502}), true},
+		"409":        {&RegisterHTTPError{Status: 409}, false},
+		"429":        {&RegisterHTTPError{Status: 429}, false},
+		"other shop": {ErrReconnectOtherShop, false},
+		"url error":  {&url.Error{Op: "Post", URL: "http://x", Err: errors.New("refused")}, false},
+	} {
+		if got := IsServerError(tc.err); got != tc.want {
+			t.Errorf("%s: IsServerError = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// T4 / AC10 (ut-docs#7097): a copied data folder keeps the device live, so the
+// block is re-armed again and again. After 3 re-arms the till says "in use on
+// two machines" and stops re-arming; success clears it.
+func TestDeviceLiveRearmsAreBoundedThenInUseElsewhere(t *testing.T) {
+	setReleaseVersion(t, "0.37.0")
+	resetState()
+	ctx := context.Background()
+	kv := readyKV(t)
+	live := newRegisterHTTPError(409, deviceLiveBody(time.Now().Add(2*time.Hour).UTC().Format(time.RFC3339)))
+	for i := 1; i <= 3; i++ {
+		noteRegisterOutcome(ctx, kv, live)
+		if InUseElsewhere(ctx, kv) {
+			t.Fatalf("after %d refusals: in use elsewhere already, want from the 4th", i)
+		}
+	}
+	noteRegisterOutcome(ctx, kv, live)
+	if !InUseElsewhere(ctx, kv) {
+		t.Fatal("after 4 device_live refusals: not in use elsewhere")
+	}
+	if ok, why := AutoRegisterAllowed(ctx, &config.Config{}, kv); ok || why != ReasonHeld {
+		t.Fatalf("in use elsewhere: allowed=%v why=%q, want held", ok, why)
+	}
+	noteRegisterOutcome(ctx, kv, nil)
+	if InUseElsewhere(ctx, kv) || kv.get(keyRegisterRearms) != "" {
+		t.Fatal("a successful register must clear the in-use state and the counter")
+	}
+}
+
+// The key-refused hold is re-evaluated once a day instead of silent for ever.
+func TestKeyRefusedHoldExpiresAfterADay(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	_ = kv.Set(ctx, keyRegisterKeyRefused, time.Now().Add(-25*time.Hour).UTC().Format(time.RFC3339))
+	if keyRefusedHolds(ctx, kv) {
+		t.Fatal("a 25 h old refusal still holds")
+	}
+	_ = kv.Set(ctx, keyRegisterKeyRefused, time.Now().Add(-23*time.Hour).UTC().Format(time.RFC3339))
+	if !keyRefusedHolds(ctx, kv) {
+		t.Fatal("a 23 h old refusal no longer holds")
 	}
 }

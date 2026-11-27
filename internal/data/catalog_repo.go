@@ -3175,7 +3175,7 @@ func setItemPictureExec(ctx context.Context, ex execer, itemID, imagePath, icon 
 	// concurrent call can land between the check and the write.
 	if _, err := ex.ExecContext(ctx,
 		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')
-		 ON CONFLICT(item_id, role) DO UPDATE SET path = excluded.path`,
+		 ON CONFLICT DO UPDATE SET path = excluded.path`, // no target: the one-thumbnail-per-item unique index (016, partial since 119) decides
 		uuid.NewString(), itemID, imagePath,
 	); err != nil {
 		return fmt.Errorf("upsert thumbnail: %w", err)

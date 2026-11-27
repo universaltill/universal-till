@@ -33,3 +33,16 @@ func setApprovalRetryDelays(t interface{ Cleanup(func()) }, d []time.Duration) {
 		approvalReport.Unlock()
 	})
 }
+
+// setApprovalRetryTail swaps the wait between attempts after the listed ones.
+func setApprovalRetryTail(t interface{ Cleanup(func()) }, d time.Duration) {
+	approvalReport.Lock()
+	old := approvalRetryTail
+	approvalRetryTail = d
+	approvalReport.Unlock()
+	t.Cleanup(func() {
+		approvalReport.Lock()
+		approvalRetryTail = old
+		approvalReport.Unlock()
+	})
+}

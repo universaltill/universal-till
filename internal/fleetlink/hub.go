@@ -71,6 +71,7 @@ type Hub struct {
 	readerStatus   map[string]ReaderStatus
 	readerHandlers map[string]RequestHandler
 	readerSink     ReaderSink
+	relaySink      RelaySink
 	wg             sync.WaitGroup
 }
 
@@ -152,9 +153,19 @@ func (h *Hub) helloFor(ctx context.Context, tillID string) any {
 
 func (h *Hub) gotHello(*Peer, Hello, json.RawMessage) {}
 
-func (h *Hub) oneWay(string) bool { return false }
+func (h *Hub) oneWay(typ string) bool { return typ == TypeReaderRelayCancel }
 
 func (h *Hub) gotMessage(p *Peer, env Envelope) {
+	if env.Type == TypeReaderRelayCancel {
+		h.mu.Lock()
+		sink := h.relaySink
+		live := h.peers[p.tillID] == p
+		h.mu.Unlock()
+		if c, err := DecodeReaderRelayCancel(env.Payload); err == nil && sink != nil && live {
+			sink.RelayCancel(p.tillID, c)
+		}
+		return
+	}
 	if env.Type != TypeReport {
 		return // sync/fleet/pairing/cloud_checkin are main → peer only; a peer sending them is ignored
 	}
@@ -210,12 +221,17 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, tillID string) {
 		return // Accept already wrote the HTTP error
 	}
 	c.SetReadLimit(h.cfg.ReadLimit)
-	h.ServeConn(tillID, wsConn{c: c})
+	h.serveConn(tillID, wsConn{c: c}, r.TLS != nil)
 }
 
 // ServeConn runs one link over any transport until it closes. A link for
 // a till id that already has one replaces it (§1).
-func (h *Hub) ServeConn(tillID string, conn Conn) {
+func (h *Hub) ServeConn(tillID string, conn Conn) { h.serveConn(tillID, conn, false) }
+
+// ServeConnSecure is ServeConn for a link the caller accepted over TLS.
+func (h *Hub) ServeConnSecure(tillID string, conn Conn) { h.serveConn(tillID, conn, true) }
+
+func (h *Hub) serveConn(tillID string, conn Conn, secure bool) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -229,6 +245,7 @@ func (h *Hub) ServeConn(tillID string, conn Conn) {
 		return
 	}
 	p := newPeer(h, h.cfg, "m", tillID, conn)
+	p.secure = secure
 	h.peers[tillID] = p
 	h.wg.Add(1)
 	h.mu.Unlock()

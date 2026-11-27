@@ -453,6 +453,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 	defer releaseReaders()
 
+	// ut-docs#6755 (ADR-0205 §7): a card_external leg is only ever recorded
+	// against an external registry row; its terminal_id is that row's ref.
+	var externalLegs []pos.PaymentInput
+	for i := range payments {
+		if payments[i].MethodID != data.PaymentMethodCardExternal {
+			continue
+		}
+		if payments[i].ReaderKind != data.CardReaderKindExternal {
+			return "", &cardReaderError{Status: http.StatusConflict, Code: readerCodeRequired, Method: data.PaymentMethodCardExternal}
+		}
+		payments[i].TerminalID = payments[i].ReaderRef
+		externalLegs = append(externalLegs, payments[i])
+	}
+
 	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
@@ -603,6 +617,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		legEntry := legBase(requestID, p.MethodID, amount, payCurrency, p.ReaderRef)
 		resp, dispatched, tapConf, err := tapAuthorize(withLegJournal(detached, journal.hook(legEntry)), d, p.MethodID, requestID, amount, payCurrency, payload)
 		var tapStart *tapStartFailedError
+		var tapCancelled *tapCancelledError
 		var tapPending *pos.PaymentPendingError
 		var journalErr *paymentJournalError
 		if errors.As(err, &journalErr) {
@@ -618,6 +633,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "payment could not be recorded")
 			why = "tender refused (the payment journal is unavailable)"
 			return "", journalErr
+		}
+		if errors.As(err, &tapCancelled) {
+			// ut-docs#6538: the cashier cancelled and core confirmed nothing was
+			// charged. The sale stays open, nothing is locked, the request id is
+			// spent (a new tap is a new attempt); not worded as a decline.
+			journal.note(detached, legEntry, data.LegDeclined)
+			if abandonedUnder() {
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
+			}
+			stash := engine.SettleTender()
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tap payment cancelled")
+			why = "tender refused (the tap payment was cancelled)"
+			return "", tapCancelled
 		}
 		if errors.As(err, &tapStart) {
 			journal.note(detached, legEntry, data.LegDeclined)
@@ -1043,6 +1073,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			warnIfVoucherOverdrawnReason(ctx, repo, saleInput, "cross-till redemption (sale "+saleID+")",
 				"this till's own local voucher balance was stale relative to the primary's (ut-docs#1668)")
 			break
+		}
+	}
+
+	// ut-docs#6755: one audit row per own-terminal card leg (an honour record,
+	// ADR-0205 §7). Best effort, never unwinds the sale; never the last4 or
+	// the auth code themselves.
+	for _, p := range externalLegs {
+		touchReaderLastUsed(ctx, d, p.ReaderRowID)
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "external_card_tender", map[string]any{
+			"amount_minor":  p.Amount.Minor(),
+			"reader_row_id": p.ReaderRowID,
+			"has_auth_code": p.AuthCode != "",
+			"has_last4":     p.MaskedPAN != "",
+		}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+			log.Printf("external card tender: audit for sale %s failed: %v", saleID, auditErr)
 		}
 	}
 
@@ -1885,14 +1930,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
 				return
 			}
-			elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
-			if elev.Outcome == needsElevation {
-				hidden := []elevationHiddenField{{Name: "reason", Value: reason}}
-				if key != "" {
-					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-				} else {
-					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			hidden := []elevationHiddenField{{Name: "reason", Value: reason}}
+			if key != "" {
+				hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+			} else {
+				hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			}
+			// ut-docs#7085: bind the reason, the target and a snapshot of every
+			// priced line this removal drops, so the PIN cannot be reused for
+			// another line, another reason or a line that has since changed.
+			var snap []string
+			for _, l := range matched {
+				if l.GiftVoucher != nil {
+					continue
 				}
+				snap = append(snap, l.LineKey+"|"+l.SKU+"|"+strconv.FormatFloat(l.Qty, 'f', -1, 64)+"|"+
+					strconv.FormatInt(l.PriceCents.Minor(), 10))
+			}
+			snap = append(snap, strconv.FormatInt(extended.Minor(), 10))
+			elev, tok := checkOrElevateBound(d, r, approvalBinding("/api/pos/remove", getSessionUserID(r),
+				[]string{"void_comp_waste"}, hidden, snap...), "void_comp_waste")
+			if elev.Outcome == needsElevation {
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				renderElevationPrompt(w, r, "/api/pos/remove", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.void_comp_waste"), httpx.T(locale, "shrinkage.reason."+reason)),
 					hidden, elev)
@@ -1917,12 +1976,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			if elev.Outcome == elevated {
 				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", auditEntityID, reason,
-					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					lineTargetDetail(key, code), now, ""); err != nil {
 					logging.L().Errorf("insert elevated shrinkage audit: %v", err)
 				}
 			} else {
 				if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", auditEntityID, reason,
-					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					lineTargetDetail(key, code), now, ""); err != nil {
 					logging.L().Errorf("insert shrinkage audit: %v", err)
 				}
 			}
@@ -2149,30 +2208,69 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// gate scan reads them). A reduce-and-raise post checks both in
 			// ONE PIN verification, so the approver must hold both and a
 			// wrong PIN counts once.
-			pin := r.Form.Get("override_pin")
+			// A non-htmx client cannot answer the PIN prompt: refuse it before
+			// the PIN is looked at, as /api/pos/discount (ut-docs#6858).
+			if r.Header.Get("HX-Request") == "" {
+				switch {
+				case reduction && raise:
+					if !canPerform(d, r, "void_comp_waste") || !canPerform(d, r, "price_override") {
+						writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+						return
+					}
+				case reduction:
+					if !canPerform(d, r, "void_comp_waste") {
+						writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+						return
+					}
+				default:
+					if !canPerform(d, r, "price_override") {
+						writeForbiddenJSON(w, locale, "pos.error.discount_not_permitted")
+						return
+					}
+				}
+			}
+			// ut-docs#7085: the replayed fields are built BEFORE the check so
+			// the approval binds exactly what the prompt shows and the retry
+			// applies (render and verify share one slice). Replay the ABSOLUTE
+			// target qty (not delta): the approver confirms the exact result.
+			hidden := []elevationHiddenField{
+				{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+				// ut-docs#6113: also replay the qty the summary shows as the
+				// starting point, so the retry is refused if the line moved.
+				{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
+				{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+				// ut-docs#5416: and the discount the summary starts from.
+				{Name: "from_discount", Value: strconv.FormatInt(cur.LineDiscount.Minor(), 10)},
+			}
+			if reduction {
+				hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
+			}
+			if key != "" {
+				hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+			} else {
+				hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+			}
+			// ut-docs#7096: the line identity too, so a code-addressed post cannot
+			// be approved and then land on a replaced line.
+			lineExtras := []string{strconv.FormatInt(cur.PriceCents.Minor(), 10), cur.LineKey, cur.SKU}
+			var tok string
 			switch {
 			case reduction && raise:
-				elev = checkOrElevateAll(d, r, pin, "void_comp_waste", "price_override")
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"void_comp_waste", "price_override"}, hidden, lineExtras...),
+					"void_comp_waste", "price_override")
 			case reduction:
-				elev = checkOrElevate(d, r, "void_comp_waste", pin)
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"void_comp_waste"}, hidden, lineExtras...),
+					"void_comp_waste")
 			default:
-				elev = checkOrElevate(d, r, "price_override", pin)
+				elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/line", getSessionUserID(r),
+					[]string{"price_override"}, hidden, lineExtras...),
+					"price_override")
 			}
 			if elev.Outcome == needsElevation {
-				// Replay the ABSOLUTE target qty (not delta): the approver
-				// confirms the exact result shown in the summary.
-				hidden := []elevationHiddenField{
-					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
-					// ut-docs#6113: also replay the qty the summary shows as the
-					// starting point, so the retry is refused if the line moved.
-					{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
-					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					// ut-docs#5416: and the discount the summary starts from.
-					{Name: "from_discount", Value: strconv.FormatInt(cur.LineDiscount.Minor(), 10)},
-				}
 				var summary []string
 				if reduction {
-					hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
 					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
 						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
 						httpx.T(locale, "shrinkage.reason."+reason)))
@@ -2181,11 +2279,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.line_discount"), cur.Name,
 						httpx.FormatMoneyDisplay(cur.LineDiscount.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)))
 				}
-				if key != "" {
-					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-				} else {
-					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
-				}
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				// The stepper/qty field target #basket (outerHTML); the
 				// prompt's hint must land in the small hint slot instead,
 				// or it would replace the whole basket (as /api/pos/remove).
@@ -2234,7 +2328,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
 				logging.L().Errorf("insert shrinkage event: %v", err)
 			}
-			detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
+			detail := lineTargetDetail(key, code)
+			detail["from_qty"], detail["to_qty"] = cur.Qty, qty
 			if elev.Outcome == elevated {
 				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
 					logging.L().Errorf("insert elevated line-reduction audit: %v", err)
@@ -2248,7 +2343,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// A line that left (qty 0) or a voucher line carries no discount.
 		if updateErr == nil && cur != nil && cur.GiftVoucher == nil && qty > 0 && discount != cur.LineDiscount.Minor() {
 			auditValueGate(r.Context(), repo, r, elev, "pos_line", cur.LineKey, "line_discount",
-				map[string]any{"key": key, "code": code, "from_discount": cur.LineDiscount.Minor(), "to_discount": discount})
+				withDetail(lineTargetDetail(key, code), "from_discount", cur.LineDiscount.Minor(), "to_discount", discount))
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -2296,8 +2391,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		from := d.Engine.SaleDiscount()
 		to := money.FromMinor(discount)
-		w.Header().Set("HX-Retarget", "#basket")
-		w.Header().Set("HX-Reswap", "outerHTML")
+		// Only the approval retry (posted from the elevation dialog, which
+		// targets #shrinkage-hint) is steered back to the basket (ut-docs#6858,
+		// as /api/pos/reset).
+		if r.Form.Get("override_pin") != "" || r.Form.Get("from_discount") != "" {
+			w.Header().Set("HX-Retarget", "#basket")
+			w.Header().Set("HX-Reswap", "outerHTML")
+		}
+		saleChanged := func() {
+			b := d.Engine.Basket()
+			b.LineChangedKey = "sale"
+			basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			_ = basketView.Render(w, b)
+		}
 		if v := strings.TrimSpace(r.Form.Get("from_discount")); v != "" {
 			fromDisc, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || fromDisc < 0 {
@@ -2305,12 +2413,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if fromDisc != from.Minor() {
-				b := d.Engine.Basket()
-				b.LineChangedKey = "sale"
-				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.WriteHeader(http.StatusConflict)
-				_ = basketView.Render(w, b)
+				saleChanged()
 				return
 			}
 		}
@@ -2319,19 +2422,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// A non-htmx client cannot answer the PIN prompt: refuse it as
 			// the tender path does (JSON 403) rather than a 200 HTML prompt.
 			if r.Header.Get("HX-Request") == "" && !canPerform(d, r, "price_override") {
-				writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
-					"code": "forbidden", "message": httpx.T(locale, "pos.error.discount_not_permitted"),
-				}})
+				writeForbiddenJSON(w, locale, "pos.error.discount_not_permitted")
 				return
 			}
-			elev = checkOrElevate(d, r, "price_override", r.Form.Get("override_pin"))
+			// ut-docs#7085: the PIN approves exactly this to/from pair, once.
+			hidden := []elevationHiddenField{
+				{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+				{Name: "from_discount", Value: strconv.FormatInt(from.Minor(), 10)},
+			}
+			var tok string
+			elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/discount", getSessionUserID(r),
+				[]string{"price_override"}, hidden), "price_override")
 			if elev.Outcome == needsElevation {
 				w.Header().Set("HX-Retarget", "#shrinkage-hint")
 				w.Header().Set("HX-Reswap", "innerHTML")
-				hidden := []elevationHiddenField{
-					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					{Name: "from_discount", Value: strconv.FormatInt(from.Minor(), 10)},
-				}
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				renderElevationPrompt(w, r, "/api/pos/discount", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.sale_discount"),
 						httpx.FormatMoneyDisplay(from.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)),
@@ -2339,7 +2444,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		d.Engine.SetDiscount(to)
+		if saleDiscountTestHook != nil {
+			saleDiscountTestHook()
+		}
+		// Compare-and-set (ut-docs#6858): a promo scan that landed since the
+		// read above is never silently overwritten, and nothing is audited.
+		if err := d.Engine.SetDiscountIf(from, to); err != nil { // only ErrLineChanged
+			saleChanged()
+			return
+		}
 		if to != from {
 			auditValueGate(r.Context(), repo, r, elev, "pos_discount", "sale", "sale_discount",
 				map[string]any{"from": from.Minor(), "to": discount})
@@ -2571,16 +2684,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var elev elevationCheck
 		if priced {
-			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			// A non-htmx client cannot answer the PIN prompt: refuse it before
+			// the PIN is looked at, as /api/pos/discount (ut-docs#6858).
+			if r.Header.Get("HX-Request") == "" && !canPerform(d, r, "void_comp_waste") {
+				writeForbiddenJSON(w, locale, "common.error.manager_or_admin_required")
+				return
+			}
+			hidden := []elevationHiddenField{
+				{Name: "from_lines", Value: strconv.Itoa(lineCount)},
+				{Name: "from_total", Value: strconv.FormatInt(snap.Total.Minor(), 10)},
+			}
+			// ut-docs#7096: bind the whole basket the approver saw, not just its
+			// count and total, so the PIN cannot clear a swapped basket or be replayed.
+			var tok string
+			elev, tok = checkOrElevateBound(d, r, approvalBinding("/api/pos/reset", getSessionUserID(r),
+				[]string{"void_comp_waste"}, hidden, resetApprovalExtras(snap)...), "void_comp_waste")
 			if elev.Outcome == needsElevation {
+				hidden = append(hidden, elevationHiddenField{Name: "approval", Value: tok})
 				w.Header().Set("HX-Retarget", "#shrinkage-hint")
 				w.Header().Set("HX-Reswap", "innerHTML")
 				renderElevationPrompt(w, r, "/api/pos/reset", "#shrinkage-hint",
 					fmt.Sprintf(httpx.T(locale, "elevation.summary.clear_sale"), lineCount, httpx.FormatMoneyDisplay(snap.Total.Minor(), locale)),
-					[]elevationHiddenField{
-						{Name: "from_lines", Value: strconv.Itoa(lineCount)},
-						{Name: "from_total", Value: strconv.FormatInt(snap.Total.Minor(), 10)},
-					}, elev)
+					hidden, elev)
 				return
 			}
 		}
@@ -2677,13 +2802,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// /api/pos/discount does. A JSON API cannot sit through a PIN round
 		// trip: a session without price_override is refused here, before any
 		// payment, sale row or fiscal call. Equal or lower is accepted.
-		if in.Discount > d.Engine.SaleDiscount().Minor() && !canPerform(d, r, "price_override") {
-			writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
-				"code": "forbidden", "message": httpx.T(httpx.ResolveLocale(w, r), "pos.error.discount_not_permitted"),
-			}})
+		// One read (ut-docs#6858): the gate and the audit `from` use the
+		// same value.
+		engineDiscount := d.Engine.SaleDiscount().Minor()
+		if in.Discount > engineDiscount && !canPerform(d, r, "price_override") {
+			writeForbiddenJSON(w, httpx.ResolveLocale(w, r), "pos.error.discount_not_permitted")
 			return
 		}
-		engineDiscount := d.Engine.SaleDiscount().Minor()
+		if tenderDiscountTestHook != nil {
+			tenderDiscountTestHook()
+		}
 
 		offline := false
 		offlineSet := false
@@ -2957,6 +3085,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var payments []pos.PaymentInput
+		// requestTips sums the tips the request's own legs carry, for the
+		// slip guard applied once the total is known (a tip is at most the
+		// bill, on the split path as on the quick-pay row).
+		var requestTips int64
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
@@ -2968,6 +3100,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			p.Method = strings.ToLower(strings.TrimSpace(p.Method))
 			if p.Method == "" || p.Amount <= 0 {
 				continue
+			}
+			// ut-docs#6755: the own-terminal tender needs the Paid/Declined
+			// step of the pay panel's form; a JSON/split leg has none, so it
+			// is refused rather than auto-picked.
+			if p.Method == data.PaymentMethodCardExternal {
+				http.Error(w, "card_external is tendered from the pay panel only", http.StatusBadRequest)
+				return
 			}
 			// ut-docs#1764 (independent review): pos.CompleteSale's
 			// netPayments already rejects change > amount as invalid
@@ -2990,6 +3129,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid tip amount", http.StatusBadRequest)
 				return
 			}
+			requestTips += p.Tip // bounded: each tip is at most its leg's amount
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				// ut-docs#923: a genuine internal/setup failure (the FK-upsert
 				// itself hit a DB-layer error), not a reachable business
@@ -3026,6 +3166,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				ReaderRowID: strings.TrimSpace(p.Reader),
 			})
 		}
+		// Cashier tip entry (form-encoded quick-pay legs only; a split leg
+		// carries its own JSON `tip`). tip_bp is a percent of the payable
+		// total in basis points, tip an amount in minor units; an amount wins.
+		// Applied after the total is known, below.
+		var formTipBP, formTipMinor int64
+		formTipLeg := -1
 		// Fallback for form-encoded tender buttons (hx-vals)
 		if len(payments) == 0 {
 			if err := r.ParseForm(); err == nil {
@@ -3057,6 +3203,31 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					http.Error(w, "invalid voucher id", http.StatusBadRequest)
 					return
 				}
+				// ut-docs#6755: own-terminal card fields, validated before anything
+				// happens (no payment, no sale, basket untouched). Read for no
+				// other method.
+				var extAuth, extMasked string
+				if method == data.PaymentMethodCardExternal {
+					var errKey string
+					extAuth, extMasked, errKey = parseExternalCardFields(r.Form.Get("auth_code"), r.Form.Get("last4"))
+					if errKey != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"data":  nil,
+							"error": map[string]string{"code": externalCardInvalidCode, "message": httpx.T(httpx.ResolveLocale(w, r), errKey)},
+						})
+						return
+					}
+				}
+				if method != "" && method != "voucher" && formVoucherID == "" && common.TipsEnabled(r.Context(), d.Settings) {
+					var tipOK bool
+					formTipBP, formTipMinor, tipOK = parseFormTip(r.Form.Get("tip_bp"), r.Form.Get("tip"))
+					if !tipOK {
+						http.Error(w, "invalid tip amount", http.StatusBadRequest)
+						return
+					}
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -3066,6 +3237,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 						return
 					}
+					formTipLeg = len(payments)
 					payments = append(payments, pos.PaymentInput{
 						MethodID:  method,
 						Amount:    money.FromMinor(amount),
@@ -3073,6 +3245,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						VoucherID: formVoucherID,
 						// ut-docs#6566: the picker's confirm posts the row id.
 						ReaderRowID: strings.TrimSpace(r.Form.Get("reader")),
+						AuthCode:    extAuth,
+						MaskedPAN:   extMasked,
 					})
 				}
 			}
@@ -3150,6 +3324,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for i := range payments {
 			if !payments[i].Amount.IsPositive() {
 				payments[i].Amount = total
+			}
+		}
+		// The tip rides on the leg it was entered for: Amount includes it
+		// (core's one convention, #2571) and TipAmount is the breakdown. A
+		// percent is of the payable total, integer half-up; a tip above 100%
+		// of the total is refused as a slip (nothing recorded yet).
+		if requestTips > total.Minor() {
+			http.Error(w, "invalid tip amount", http.StatusBadRequest)
+			return
+		}
+		if formTipLeg >= 0 && (formTipBP > 0 || formTipMinor > 0) {
+			tip := formTipMinor
+			if tip == 0 {
+				tip = pos.TipForPercentBP(total, formTipBP).Minor()
+			}
+			if tip > total.Minor() {
+				http.Error(w, "invalid tip amount", http.StatusBadRequest)
+				return
+			}
+			if tip > 0 {
+				payments[formTipLeg].Amount = payments[formTipLeg].Amount.Add(money.FromMinor(tip))
+				payments[formTipLeg].TipAmount = money.FromMinor(tip)
 			}
 		}
 
@@ -3269,6 +3465,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			// ut-docs#6455: a tap payment that never started. Nothing was
 			// charged and the basket is not locked; never worded "declined".
+			var tapCancelled *tapCancelledError
+			if errors.As(err, &tapCancelled) {
+				log.Printf("tender: %v", err)
+				locale := httpx.ResolveLocale(w, r)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.payment_cancelled")
+				b.ToastLevel = "info"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			var tapStart *tapStartFailedError
 			if errors.As(err, &tapStart) {
 				log.Printf("tender: %v", err)
@@ -3461,7 +3670,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				entries, err := repo.ListRecentSales(r.Context(), 5)
 				if err == nil {
 					var journalBuf bytes.Buffer
-					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
+					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true, Refunds: journalRefunds(r.Context(), d, entries)})
 					fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, viewHTML, journalBuf.String())
 					return
 				}
@@ -3646,15 +3855,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// Which moves are allowed from the sale's current status is
 	// pos.UpdateSaleStatus's rule (ut-docs#3368: a completed sale can only be
 	// voided; never reopened, marked refunded or completed here — 409).
-	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
 		type In struct {
 			SaleID      string `json:"saleId"`
 			Status      string `json:"status"` // open|parked|voided (refunded/completed are refused)
 			Reason      string `json:"reason,omitempty"`
 			OverridePIN string `json:"override_pin,omitempty"`
+			Approval    string `json:"approval,omitempty"` // single-use token from the refusal's error.approval (ut-docs#7140)
 		}
 		var in In
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		// 4 KiB: the body is a few short strings; an oversize one is refused
+		// before any lookup, PIN check or token mint (ut-docs#7152).
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
@@ -3663,25 +3880,41 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		// Voiding is a cancellation the reports count, so it
-		// needs the refund permission or a manager's PIN (ut-docs#3368) —
-		// the same action the refund page gates on. API-only route (no UI
-		// calls it), so a refusal is a plain 403, not a PIN dialog.
-		actorID, blockedActorID := getSessionUserID(r), ""
+		// needs the refund permission or a manager's approval (ut-docs#3368).
+		// The approval is bound, single-use and request-specific (ut-docs#7140):
+		// endpoint, session user, sale, status, reason and the sale's current
+		// status. API-only route (no UI calls it), so a refusal is the JSON
+		// envelope with the token in error.approval; the caller re-sends the
+		// same body plus "approval" and the manager PIN.
+		actorID, blockedActorID, expectedFrom := getSessionUserID(r), "", ""
 		if in.Status == "voided" {
-			elev := checkOrElevate(d, r, "refund", in.OverridePIN)
-			if elev.Outcome == needsElevation {
-				key := elevationErrorKey(elev.Err)
-				if key == "" {
-					key = "common.error.manager_or_admin_required"
+			from, err := data.NewPOSRepo(d.Db).SaleStatus(r.Context(), nil, in.SaleID)
+			if err != nil {
+				if errors.Is(err, data.ErrSaleNotFound) {
+					common.LogAndLocalizedError(w, r, http.StatusNotFound, "pos.error.sale_not_found", "pos-api", err)
+					return
 				}
-				common.LocalizedError(w, r, http.StatusForbidden, key)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)
+				return
+			}
+			// An impossible move (already voided/refunded, unknown status)
+			// answers 409 before any prompt, PIN check or token spend.
+			if !pos.SaleStatusTransitionAllowed(from, in.Status) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.sale_status_transition", "pos-api", pos.ErrSaleStatusTransition)
+				return
+			}
+			binding := approvalBinding("/api/pos/sale/status", getSessionUserID(r), []string{"refund"},
+				[]elevationHiddenField{{"saleId", in.SaleID}, {"status", in.Status}, {"reason", in.Reason}}, from)
+			elev, tok := checkOrElevateApproval(d, r, binding, in.OverridePIN, in.Approval, "refund")
+			if elev.Outcome == needsElevation {
+				writeElevationRefusalJSON(w, r, elev, tok, http.StatusForbidden)
 				return
 			}
 			if elev.Outcome == elevated {
-				actorID, blockedActorID = elev.ApproverID, elev.ActorID
+				actorID, blockedActorID, expectedFrom = elev.ApproverID, elev.ActorID, from
 			}
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
+		if err := pos.UpdateSaleStatusFrom(r.Context(), d.Db, in.SaleID, expectedFrom, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own
@@ -4457,11 +4690,31 @@ func isISO4217Code(c string) bool {
 	return true
 }
 
+// writeForbiddenJSON answers a non-HTMX caller that lacks a gated permission
+// and so cannot answer a PIN prompt (ut-docs#5416, #6858).
+func writeForbiddenJSON(w http.ResponseWriter, locale, key string) {
+	writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
+		"code": "forbidden", "message": httpx.T(locale, key),
+	}})
+}
+
 // lineSnapshotTestHook (tests only, ut-docs#5417) runs in /api/pos/line
 // between reading the line and applying the change, so a test can land a
 // concurrent writer in exactly that window. Tests that set it must not run
 // in parallel.
 var lineSnapshotTestHook func()
+
+// saleDiscountTestHook (tests only, ut-docs#6858) runs in /api/pos/discount
+// between the gate's read of the sale discount and the compare-and-set apply,
+// so a test can land a promo scan in exactly that window. Tests that set it
+// must not run in parallel.
+var saleDiscountTestHook func()
+
+// tenderDiscountTestHook (tests only, ut-docs#6858) runs in /api/pos/tender
+// right after the discount gate, so a test can change the engine's sale
+// discount between the gate and the audit. Tests that set it must not run in
+// parallel.
+var tenderDiscountTestHook func()
 
 // maskTxnRef keeps only the last 4 characters of a provider reference for
 // logs (ut-docs#6606), like the plugins' maskRef.
@@ -4473,4 +4726,72 @@ func maskTxnRef(ref string) string {
 		return "…"
 	}
 	return "…" + ref[len(ref)-4:]
+}
+
+// parseFormTip reads the tip fields of a form-encoded quick-pay leg: tip_bp (a
+// percent in basis points, 0..10000) and tip (minor units, >= 0). Empty fields
+// mean no tip. ok is false for a malformed or out-of-range value. When both are
+// set the typed amount wins and the percent is dropped.
+func parseFormTip(bpRaw, minorRaw string) (bp, minor int64, ok bool) {
+	parse := func(raw string, max int64) (int64, bool) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return 0, true
+		}
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 || v > max {
+			return 0, false
+		}
+		return v, true
+	}
+	var okBP, okMinor bool
+	bp, okBP = parse(bpRaw, 10000)
+	minor, okMinor = parse(minorRaw, math.MaxInt64/4)
+	if !okBP || !okMinor {
+		return 0, 0, false
+	}
+	if minor > 0 {
+		bp = 0
+	}
+	return bp, minor, true
+}
+
+// resetApprovalExtras (ut-docs#7096) is everything New sale would destroy that
+// from_lines/from_total do not pin: each line's identity and value, the
+// add-by-hand lines, the sale discount and the table. One element per field.
+func resetApprovalExtras(snap pos.BasketSnapshot) []string {
+	var out []string
+	for _, l := range snap.Lines {
+		out = append(out, "line", l.LineKey, l.SKU,
+			strconv.FormatFloat(l.Qty, 'f', -1, 64),
+			strconv.FormatInt(l.PriceCents.Minor(), 10),
+			strconv.FormatInt(l.LineDiscount.Minor(), 10))
+	}
+	for _, h := range snap.AddByHand {
+		out = append(out, "hand", h.Name, strconv.FormatFloat(h.Qty, 'f', -1, 64),
+			strconv.Itoa(len(h.Modifiers)))
+		out = append(out, h.Modifiers...)
+	}
+	out = append(out, "sale_discount", snap.DiscountType,
+		strconv.FormatInt(snap.DiscountValue.Minor(), 10),
+		strconv.FormatInt(snap.DiscountPercentBP, 10),
+		"table", snap.TableID)
+	return out
+}
+
+// lineTargetDetail (ut-docs#7096): key wins over code (the handlers act on
+// the key), so an unbound code never lands in an audit row.
+func lineTargetDetail(key, code string) map[string]any {
+	if key != "" {
+		return map[string]any{"key": key}
+	}
+	return map[string]any{"key": "", "code": code}
+}
+
+// withDetail adds key/value pairs to m and returns it.
+func withDetail(m map[string]any, kv ...any) map[string]any {
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i].(string)] = kv[i+1]
+	}
+	return m
 }

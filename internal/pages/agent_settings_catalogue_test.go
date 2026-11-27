@@ -31,6 +31,7 @@ func TestAgentSettingsCatalogue_CoversEverySettingsRegion_4129(t *testing.T) {
 	registryOnly := map[string]bool{
 		"printer.receipt_policy": true, "receipt.header1": true, "receipt.header2": true, "receipt.header3": true,
 		"receipt.footer": true, "notices.enabled": true, "invoice.seller_address": true, "invoice.seller_vat_no": true, "registration.stopped": true,
+		"payments.tip_presets": true, // the second key of the payments-tips card; payments.tips_enabled is its lock key
 	}
 	for _, s := range data.AgentSettings {
 		if !covered[s.Key] && !registryOnly[s.Key] {

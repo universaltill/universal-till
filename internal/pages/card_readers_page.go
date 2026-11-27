@@ -88,6 +88,12 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 	if err != nil {
 		return view, err
 	}
+	// An additional till also lists the main's phones (relayed, never stored).
+	if onAdditionalTill(ctx, d) {
+		for _, m := range relayMethods(ctx, d, method) {
+			all = append(all, relayedReaders(ctx, d, m)...)
+		}
+	}
 	names := map[string]string{}
 	if pms, err := data.NewPOSRepo(d.Db).ListActivePaymentMethods(ctx); err == nil {
 		for _, m := range pms {
@@ -103,7 +109,7 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 		}
 		ok, seen := managed[c.MethodKey]
 		if !seen {
-			ok, err = data.NewPluginRepo(d.Db).HasActiveHook(ctx, c.PluginID, readersHook(c.MethodKey))
+			ok, err = methodManaged(ctx, d, c.PluginID, c.MethodKey)
 			if err != nil {
 				return view, err
 			}
@@ -132,7 +138,14 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 		}
 	}
 	if pinnedID != "" {
-		if c, err := repo.Get(ctx, pinnedID); err == nil {
+		if isRelayRowID(pinnedID) {
+			for _, c := range rows {
+				if c.ID == pinnedID {
+					rows = []data.CardReader{c}
+					view.Pinned = true
+				}
+			}
+		} else if c, err := repo.Get(ctx, pinnedID); err == nil {
 			rows = []data.CardReader{c}
 			view.Pinned = true
 		}
@@ -142,6 +155,12 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 	var probes []cardreaders.Probe
 	if !view.Pinned {
 		for _, c := range rows {
+			if _, core := phoneState(ctx, d, c); core {
+				continue // a phone's presence is core's own knowledge (hub or relay)
+			}
+			if c.Kind == data.CardReaderKindExternal {
+				continue // nothing to probe: the shop's own terminal is always ready
+			}
 			if !inflight.Has(c.ID) && !unknownRows[c.ID] {
 				probes = append(probes, cardreaders.Probe{ID: c.ID, Method: c.MethodKey, Ref: c.ReaderRef})
 			}
@@ -157,6 +176,12 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 		a := states[c.ID]
 		if a.State == "" {
 			a.State = cardreaders.Unknown
+		}
+		if st, core := phoneState(ctx, d, c); core && !view.Pinned {
+			a = phoneAnswer(st)
+		}
+		if c.Kind == data.CardReaderKindExternal {
+			a = cardreaders.Answer{State: cardreaders.Ready}
 		}
 		switch {
 		case view.Pinned:
@@ -281,7 +306,7 @@ func buildReaderSettings(ctx context.Context, d *common.Deps) (readerSettingsVie
 	seenUpdate := map[string]bool{}
 	for _, c := range rows {
 		row := readerSettingsRow{CardReader: c, ProviderName: label[c.MethodKey], KindKey: "card_reader.kind." + c.Kind, PluginName: pluginName[c.MethodKey], UnattendedAllowed: data.CardReaderUnattendedAllowed(c.Kind)}
-		if !hook[c.MethodKey] {
+		if c.Kind != data.CardReaderKindExternal && !hook[c.MethodKey] {
 			row.NeedsUpdate = true
 			if !seenUpdate[c.MethodKey] {
 				seenUpdate[c.MethodKey] = true
@@ -366,6 +391,20 @@ func registerCardReaderSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := r.ParseForm(); err != nil {
 			renderBody(w, r, http.StatusBadRequest, "card_reader.settings.err_ref", "error", "")
+			return
+		}
+		if r.Form.Get("kind") == data.CardReaderKindExternal {
+			// ut-docs#6755: the shop's own terminal: core's, no plugin, ref made by the repo.
+			c, err := data.NewCardReaderRepo(d.Db).Create(r.Context(), data.CardReader{
+				Name: r.Form.Get("name"), MethodKey: data.PaymentMethodCardExternal, Kind: data.CardReaderKindExternal,
+			})
+			if err != nil {
+				fail(w, r, err)
+				return
+			}
+			cardreaders.SharedCache().Reset()
+			readerAudit(d, r, c.ID, "card_reader_added", map[string]any{"method": c.MethodKey, "name": c.Name, "kind": c.Kind})
+			renderBody(w, r, http.StatusOK, "card_reader.settings.saved", "ok", "")
 			return
 		}
 		method := strings.ToLower(strings.TrimSpace(r.Form.Get("method_key")))
@@ -507,12 +546,24 @@ type cardReaderGridView struct {
 // not declare the readers hook, keeps its own button exactly as before.
 func cardReaderGrid(ctx context.Context, d *common.Deps, grid []data.PaymentMethod, preferred string) ([]data.PaymentMethod, cardReaderGridView) {
 	var view cardReaderGridView
+	// card_external (ut-docs#6755) is never its own button: it is a row in the
+	// "Which reader?" picker. Drop it unconditionally; with an external row it
+	// counts as a removed managed method below.
+	hadExternal := false
+	stripped := make([]data.PaymentMethod, 0, len(grid))
+	for _, m := range grid {
+		if m.ID == data.PaymentMethodCardExternal {
+			hadExternal = true
+			continue
+		}
+		stripped = append(stripped, m)
+	}
+	grid = stripped
 	repo := data.NewCardReaderRepo(d.Db)
 	rows, err := repo.ListActive(ctx)
 	if err != nil || len(rows) == 0 {
 		return grid, view
 	}
-	plug := data.NewPluginRepo(d.Db)
 	source := effectiveReaderSource(ctx, d, readerSourcePOS)
 	managed := map[string]bool{}
 	checked := map[string]bool{}
@@ -520,7 +571,7 @@ func cardReaderGrid(ctx context.Context, d *common.Deps, grid []data.PaymentMeth
 	for _, c := range rows {
 		if !checked[c.MethodKey] {
 			checked[c.MethodKey] = true
-			ok, err := plug.HasActiveHook(ctx, c.PluginID, readersHook(c.MethodKey))
+			ok, err := methodManaged(ctx, d, c.PluginID, c.MethodKey)
 			managed[c.MethodKey] = err == nil && ok
 		}
 		if !managed[c.MethodKey] || !readerEligible(c, source) {
@@ -548,7 +599,8 @@ func cardReaderGrid(ctx context.Context, d *common.Deps, grid []data.PaymentMeth
 		}
 		kept = append(kept, m)
 	}
-	if len(kept) == len(grid) { // no grid method is managed (e.g. only a voucher grid): nothing to replace
+	extGone := hadExternal && managed[data.PaymentMethodCardExternal]
+	if len(kept) == len(grid) && !extGone { // no grid method is managed (e.g. only a voucher grid): nothing to replace
 		view.Show = false
 		return grid, view
 	}

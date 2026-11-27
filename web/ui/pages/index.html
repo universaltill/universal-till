@@ -574,6 +574,32 @@
                preferred-first (index_page.go), so the first button IS the
                preferred method -- marked .pay-default so it reads as the
                default at a glance and spans the grid's first row. -->
+          {{ if .tipsEnabled }}
+          <!-- Tip at checkout (payments.tips_enabled). It sits ABOVE the method
+               buttons because tapping a method tenders at once. "No tip" is
+               the pre-selected choice, so declining costs nothing. The chosen
+               preset posts tip_bp (a percent; the server rounds it against
+               the real total), a typed amount posts tip (minor units); both
+               ride the method buttons' hx-include. Offline-safe: no network
+               is involved. Buttons are .btn (>= 44px) in a wrapping row. -->
+          <div class="tip-row" id="tip-row" role="group" aria-labelledby="tip-row-label" data-testid="tip-row"
+               data-msg-total="{{ T "tender.tip.total_with_tip" }}" data-msg-too-large="{{ T "tender.tip.too_large" }}">
+            <span id="tip-row-label" class="tip-row-label">{{ T "tender.tip.label" }}</span>
+            <div class="tip-options">
+              <button type="button" class="btn secondary tip-opt active" data-testid="tip-none" data-tip-kind="none" aria-pressed="true">{{ T "tender.tip.none" }}</button>
+              {{ range .tipPresets }}
+              <button type="button" class="btn secondary tip-opt" data-testid="tip-preset" data-tip-kind="percent" data-tip-bp="{{ .BP }}" aria-pressed="false"><span class="tip-opt-pct">{{ .Label }}%</span><span class="tip-opt-amt muted"></span></button>
+              {{ end }}
+              <button type="button" class="btn secondary tip-opt" data-testid="tip-custom" data-tip-kind="custom" aria-pressed="false">{{ T "tender.tip.custom" }}</button>
+            </div>
+            <label class="tip-custom" id="tip-custom-field" hidden>{{ T "tender.tip.amount_label" }}
+              <input type="text" inputmode="decimal" id="tip-custom-input" data-testid="tip-custom-input" autocomplete="off" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}>
+            </label>
+            <div id="tip-total" class="tip-total" data-testid="tip-total" aria-live="polite" hidden></div>
+            <input type="hidden" id="tip-bp" name="tip_bp" value="">
+            <input type="hidden" id="tip-minor" name="tip" value="">
+          </div>
+          {{ end }}
           <div class="pay-grid">
             <!-- ut-docs#6566: when the till has registry card readers (a plugin
                  that declares payment.<key>.readers), ONE "Card" button replaces
@@ -588,14 +614,14 @@
             {{ end }}
             {{ range $i, $m := .payMethods }}
             <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}{{ if and (eq $i 0) (not $.cardReaders.First) }} pay-default{{ end }}"{{ if and (eq $i 0) (not $.cardReaders.First) }} data-testid="pay-default"{{ end }} data-method="{{ .ID }}" hx-post="/api/pos/tender"
-                    hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
+                    hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag, #tip-bp, #tip-minor"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
             {{ if not .cardReaders.Show }}
-            <button class="btn pay-btn pay-default" data-testid="pay-default" data-method="cash" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+            <button class="btn pay-btn pay-default" data-testid="pay-default" data-method="cash" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag, #tip-bp, #tip-minor" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.cash" }}</button>
-            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag, #tip-bp, #tip-minor" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.card" }}</button>
             {{ end }}
             {{ end }}
@@ -628,6 +654,7 @@
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay"></button>
           </div>
+          <div id="pay-live" class="pos-notice info" role="status" aria-live="polite" hidden data-testid="pay-live"></div>
           <div id="card-reader-mount" class="card-reader-mount" data-testid="card-reader-mount" hidden></div>
           <label class="offline-toggle">
             <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
@@ -942,6 +969,9 @@
          data-msg-voucher-check-unavailable="{{ T "tender.status.voucher_check_unavailable" }}"
          data-msg-voucher-single-purpose="{{ T "pos.gift_voucher.use_specific" }}"
          data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
+         data-msg-tip-exceeds="{{ T "tender.status.tip_exceeds" }}"
+         data-msg-tip-note="{{ T "tender.tip.pill" }}"
+         data-msg-tip-too-large="{{ T "tender.tip.too_large" }}"
          data-msg-reader-required="{{ T "tap.reader.pick" }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
@@ -975,6 +1005,11 @@
                  rejects a non-positive amount. -->
             <input type="text" inputmode="decimal" name="amount" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} required>
           </label>
+          {{ if .tipsEnabled }}
+          <label id="split-tender-tip-field">{{ T "tender.tip.amount_label" }}
+            <input type="text" inputmode="decimal" name="tip" data-testid="split-tip" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}>
+          </label>
+          {{ end }}
           <!-- ut-docs#1832: tracked voucher REDEMPTION. Shown by app.js only
                while the selected method is the built-in "voucher" one (the
                only id pos.CompleteSale honours voucher_id on — the legacy

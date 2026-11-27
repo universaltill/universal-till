@@ -378,7 +378,10 @@ var adminTables = []adminTable{
 	//     main till's bearer-rotation state (migration 093, ut-docs#5198).
 	//     The previous hash is a sync-auth secret like bearer_hash; the two
 	//     timestamps are the main till's alone and would only go stale here.
-	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"}},
+	//   - device_id: the device id the till joined with (migration 118,
+	//     ut-docs#7097); the main till's own bookkeeping for rename-keeps-row,
+	//     never needed (or wanted) on a replica.
+	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at", "device_id"}},
 }
 
 // nonAdminTables is every OTHER table in the schema, one reason each for why
@@ -816,6 +819,9 @@ var PerTillSettingPrefixes = []string{
 	"restore.",
 	// ut-docs#6538: whether THIS main till takes phone card reader pairing.
 	"card_readers.phone_pairing",
+	// ut-docs#6538 phase 2: the phone of its main THIS additional till used
+	// last (its own picker default).
+	"card_readers.relay_last_ref",
 	// ut-docs#6955: whether THIS desktop till lets other devices on its network in.
 	"lan.access",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,

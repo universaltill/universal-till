@@ -20,8 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -61,7 +63,47 @@ const (
 	// different one). The owner gives the till the key from Settings (K5).
 	ReasonNeedsLink = "needs_link"
 	ReasonOther     = "other"
+
+	// Credential refusals (ut-docs#7058): the cloud does not accept this
+	// till's device credential or shop. A fixed enum, never cloud text.
+	ReasonPairAgain          = "pair_again"
+	ReasonTillReplaced       = "till_replaced"
+	ReasonTillMoved          = "till_moved"
+	ReasonTillRemoved        = "till_removed"
+	ReasonServiceUnavailable = "service_unavailable"
+	// ReasonOwnerApproval: a new key generation waits for the owner on my.
+	// (a failure with backoff, not a credential refusal).
+	ReasonOwnerApproval = "owner_approval"
 )
+
+// credentialReasons are the reasons a dead credential records; they stop the
+// rounds until a later successful check-in (or 24 h).
+var credentialReasons = map[string]bool{
+	ReasonPairAgain: true, ReasonTillReplaced: true, ReasonTillMoved: true,
+	ReasonTillRemoved: true, ReasonServiceUnavailable: true,
+}
+
+// credentialRefusal maps a cloud answer that says this till's credential (or
+// shop) is not accepted to its reason (ADR-0116 D6 codes, ut-docs#7058).
+func credentialRefusal(ae *APIError) (string, bool) {
+	switch {
+	case ae.Status == 401 && ae.Code == "device_revoked":
+		switch ae.Reason {
+		case "replaced":
+			return ReasonTillReplaced, true
+		case "moved":
+			return ReasonTillMoved, true
+		}
+		return ReasonTillRemoved, true
+	case ae.Status == 401:
+		return ReasonPairAgain, true
+	case ae.Status == 403 && ae.Code == "device_mismatch":
+		return ReasonPairAgain, true
+	case ae.Status == 403 && ae.Code == "service_unavailable":
+		return ReasonServiceUnavailable, true
+	}
+	return "", false
+}
 
 // Uploader runs one upload round at a time. All fields but Mu are set by the
 // caller; zero Now/Sleep/FreeDisk/Strip fall back to the real ones.
@@ -127,6 +169,15 @@ func (u *Uploader) Round(ctx context.Context, force bool) error {
 	}
 	st := u.Settings
 	get := func(k string) string { v, _, _ := st.Get(ctx, k); return strings.TrimSpace(v) }
+	// A dead credential waits for a check-in the cloud answered after the
+	// refusal (registration.last_checkin_at is never written by a 401).
+	if credentialReasons[get(data.OffsiteRefusedReasonKey)] {
+		refused, _ := time.Parse(time.RFC3339, get(data.OffsiteLastErrorAtKey))
+		if c, err := time.Parse(time.RFC3339, get(enroll.KeyLastCheckinAt)); err == nil && c.After(refused) {
+			_ = st.Delete(ctx, data.OffsiteRefusedReasonKey)
+			_ = st.Delete(ctx, data.OffsiteNextAttemptAtKey)
+		}
+	}
 	if !force {
 		if t, err := time.Parse(time.RFC3339, get(data.OffsiteNextAttemptAtKey)); err == nil && now.Before(t) {
 			return nil
@@ -704,9 +755,35 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 		return ctx.Err()
 	}
 	var ae *APIError
-	if errors.As(err, &ae) && ae.Code == "device_revoked" && (ae.Reason == "" || finalRevokeReasons[ae.Reason]) {
+	if errors.As(err, &ae) && ae.Code == "device_revoked" && finalRevokeReasons[ae.Reason] {
 		// ADR-0199 D2: this till left the shop for good; its key file goes.
+		// Only a reason that says so (ADR-0222 T3): a device_revoked with no
+		// reason, or a healable one (store_deleted, pair_abandoned), may still
+		// come back, and a till that heals needs its shop key.
 		u.Keys.DeleteForStore(u.storeID())
+	}
+	if errors.As(err, &ae) {
+		// ADR-0222: a 401 with an envelope code is evidence for the heal
+		// engine (it probes before it acts).
+		if ae.Status == 401 {
+			credheal.Report(credheal.Signal{Source: "backup", Code: ae.Code, Reason: ae.Reason})
+		}
+		if reason, ok := credentialRefusal(ae); ok {
+			stamp := now.UTC().Format(time.RFC3339)
+			since, _, _ := u.Settings.Get(ctx, data.OffsiteFailingSinceKey)
+			if _, perr := time.Parse(time.RFC3339, strings.TrimSpace(since)); perr != nil {
+				since = stamp
+			}
+			_ = u.Settings.SetMany(ctx, map[string]string{
+				data.OffsiteRefusedReasonKey: reason,
+				data.OffsiteNextAttemptAtKey: now.Add(refusedWait).UTC().Format(time.RFC3339),
+				data.OffsiteLastErrorAtKey:   stamp,
+				data.OffsiteFailingSinceKey:  strings.TrimSpace(since),
+			})
+			logging.L().Warnf("offsitebackup: the cloud does not accept this till's connection (%s, HTTP %d); uploads wait until the till checks in again, at most 24 h", reason, ae.Status)
+			u.maybeRaise(ctx, reason, now, strings.TrimSpace(since))
+			return nil
+		}
 	}
 	if errors.As(err, &ae) && (ae.Status == 402 || ae.Status == 409) {
 		reason := ae.Code
@@ -725,6 +802,19 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 	}
 	u.fail(ctx, now, err)
 	return nil
+}
+
+// ClearCredentialRefusal ends a wait that exists only because the cloud refused
+// this till's credential (a heal gave it a new one). It leaves any other wait
+// (a key to link, the owner's approval) alone and reports whether it cleared.
+func (u *Uploader) ClearCredentialRefusal(ctx context.Context) bool {
+	v, _, _ := u.Settings.Get(ctx, data.OffsiteRefusedReasonKey)
+	if !credentialReasons[strings.TrimSpace(v)] {
+		return false
+	}
+	_ = u.Settings.Delete(ctx, data.OffsiteRefusedReasonKey)
+	_ = u.Settings.Delete(ctx, data.OffsiteNextAttemptAtKey)
+	return true
 }
 
 // finalRevokeReasons are the device_revoked reasons that cannot be undone:
@@ -752,12 +842,31 @@ func (u *Uploader) fail(ctx context.Context, now time.Time, err error) {
 		data.OffsiteFailingSinceKey: since, data.OffsiteAttemptsKey: strconv.Itoa(attempts + 1),
 		data.OffsiteNextAttemptAtKey: now.Add(wait).UTC().Format(time.RFC3339),
 	})
-	// The error text can carry paths; the log keeps the reason only.
-	logging.L().Warnf("offsitebackup: upload failed (%s); next try in %s", reason, wait)
+	// The error text can carry paths; the log keeps the reason (and the
+	// HTTP status of a cloud answer) only.
+	if ae != nil {
+		logging.L().Warnf("offsitebackup: upload failed (%s, HTTP %d); next try in %s", reason, ae.Status, wait)
+	} else {
+		logging.L().Warnf("offsitebackup: upload failed (%s); next try in %s", reason, wait)
+	}
+	u.maybeRaise(ctx, reason, now, since)
+}
+
+// maybeRaise opens the Problem after 48 h of failing, or at once for a full disk.
+func (u *Uploader) maybeRaise(_ context.Context, reason string, now time.Time, since string) {
 	t, _ := time.Parse(time.RFC3339, since)
 	if reason == ReasonDisk || now.Sub(t) >= problemAfter {
 		raise(reason, now.Sub(t))
 	}
+}
+
+// failingFor prints an age as whole days and hours ("6d 19h").
+func failingFor(d time.Duration) string {
+	h := int(d / time.Hour)
+	if h < 0 {
+		h = 0
+	}
+	return fmt.Sprintf("%dd %dh", h/24, h%24)
 }
 
 func raise(reason string, failing time.Duration) {
@@ -766,7 +875,7 @@ func raise(reason string, failing time.Duration) {
 			return
 		}
 	}
-	logging.L().WarnProblemf(ProblemOffsiteFailed, "[Backup] off-site backup is failing (%s) for %s", reason, failing.Round(time.Hour))
+	logging.L().WarnProblemf(ProblemOffsiteFailed, "[Backup] off-site backup is failing (%s) for %s", reason, failingFor(failing))
 }
 
 func classify(err error) string {
@@ -784,6 +893,8 @@ func classify(err error) string {
 			return ReasonTooLarge
 		case ae.Status == 503 && ae.Code == "not_enabled":
 			return ReasonNotEnabled
+		case ae.Status == 403 && ae.Code == CodeOwnerApprovalRequired:
+			return ReasonOwnerApproval
 		case ae.Status >= 500:
 			return ReasonServer
 		}

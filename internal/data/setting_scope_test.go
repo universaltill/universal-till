@@ -383,6 +383,8 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"store.currency", SettingShopWide},
 		{"payments.fee.card", SettingShopWide},
 		{"payments.default_method", SettingShopWide},
+		{"payments.tips_enabled", SettingShopWide},
+		{"payments.tip_presets", SettingShopWide},
 		{"marketplace.store_id", SettingShopWide},
 		{"marketplace.telemetry_opt_in", SettingShopWide},
 		{"sync.bearer", SettingPerTill},

@@ -61,16 +61,41 @@ func (r *PairingRepo) CreatePendingRequest(ctx context.Context, deviceName, comm
 // LAN TLS pin served on the request's connection ("" for plain HTTP,
 // ut-docs#4091).
 func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceName, commitment, role, servedPin string, ttl time.Duration) (string, error) {
+	return r.CreatePendingRequestForDevice(ctx, deviceName, commitment, role, servedPin, "", ttl)
+}
+
+// CreatePendingRequestForDevice is CreatePendingRequestWithRole for a request
+// that names its requesting device (ut-docs#7097, AC16): in the same
+// transaction the device's older still-pending rows of the SAME name are
+// deleted (the route is unauthenticated: a device id alone never removes
+// another requester's request, review 2026-11-27), so a retry
+// (or a restarted phone app) replaces its request instead of piling up. A
+// blank requesterDeviceID (an older till) replaces nothing. Approved and
+// denied rows are never touched.
+func (r *PairingRepo) CreatePendingRequestForDevice(ctx context.Context, deviceName, commitment, role, servedPin, requesterDeviceID string, ttl time.Duration) (string, error) {
 	if !ValidPairingRole(role) {
 		return "", fmt.Errorf("create pending pairing: invalid role %q", role)
 	}
 	id := uuid.NewString()
 	now := r.now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role, served_pin)
-VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role, servedPin)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return "", fmt.Errorf("create pending pairing: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if requesterDeviceID != "" {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pending_pairings WHERE requester_device_id = ? AND device_name = ? AND status = 'pending'`, requesterDeviceID, deviceName); err != nil {
+			return "", fmt.Errorf("replace older pending pairings: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role, served_pin, requester_device_id)
+VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role, servedPin, requesterDeviceID); err != nil {
+		return "", fmt.Errorf("create pending pairing: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("create pending pairing: %w", err)
 	}
 	return id, nil
@@ -257,6 +282,49 @@ WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
 		return "", false, fmt.Errorf("pending pairing role by token: %w", err)
 	}
 	return role, true, nil
+}
+
+// NameForToken returns the device name a manager approved for this enrolment
+// token (ut-docs#7057): the name the approval card showed. ok is false for a
+// token that no approved, unexpired request carries (a typed pairing code, an
+// expired approval).
+func (r *PairingRepo) NameForToken(ctx context.Context, token string) (name string, ok bool, err error) {
+	if token == "" {
+		return "", false, nil
+	}
+	err = r.db.QueryRowContext(ctx, `
+SELECT device_name FROM pending_pairings
+WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
+		token, r.now().UTC().Format(time.RFC3339)).Scan(&name)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("pending pairing name by token: %w", err)
+	}
+	return name, true, nil
+}
+
+// RequesterDeviceForToken returns the device id the requester of this approved,
+// unexpired enrolment token named in its pair request ("" for an older till
+// that sent none). ok is false when no approved request carries the token (a
+// typed code, a QR token, an expired approval). ut-docs#7097 review: the proof
+// that a rename may take over an existing till's row.
+func (r *PairingRepo) RequesterDeviceForToken(ctx context.Context, token string) (deviceID string, ok bool, err error) {
+	if token == "" {
+		return "", false, nil
+	}
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(requester_device_id, '') FROM pending_pairings
+WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
+		token, r.now().UTC().Format(time.RFC3339)).Scan(&deviceID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("pending pairing device by token: %w", err)
+	}
+	return deviceID, true, nil
 }
 
 // Deny resolves a request as refused. A till request is deleted outright (a

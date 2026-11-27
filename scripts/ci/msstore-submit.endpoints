@@ -8,6 +8,10 @@
 # Every call also sends X-Seller-Account-Id. The packaged-app (MSIX) API on
 # manage.devcenter.microsoft.com is NOT used: this product is an EXE.
 API_BASE=https://api.store.microsoft.com
+# The package URL the Store fetches: publish-installer's blob (HTTP 200, no
+# redirect; Partner Center rejects redirecting URLs). Account and container must
+# equal publish-installer.yml / publish-installer.sh (pinned by a test).
+INSTALLER_BASE=https://unitillinstallers.blob.core.windows.net/installers
 TOKEN_RESOURCE=https://api.store.microsoft.com
 PACKAGES_PATH=/submission/v1/product/{id}/packages
 COMMIT_PATH=/submission/v1/product/{id}/packages/commit

@@ -23,6 +23,12 @@ final class TapToPayCoordinator {
     /// A requires_confirmation confirm is retried once only if this much
     /// time is left before the soft deadline.
     static let confirmRetryFloorMs: Int64 = 5_000
+    /// After a cancel (operator or deadline) the SDK gets this long to complete
+    /// the cancel and end the collect; then the attempt ends cancelled anyway
+    /// (#6538: a cancel callback that never fires must not pin the tap screen
+    /// and the lock). Safe: a collect is only ever confirmed while no cancel was
+    /// asked for, so nothing is charged after this.
+    static let cancelGraceMs: Int64 = 5_000
 
     let provider: String
     private let reader: PaymentReader
@@ -53,10 +59,50 @@ final class TapToPayCoordinator {
     private let capLock = NSLock()
     private var cap: Capability = .of(.needsSetup)
 
+    /// Who holds the one collect lock (design D4): the till's own tender or a
+    /// reader-mode collect asked for by the main. One lock, one `current`.
+    enum Origin: Equatable { case till, reader }
+
+    /// Called on the coordinator's queue when the lock is taken or freed, with
+    /// the owner (nil = free); a pending setup counts as busy for the till origin.
+    /// Queue-confined: set through observeBusy only.
+    private var onBusyChange: ((Origin?) -> Void)?
+    private var lastBusy: Origin?
+
+    func observeBusy(_ handler: @escaping (Origin?) -> Void) {
+        queue.async {
+            self.onBusyChange = handler
+            self.lastBusy = self.busyOwner
+            handler(self.lastBusy)
+        }
+    }
+
+    /// The lock owner, readable from any thread.
+    func lockOwner() -> Origin? {
+        ownerLock.lock(); defer { ownerLock.unlock() }
+        return ownerMirror
+    }
+    private let ownerLock = NSLock()
+    private var ownerMirror: Origin?
+
+    private var busyOwner: Origin? { current?.origin ?? (setupInFlight ? .till : nil) }
+
+    private func notifyBusy() {
+        let now = busyOwner
+        ownerLock.lock(); ownerMirror = now; ownerLock.unlock()
+        guard now != lastBusy else { return }
+        lastBusy = now
+        onBusyChange?(now)
+    }
+
     // Queue-confined state.
-    private var current: Attempt?
-    private var setupInFlight = false
+    private var current: Attempt? { didSet { notifyBusy() } }
+    private var setupInFlight = false { didSet { notifyBusy() } }
     private var locationId: String?
+    /// The Terminal Location the SDK is connected to, and the one a reader-mode
+    /// collect asks the next connect to use.
+    private var connectedLocationId: String?
+    private var pendingLocationOverride: String?
     private var connecting = false
     private var connectProgress = 0
     private var connectWaiters: [(allowTerms: Bool, done: (ReaderError?) -> Void)] = []
@@ -132,12 +178,16 @@ final class TapToPayCoordinator {
     private final class Attempt {
         let req: CollectRequest
         let completion: (CollectResult) -> Void
+        var origin: Origin = .till
+        var readerSecret: String?          // reader origin: the PaymentIntent the main made
+        var readerLocation: String?
         var phase: Phase = .connecting
         var finished = false
         var timer: TimerToken?
         var cancelable: ReaderCancelable?
         var cancelReason: String?          // timeout | operator, once a cancel was asked for
         var cancelInFlight = false
+        var cancelTimer: TimerToken?
         var collectOutcome: Result<ReaderIntent, ReaderError>?
         var confirmRetried = false
         var cloudMismatch = false          // session_create answered another amount or currency
@@ -151,11 +201,26 @@ final class TapToPayCoordinator {
     private func softDeadline(_ a: Attempt) -> Int64 { a.req.deadlineUnixMs - Self.softDeadlineMarginMs }
 
     func collect(_ req: CollectRequest, completion: @escaping (CollectResult) -> Void) {
-        queue.async { self.startCollect(req, completion) }
+        queue.async { self.startCollect(req, origin: .till, clientSecret: nil, locationId: nil, started: { _ in }, completion) }
     }
 
-    private func startCollect(_ req: CollectRequest, _ completion: @escaping (CollectResult) -> Void) {
+    /// Reader mode (ut-docs#6538): collect on a PaymentIntent the MAIN already
+    /// created. No session_create: straight to retrieve-by-secret, the same
+    /// amount/currency check, collect and confirm. `started(false)` = refused
+    /// as busy, nothing was started; `started(true)` = the lock is held. The
+    /// verdict goes to `completion` (a busy refusal also reports declined/busy).
+    func collectIntent(_ req: CollectRequest, clientSecret: String, locationId: String?,
+                       started: @escaping (Bool) -> Void, completion: @escaping (CollectResult) -> Void) {
+        queue.async {
+            self.startCollect(req, origin: .reader, clientSecret: clientSecret, locationId: locationId,
+                              started: started, completion)
+        }
+    }
+
+    private func startCollect(_ req: CollectRequest, origin: Origin, clientSecret: String?, locationId want: String?,
+                              started: @escaping (Bool) -> Void, _ completion: @escaping (CollectResult) -> Void) {
         if current != nil || setupInFlight {
+            started(false)
             completion(.declined(TapToPayReason.busy))
             return
         }
@@ -172,18 +237,55 @@ final class TapToPayCoordinator {
             return
         }
         let a = Attempt(req, completion)
+        a.origin = origin
+        a.readerSecret = clientSecret
+        a.readerLocation = want?.isEmpty == false ? want : nil
         current = a
+        started(true)
         a.timer = clock.schedule(atMs: softDeadline(a), on: queue) { [weak self, weak a] in
             guard let self, let a else { return }
             self.deadlinePassed(a)
         }
-        ensureConnected(allowTerms: false) { [weak self] err in
+        let proceed = { [weak self] in
             guard let self, self.live(a) else { return }
-            if let err {
-                self.finish(a, .declined(err.reason))
-                return
+            self.pendingLocationOverride = a.readerLocation
+            self.ensureConnected(allowTerms: false) { [weak self] err in
+                guard let self, self.live(a) else { return }
+                if let err {
+                    self.finish(a, .declined(err.reason))
+                    return
+                }
+                if a.origin == .reader {
+                    self.retrieveForReader(a)
+                } else {
+                    self.createIntent(a)
+                }
             }
-            self.createIntent(a)
+        }
+        // The SDK has one connected reader: a reader collect for another Location
+        // reconnects (the same store's token is believed to agree; unproven).
+        if origin == .reader, reader.isConnected, let loc = a.readerLocation,
+           let have = connectedLocationId, have != loc {
+            reader.disconnect { [weak self] in
+                self?.queue.async {
+                    self?.connectedLocationId = nil
+                    self?.refreshCapability()
+                    proceed()
+                }
+            }
+        } else {
+            proceed()
+        }
+    }
+
+    private func retrieveForReader(_ a: Attempt) {
+        a.phase = .creating
+        guard let secret = a.readerSecret, !secret.isEmpty else {
+            finish(a, .declined(TapToPayReason.other))
+            return
+        }
+        reader.retrieveIntent(clientSecret: secret) { r in
+            self.queue.async { self.retrieved(a, r) }
         }
     }
 
@@ -193,6 +295,7 @@ final class TapToPayCoordinator {
         guard !a.finished else { return }
         a.finished = true
         a.timer?.invalidate()
+        a.cancelTimer?.invalidate()
         if current === a { current = nil }
         a.completion(result)
     }
@@ -290,6 +393,14 @@ final class TapToPayCoordinator {
     private func requestCancel(_ a: Attempt, reason: String) {
         guard a.cancelReason == nil else { return }
         a.cancelReason = reason
+        // Bounded: if the SDK never completes the cancel, or never ends the
+        // collect afterwards, the attempt still ends cancelled (#6538). A
+        // late collect result is ignored: the attempt is finished and nothing
+        // was confirmed.
+        a.cancelTimer = clock.schedule(atMs: clock.nowMs() + Self.cancelGraceMs, on: queue) { [weak self, weak a] in
+            guard let self, let a, self.live(a) else { return }
+            self.finish(a, .cancelled(a.cancelReason ?? reason))
+        }
         guard let c = a.cancelable else { return }
         a.cancelInFlight = true
         c.cancel { [weak self] _ in
@@ -435,7 +546,12 @@ final class TapToPayCoordinator {
         connectProgress = 0
         lastConnectError = nil
         refreshCapability()
-        resolveLocation { [weak self] result in
+        let override = pendingLocationOverride
+        pendingLocationOverride = nil
+        let resolve: (@escaping (Result<String, ReasonError>) -> Void) -> Void = { done in
+            if let override { done(.success(override)) } else { self.resolveLocation(done) }
+        }
+        resolve { [weak self] result in
             guard let self else { return }
             switch result {
             case .failure(let e):
@@ -448,7 +564,10 @@ final class TapToPayCoordinator {
                         self.refreshCapability()
                     }
                 }, completion: { err in
-                    self.queue.async { self.connectFinished(allowTerms: allowTerms, error: err, cloudReason: nil) }
+                    self.queue.async {
+                        if err == nil { self.connectedLocationId = loc }
+                        self.connectFinished(allowTerms: allowTerms, error: err, cloudReason: nil)
+                    }
                 })
             }
         }
@@ -601,6 +720,20 @@ final class TapToPayCoordinator {
             }
             self.education.presentHowToTap { reason in
                 completion(SetupOutcome(ok: reason == nil, reason: reason))
+            }
+        }
+    }
+
+    /// Drops the SDK's reader connection while nothing is being collected
+    /// (reader mode going to the background: no token-holding session stays open).
+    func disconnectIfIdle() {
+        queue.async {
+            guard self.current == nil, !self.setupInFlight, !self.connecting, self.reader.isConnected else { return }
+            self.reader.disconnect { [weak self] in
+                self?.queue.async {
+                    self?.connectedLocationId = nil
+                    self?.refreshCapability()
+                }
             }
         }
     }

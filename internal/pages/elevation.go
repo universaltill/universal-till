@@ -119,14 +119,24 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 	return verifyElevationPIN(dp, r, actorID, pin, action)
 }
 
-// checkOrElevateAll is checkOrElevate for a request that needs several
-// actions at once (ut-docs#5416: one post that both lowers a line's qty and
-// raises its discount). allowed only if the session holds EVERY action;
-// otherwise ONE PIN verification, whose approver must hold every action too
-// (errApproverInsufficientRole if any is missing). The PIN is checked once,
-// so a wrong PIN counts one failed attempt toward the shared lockout, not one
-// per action.
-func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...string) elevationCheck {
+// checkOrElevateBound checks the session holds every action, else the
+// manager PIN, and the PIN only counts for the
+// exact request the prompt summarised (ut-docs#7085). binding is the
+// approvalBinding of the values the caller computed from THIS request; the
+// returned token (non-empty when Outcome == needsElevation) must be rendered
+// in the prompt as the hidden "approval" field. A missing, used, expired,
+// other-user or edited approval is refused BEFORE the PIN lookup, so it
+// neither ticks the shared lockout nor writes audit/shrinkage rows. A wrong
+// PIN re-renders the same token, so retyping works; the token is consumed
+// only when the elevated action may proceed.
+func checkOrElevateBound(dp *common.Deps, r *http.Request, binding string, actions ...string) (elevationCheck, string) {
+	return checkOrElevateApproval(dp, r, binding, r.Form.Get("override_pin"), r.Form.Get("approval"), actions...)
+}
+
+// checkOrElevateApproval is the bound gate (ut-docs#7085, #7140): pin and tok
+// come from the caller (form fields or a decoded JSON body); everything else
+// is checkOrElevateBound's contract.
+func checkOrElevateApproval(dp *common.Deps, r *http.Request, binding, pin, tok string, actions ...string) (elevationCheck, string) {
 	actorID := getSessionUserID(r)
 	all := true
 	for _, a := range actions {
@@ -136,9 +146,69 @@ func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...
 		}
 	}
 	if all {
-		return elevationCheck{Outcome: allowed, ActorID: actorID}
+		return elevationCheck{Outcome: allowed, ActorID: actorID}, ""
 	}
-	return verifyElevationPIN(dp, r, actorID, pin, actions...)
+	if pin == "" {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID}, elevationApprovals.mint(actorID, binding)
+	}
+	if !elevationApprovals.valid(tok, binding) {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(actorID, binding)
+	}
+	check := verifyElevationPIN(dp, r, actorID, pin, actions...)
+	if check.Outcome != elevated {
+		return check, tok
+	}
+	if !elevationApprovals.consume(tok, binding) {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApprovalStale}, elevationApprovals.mint(actorID, binding)
+	}
+	return check, ""
+}
+
+// elevationJSONCode maps elevationCheck.Err to the JSON error code of a
+// refused elevated JSON request (ut-docs#7140; #7141 reuses it).
+func elevationJSONCode(err error) string {
+	switch {
+	case err == nil:
+		return "manager_pin_required"
+	case errors.Is(err, errApprovalStale):
+		return "approval_changed"
+	case errors.Is(err, auth.ErrInvalidPIN):
+		return "invalid_pin"
+	case errors.Is(err, auth.ErrLockedOut):
+		return "locked_out"
+	case errors.Is(err, errAuthServiceUnavailable), errors.Is(err, errStepUpCrossOrigin):
+		return "elevation_unavailable"
+	default: // errApproverInsufficientRole, Can errors
+		return "insufficient_role"
+	}
+}
+
+// writeElevationRefusalJSON writes the refusal of a bound JSON gate: 403 (or
+// lockoutStatus when the PIN lockout tripped) with
+// {"data":null,"error":{"code","message","approval"}}. The caller re-sends
+// the same values plus "approval" and the manager PIN. "approval" is omitted
+// only when tok is empty (crypto/rand failure).
+func writeElevationRefusalJSON(w http.ResponseWriter, r *http.Request, check elevationCheck, tok string, lockoutStatus int) {
+	status := http.StatusForbidden
+	if errors.Is(check.Err, auth.ErrLockedOut) {
+		status = lockoutStatus
+	}
+	key := elevationErrorKey(check.Err)
+	if key == "" {
+		key = "common.error.manager_or_admin_required"
+	}
+	if errors.Is(check.Err, errApprovalStale) {
+		// The prompt's "check what is shown above" means nothing to an API caller.
+		key = "elevation.error_approval_changed_api"
+	}
+	e := map[string]string{
+		"code":    elevationJSONCode(check.Err),
+		"message": httpx.T(httpx.ResolveLocale(w, r), key),
+	}
+	if tok != "" {
+		e["approval"] = tok
+	}
+	writeJSON(w, status, map[string]any{"data": nil, "error": e})
 }
 
 // checkStepUp is checkOrElevate's step-up sibling (ut-docs#1841, ADR-0087):
@@ -250,6 +320,8 @@ func elevationErrorKey(err error) string {
 		return "elevation.error_locked_out"
 	case errors.Is(err, auth.ErrInvalidPIN):
 		return "elevation.error_invalid_pin"
+	case errors.Is(err, errApprovalStale):
+		return "elevation.error_approval_changed"
 	case errors.Is(err, errAuthServiceUnavailable), errors.Is(err, errStepUpCrossOrigin):
 		return "elevation.error_unavailable"
 	case errors.Is(err, errStepUpSessionNotPermitted):

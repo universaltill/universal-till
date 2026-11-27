@@ -30,6 +30,7 @@ What can go wrong:
 
 - **Add** stays greyed out until the value is above zero.
 - A card number that's already in use — sold before, or already on another line of this sale — is refused in the popup with a message saying so, before anything is added. Scan another card, or leave the number empty.
+- A voucher sold here works in this shop only. It cannot be spent in a web shop or online, and a web shop's own gift cards are not linked to it.
 - One sale can sell up to 50 vouchers.
 
 ## Taking a voucher as payment

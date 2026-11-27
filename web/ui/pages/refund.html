@@ -65,20 +65,31 @@
           {{ range .Methods }}<option value="{{ . }}">{{ . }}</option>{{ end }}
         </select>
       </label>
-      {{ if .NeedsManagerPIN }}
-      <label>{{ T "refund.manager_pin" }}
-        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" required>
+    </div>
+
+    {{ range .LegGroups }}
+    <fieldset class="refund-legs" data-legs-for="{{ .Method }}" data-testid="refund-legs" hidden disabled>
+      <legend>{{ T "refund.leg.legend" }}</legend>
+      {{ range .Legs }}
+      <label class="refund-leg" data-testid="refund-leg-option" data-remaining="{{ .Remaining.Minor }}">
+        <input type="radio" name="refund_leg" value="{{ .ID }}" required {{ if le .Remaining.Minor 0 }}disabled{{ end }}>
+        <span><bdi>{{ money .Amount }}</bdi>{{ if .Time }} · <bdi>{{ .Time }}</bdi>{{ end }}{{ if .Card }} · <bdi>{{ .Card }}</bdi>{{ end }}</span>
+        <span class="muted">{{ if gt .Remaining.Minor 0 }}{{ printfBDI (T "refund.leg.left") (money .Remaining) }}{{ else }}{{ T "refund.fully_refunded" }}{{ end }}</span>
       </label>
       {{ end }}
-    </div>
+      <label class="refund-leg" data-testid="refund-leg-all">
+        <input type="radio" name="refund_leg" value="all" required>
+        <span>{{ T "refund.leg.all" }}</span>
+      </label>
+    </fieldset>
+    {{ end }}
 
     <div class="field-pair" style="margin-top:.6rem">
       <span class="muted">{{ T "refund.total" }}</span>
       <!-- ut-docs#1217 review N1: the live-update triggers live on each
            qty_N input (below in the table), not here -- scoping them that
-           way means typing a manager PIN never fires a preview request,
-           where a broad "from:closest form" listener would also fire (and
-           include the in-progress PIN) on every PIN keystroke. This
+           way avoids a broad "from:closest form" listener, which would
+           fire on every keystroke elsewhere in the form. This
            element only self-triggers once on load, to show a real total
            immediately (quantities default to the full refundable amount). -->
       <strong id="refund-total"
@@ -103,6 +114,8 @@ function isRefundPreviewRequest(ev) {
   return !!(ev.detail.requestConfig && ev.detail.requestConfig.path === '/api/refund/preview');
 }
 document.body.addEventListener('htmx:responseError', function (ev) {
+  // The manager-PIN prompt answers 200 with X-UT-Response: elevation-prompt,
+  // so it never reaches this handler (ut-docs#7134).
   // The preview request never answers non-2xx (it always writes 200,
   // even for an unknown/malformed in-flight edit -- see the preview
   // handler), so this branch is currently unreachable for it. Guarded
@@ -111,7 +124,7 @@ document.body.addEventListener('htmx:responseError', function (ev) {
   // the Refund button for what is really just a stale live-total swap.
   if (isRefundPreviewRequest(ev)) return;
   var msg = document.getElementById('refund-msg');
-  if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+  if (msg) { msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error'); msg.scrollIntoView({ block: 'nearest' }); }
 });
 // ut-docs#1287: a network-level failure (e.g. dropping off the shop LAN
 // mid-tap) never reaches htmx:responseError — there's no response at all,
@@ -126,7 +139,31 @@ document.body.addEventListener('htmx:sendError', function (ev) {
   // pressed Refund; nothing alarming happened.
   if (isRefundPreviewRequest(ev)) return;
   var msg = document.getElementById('refund-msg');
-  if (msg) msg.textContent = '✗ ' + "{{ T "designer.error.server" }}";
+  if (msg) { msg.textContent = '✗ ' + "{{ T "designer.error.server" }}"; msg.scrollIntoView({ block: 'nearest' }); }
 });
+// ut-docs#6648: the payment picker (a fieldset per multi-leg method) shows only
+// for the selected method; a disabled fieldset neither validates nor submits.
+// The required-pick bubble asks the legend's question in the till's language.
+(function () {
+  var T6648 = { pick: "{{ T "refund.leg.legend" }}" };
+  var form = document.getElementById('refund-form');
+  var sel = form && form.querySelector('select[name="method"]');
+  function sync() {
+    document.querySelectorAll('#refund-form [data-legs-for]').forEach(function (fs) {
+      var on = !!sel && fs.getAttribute('data-legs-for') === sel.value;
+      fs.hidden = !on; fs.disabled = !on;
+    });
+  }
+  // A refusal about the previous method's payments no longer applies.
+  function clearMsg() { var m = document.getElementById('refund-msg'); if (m) m.textContent = ''; }
+  if (sel) { sel.addEventListener('change', function () { sync(); clearMsg(); }); sync(); }
+  var radios = document.querySelectorAll('#refund-form input[name=refund_leg]');
+  radios.forEach(function (r) {
+    r.addEventListener('invalid', function () { r.setCustomValidity(T6648.pick); });
+    r.addEventListener('change', function () {
+      radios.forEach(function (x) { x.setCustomValidity(''); });
+    });
+  });
+})();
 </script>
 {{ end }}

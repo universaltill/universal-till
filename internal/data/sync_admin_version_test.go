@@ -137,7 +137,8 @@ func TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger(t *testing.T) {
 	// 092's trg_sync_admin_version_tills_prefix_upd.
 	// bearer_issued_at, bearer_prev_hash and bearer_prev_expires_at
 	// (ut-docs#5198, migration 093) are redactCols: never in the bundle.
-	want := []string{"bearer_hash", "bearer_issued_at", "bearer_prev_expires_at", "bearer_prev_hash", "enrolled_at", "id", "last_seen_at", "name", "receipt_prefix", "role"}
+	// device_id (ut-docs#7097, migration 118) is a redactCol: main-till-local.
+	want := []string{"bearer_hash", "bearer_issued_at", "bearer_prev_expires_at", "bearer_prev_hash", "device_id", "enrolled_at", "id", "last_seen_at", "name", "receipt_prefix", "role"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tills columns = %v, want %v — migration 022's gated tills UPDATE trigger\n"+
 			"(WHEN NOT (OLD.name IS NEW.name AND OLD.enrolled_at IS NEW.enrolled_at))\n"+

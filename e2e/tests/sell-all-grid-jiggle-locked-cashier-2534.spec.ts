@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { ensureOperator, ADMIN_PIN, setBrowsingMode, markTourDone } from './helpers';
+import { ensureOperator, ADMIN_PIN, setBrowsingMode, markTourDone, resetBasketWithPIN } from './helpers';
 
 // ut-docs#2534 (owner rule): editing from the all_filter_chips All grid is
 // for an admin, a manager, or a role holding catalog_management only. A
@@ -106,7 +106,7 @@ test.describe('All grid jiggle edit mode is not for a cashier (ut-docs#2534)', (
       await expect(grid.locator('[data-testid="tile-badge-edit"]')).toHaveCount(0);
       await expect(page.locator('.basket .line-name', { hasText: ITEMS[0].name })).toHaveCount(1);
       // ut-docs#5416: a cashier clears a priced basket only with a manager PIN.
-      await page.request.post('/api/pos/reset', { form: { override_pin: ADMIN_PIN } });
+      await resetBasketWithPIN(page.request, ADMIN_PIN);
 
       // The server refuses a hand-made subset reorder: elevation prompt,
       // nothing saved.
@@ -127,7 +127,7 @@ test.describe('All grid jiggle edit mode is not for a cashier (ut-docs#2534)', (
       await expect.poll(() => namesIn(page)).toEqual(ITEMS.map((i) => i.name));
     } finally {
       // ut-docs#5416: a cashier clears a priced basket only with a manager PIN.
-      await page.request.post('/api/pos/reset', { form: { override_pin: ADMIN_PIN } });
+      await resetBasketWithPIN(page.request, ADMIN_PIN);
       await loginWithPin(page, ADMIN_PIN); // back to the admin for cleanup
       await setBrowsingMode(page, 'category_tabs');
       await page.goto('/catalog');

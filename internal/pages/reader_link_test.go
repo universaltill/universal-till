@@ -452,7 +452,7 @@ func TestBrokerDownIsPendingNeverDeclined(t *testing.T) {
 
 func TestAmountMismatchReaderResultIsPending(t *testing.T) {
 	g := newPhoneRig(t)
-	g.ob.set(func(b *opBroker) { b.status = piStatus("succeeded", 100) }) // 1.00 charged for a 1.20 sale
+	g.ob.set(func(b *opBroker) { b.status = strings.Replace(piStatus("succeeded", 100), "pi_k1b", "pi_r1b", 1) }) // the attempt records the reader link's PI; 1.00 charged for a 1.20 sale
 	ph := g.connect(t, fleetlink.ReaderReady)
 	done := g.tenderAsync(t)
 	c := ph.acceptCollect(t)
@@ -746,5 +746,92 @@ func TestOtherPinNeverMatches(t *testing.T) {
 		if got := otherPin(t, pin); got == pin || len(got) != len(pin) {
 			t.Fatalf("otherPin(%q) = %q", pin, got)
 		}
+	}
+}
+
+// secondPhone enrols and links another paired phone on the same main.
+func (g *phoneRig) secondPhone(t *testing.T, name, ref, bearer, state string) (data.CardReader, *fakePhone) {
+	t.Helper()
+	c, err := data.NewCardReaderRepo(g.dp.Db).CreatePaired(context.Background(),
+		data.CardReader{Name: name, MethodKey: "tapstripe", PluginID: "p.tap", ReaderRef: ref, Kind: data.CardReaderKindPhone},
+		data.NewReaderCredential{BearerHash: hashBearer(bearer), PinSPKI: g.cert.Pin()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc, _, err := g.dial(bearer, g.cert.Pin())
+	if err != nil {
+		t.Fatalf("second phone dial: %v", err)
+	}
+	wc.SetReadLimit(1 << 20)
+	t.Cleanup(func() { _ = wc.CloseNow() })
+	p := &fakePhone{c: wc}
+	if hello := p.next(t); hello.Type != fleetlink.TypeHello {
+		t.Fatalf("first frame = %q", hello.Type)
+	}
+	p.send(t, fleetlink.TypeReaderStatus, "", fleetlink.ReaderStatus{State: state})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if s, ok := g.dp.Link.ReaderState(c.ID); ok && s.State == state {
+			return c, p
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second phone's state never reached the main")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// G8: two phones on the Mac main: the picker shows each one's presence, the
+// last used one is the default, a busy phone is skipped and a revoked one
+// leaves the other working.
+func TestTwoPhonesPickerPresenceDefaultAndRevoke(t *testing.T) {
+	g := newPhoneRig(t)
+	ctx := context.Background()
+	g.connect(t, fleetlink.ReaderReady)
+	c2, ph2 := g.secondPhone(t, "Back phone", "rd_ffffffffffff", "second-bearer", fleetlink.ReaderReady)
+
+	view, err := buildReaderPicker(ctx, g.dp, "tapstripe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Rows) != 2 || view.Selectable != 2 || view.Auto {
+		t.Fatalf("rows=%d selectable=%d auto=%v, want 2 ready phones and a picker", len(view.Rows), view.Selectable, view.Auto)
+	}
+	// The default is THIS till's last used phone.
+	if err := data.NewCardReaderRepo(g.dp.Db).TouchLastUsed(ctx, c2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if view, _ = buildReaderPicker(ctx, g.dp, "tapstripe"); view.DefaultID != c2.ID {
+		t.Fatalf("default = %q, want the last used phone %s", view.DefaultID, c2.ID)
+	}
+	// It goes busy on its own link: skipped in the picker, the other becomes the default.
+	ph2.send(t, fleetlink.TypeReaderStatus, "", fleetlink.ReaderStatus{State: fleetlink.ReaderBusy})
+	deadline := time.Now().Add(3 * time.Second)
+	for s, _ := g.dp.Link.ReaderState(c2.ID); s.State != fleetlink.ReaderBusy; s, _ = g.dp.Link.ReaderState(c2.ID) {
+		if time.Now().After(deadline) {
+			t.Fatal("busy never arrived")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	view, _ = buildReaderPicker(ctx, g.dp, "tapstripe")
+	if view.DefaultID != g.readerID || view.Selectable != 1 {
+		t.Fatalf("default=%q selectable=%d, want the ready phone %s only", view.DefaultID, view.Selectable, g.readerID)
+	}
+	for _, r := range view.Rows {
+		if r.ID == c2.ID && (r.Selectable || r.State != "busy") {
+			t.Fatalf("busy phone row = %+v", r)
+		}
+	}
+	// Revoking the first leaves the second.
+	disconnectReaderLink(g.dp, g.readerID)
+	if _, err := data.NewCardReaderRepo(g.dp.Db).SoftRemove(ctx, g.readerID); err != nil {
+		t.Fatal(err)
+	}
+	if st, ok := g.dp.Link.ReaderState(c2.ID); !ok || st.State != fleetlink.ReaderBusy {
+		t.Fatalf("the other phone's link was disturbed: %+v ok=%v", st, ok)
+	}
+	view, _ = buildReaderPicker(ctx, g.dp, "tapstripe")
+	if len(view.Rows) != 1 || view.Rows[0].ID != c2.ID {
+		t.Fatalf("rows after revoke = %+v", view.Rows)
 	}
 }

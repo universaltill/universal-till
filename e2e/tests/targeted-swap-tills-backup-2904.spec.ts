@@ -21,7 +21,7 @@ test('tills: deny and approve refresh only the pairing card, no page reload', as
     expect(seeded.status(), `seeding ${name}`).toBe(200);
   }
 
-  await page.goto('/tills');
+  await page.goto('/tills?tab=add');
   const card = page.locator('#tills-pairing-card');
   const denyRow = card.locator('tr', { hasText: 'test-2904-deny-till' });
   const approveRow = card.locator('tr', { hasText: 'test-2904-approve-till' });
@@ -60,7 +60,7 @@ test('tills: revoke refreshes only the enrolled-tills roster, no page reload', a
   });
   expect(enrollResp.ok(), `enroll: ${enrollResp.status()} ${await enrollResp.text()}`).toBe(true);
 
-  await page.goto('/tills');
+  await page.goto('/tills?tab=others');
   const roster = page.locator('#tills-roster');
   const row = roster.locator('tr', { hasText: 'test-2904-revoke-till' });
   await expect(row).toHaveCount(1);

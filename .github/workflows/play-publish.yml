@@ -1,4 +1,5 @@
 name: play-publish
+run-name: play-publish ${{ inputs.version }} dry_run=${{ inputs.dry_run }}
 # ut-docs#6410 (epic #6380, ADR-0194 s7): builds the Google Play App Bundle
 # (`play` flavor), signs it with the UPLOAD key and uploads it to the Play
 # INTERNAL testing track. Nothing here can reach any other track.

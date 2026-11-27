@@ -36,6 +36,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
+	"github.com/universaltill/universal-till/internal/readerlink"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -587,6 +588,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// accepts requests; the revoke handler and every NudgeLink change point
 	// read dp.Link at request time.
 	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	// ut-docs#6538 phase 2: an additional till's relay to its main's phones.
+	// Built before wireReaderLink, which binds it; it reads dp.LinkClient (set
+	// below) when it is used, and offers nothing without a pinned link.
+	dp.RelayReaders = readerlink.NewRelayClient(func() readerlink.RelayConn {
+		if dp.LinkClient == nil {
+			return nil
+		}
+		if p := dp.LinkClient.Link(); p != nil {
+			return p
+		}
+		return nil
+	}, nil)
 	wireReaderLink(dp) // ut-docs#6538 R1b: paired phone card readers ride the same hub (dark behind card_readers.phone_pairing)
 	// Always built: a till becomes a main till without restarting (a replica
 	// refuses the pending-link route before it is used).
@@ -605,6 +618,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
 	registerReportArchiveChip(mux, dp)  // refused report upload chip (ADR-0147, ut-docs#574)
+	registerTillsTabs(mux, dp)          // the one Tills & devices page: tab fragments, stale removal (ut-docs#7057)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	registerTillRole(mux, dp)           // till role change, Tills page + joined till's own report (ut-docs#2781)
 	registerTillUpdateNow(mux, dp)      // Tills page "Update now" over the main-till link (ut-docs#2945)
@@ -661,6 +675,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("held-order table-claim re-affirm", func() { StartHeldOrderClaimReaffirm(bgCtx, dp, wg) }) // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)                                                                         // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
 	StartShopTypeLayoutReconcile(bgCtx, dp, wg)                                                                       // builtin layout follows a pulled/remote shop_type between sales (ut-docs#2793); joined by app.Run's drain
+	netaccess.StartService("cloud credential self-heal", func() { StartCredHeal(bgCtx, dp, wg) })                     // ADR-0222: a dead cloud credential is recovered by proving the approval key; joined by app.Run's drain
 	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain

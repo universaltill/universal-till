@@ -5,7 +5,7 @@ section: Everyday selling
 order: 20
 public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
-keywords: [cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
+keywords: [own terminal, external terminal, cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
 
 # Payments
@@ -20,6 +20,27 @@ Cash is built in; card and other payment methods come as plugins from the store 
 4. On a card reader the customer has about 18 seconds to tap or insert. After that the till tells the reader to stop and shows **Payment declined**, so a card offered too late is refused. If the card was already being read when time ran out, the payment still goes through and the sale shows as paid. After a card decline that came after a wait, tap **Pay** again on the **same basket** first: the till checks the earlier attempt and, if it went through, completes the sale with it instead of charging again. If it is declined again straight away, the earlier attempt is still being checked — wait a minute and tap **Pay** again. If you change the basket or pick another method instead, check the reader's screen or your provider's dashboard before charging again.
    If this till cannot record a card payment safely, it will not take it. After a restart it returns any card payment that never became a sale. A card tap that was already charged, and any payment it could not settle, are listed instead under **Settings → Payments → Payments needing attention** (and in the till's log) for a manager to deal with at the payment provider.
 5. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
+
+## Tips at checkout
+
+A tip row sits above the payment buttons when tips are switched on. It is on by default for **service** shops (salons, barbers) and off for other shops until a manager turns it on (**Settings → Payments → Offer a tip at checkout**).
+
+1. Before tapping a payment method, choose the tip: **No tip** (already selected, so declining costs nothing), a percentage button (each shows the amount it adds), or **Other amount** to type one. The line under the buttons shows **Total with tip**.
+2. Tap the payment method as usual. The tip is added to the amount charged and kept separately, so it is not counted as sales. A cash tip is not counted as cash sales either: the end-of-day report shows it on its own **Tips held out** line. The cash itself stays in the drawer until you pay it out, so the drawer count still expects it.
+3. On the **Split** tab each payment has its own **Tip amount** box. The **Amount** you enter is what is handed over, tip included; **Fill remaining** adds the tip you typed.
+4. A tip cannot be more than the bill; on a split sale that is the tips of all payments together. A refund returns the goods, never the tip.
+
+Set the percentages under **Settings → Payments → Tip percentages**: up to five, separated by commas, decimals allowed (`10,15,20` or `12.5`). Percentages round to the nearest minor unit, halves up. The tip is for the staff member by default; a country setup may make it the business's. The **Tips** tab of Reports lists the tips taken and lets a manager record who was paid.
+
+## Card on your own terminal
+
+If a manager has added **your own terminal** (see [Card readers](/help/card-readers)), it works without a plugin and without internet:
+
+1. Tap **Pay**, then **Card** (or **Card reader**), and pick your terminal under **Which reader?**.
+2. Type the amount shown into your terminal and let the customer pay.
+3. Tap **Paid** if it was approved. You can first enter the **Auth code** and the **Last 4 card digits** from the terminal's slip; both are optional. Tap **Declined** if it was refused: nothing is recorded and the basket stays as it was.
+
+The till cannot check this payment: it records what you tell it. Each one is kept in the audit log, and it has its own line, **Card (own terminal)**, on the X and Z reports. Never type a full card number.
 
 ## Install, set up and update a card plugin (Stripe, SumUp)
 
@@ -45,7 +66,7 @@ Try it before real customers: install the plugin with a test key (Stripe) or in 
 
 **Updating.** Payment plugins are not updated for you. A green **Plugin updates available** chip appears in the status bar when a newer version exists; open **Plugins**, update it on the main till, and try one small payment afterwards. If something goes wrong, **Versions** on the plugin's card rolls back to the earlier version (see [Plugins](/help/plugins)).
 
-**Refunds.** A card refund goes back through the same provider. SumUp lists a refund as a separate entry in its dashboard, and the original payment still shows as paid there.
+**Refunds.** A card refund goes back through the same provider. With a bill split over several card payments, the refund screen asks which payment the refund goes back to. SumUp lists a refund as a separate entry in its dashboard, and the original payment still shows as paid there.
 
 ## Configuring payment methods
 

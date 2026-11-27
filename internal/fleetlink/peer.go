@@ -86,6 +86,9 @@ type Peer struct {
 	hmu   sync.Mutex
 	hello *Hello
 
+	// secure: the main accepted this link over TLS (set once, before run).
+	secure bool
+
 	// Set by the reader before it returns; read after run returns.
 	readErr error  // why the reader stopped (carries the peer's close code)
 	peerBye string // the reason in the peer's bye, if it said one
@@ -665,4 +668,23 @@ func (p *Peer) writeBye() {
 	ctx, cancel := context.WithTimeout(p.ctx, min(p.cfg.WriteTimeout, time.Second))
 	defer cancel()
 	_ = p.conn.Write(ctx, b)
+}
+
+// Secure reports whether the main till accepted this link over TLS (the LAN
+// listener's pinned certificate). A fake transport is not secure.
+func (p *Peer) Secure() bool { return p.secure }
+
+// VerifiedPin is, on a dialled link, the pin of the certificate this till
+// verified on the connection ("" = plain HTTP or no pin).
+func (p *Peer) VerifiedPin() string { return connVerifiedPin(p.conn) }
+
+// Revoked reports that the link was closed because its credential was
+// revoked (only meaningful once Closed is closed).
+func (p *Peer) Revoked() bool {
+	select {
+	case <-p.stop:
+		return p.closeCode == CloseRevoked
+	default:
+		return false
+	}
 }

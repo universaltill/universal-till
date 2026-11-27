@@ -1,0 +1,142 @@
+# Promote a published release to the stores (ut-docs#6407, ADR-0194 Amendment 2).
+#
+# ONE orchestrating run, dispatched from main with the release `version`. The
+# owner's single manual act is the required-reviewer approval of the GitHub
+# environment `msstore-submit`, on THIS run's page (msstore-submit.yml is called
+# with workflow_call, so the approval is a job waiting here, not a runner
+# polling). Modes (dry_run defaults to true):
+#   dry_run=true,  probe_store=false  verify only: no Store call, no approval
+#   dry_run=true,  probe_store=true   verify + read-only Store probe (1 approval)
+#   dry_run=false                     verify + package update (+ commit/submit
+#                                     unless commit=false) (1 approval)
+# iOS TestFlight and Google Play internal are reported (and re-dispatched once on
+# a real run); the run never waits on a Play approval. A summary table lands in
+# the run summary and on the standing issue "Store release log".
+#
+# Security: workflow_dispatch only; top-level permissions {}; every job asks for
+# exactly what it uses (id-token only on the `microsoft` call, issues: write only
+# on `summary`, actions: write only on `stores`); no secret and no PAT (the
+# Store identity is a federated OIDC credential held by msstore-submit.yml);
+# GitHub-hosted runners (public repo); no input reaches a script except through
+# env. Public Google Play (#6411) and the App Store (#6414) stay closed.
+name: promote-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version X.Y.Z (must be the published latest release)"
+        required: true
+        type: string
+      dry_run:
+        description: "true = never change the Store (verify only, or a read-only probe); false = real promote"
+        required: true
+        type: boolean
+        default: true
+      probe_store:
+        description: "With dry_run=true: also run the read-only Store probe (needs the environment approval)"
+        required: true
+        type: boolean
+        default: false
+      commit:
+        description: "Real run only: commit and submit after setting the package (ignored when dry_run)"
+        required: true
+        type: boolean
+        default: true
+      soak_minutes:
+        description: "Soak window in minutes for the Microsoft verify (2 to 20)"
+        required: true
+        type: string
+        default: "2"
+
+permissions: {}
+
+concurrency:
+  group: promote-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # git tags, public release + environment protection rules
+    outputs:
+      tag: ${{ steps.preflight.outputs.tag }}
+      published_at: ${{ steps.preflight.outputs.published_at }}
+      need_store: ${{ steps.preflight.outputs.need_store }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags + origin/main for verify-release-tag.sh
+      - name: Preflight (main, tag on main, published latest release, environment gate)
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROBE_STORE: ${{ inputs.probe_store }}
+        run: bash scripts/ci/promote-preflight.sh
+
+  microsoft:
+    needs: preflight
+    uses: ./.github/workflows/msstore-submit.yml
+    permissions:
+      contents: read
+      id-token: write # the ONE job with OIDC; msstore-submit.yml scopes it to its gated submit job
+    with:
+      tag: v${{ inputs.version }}
+      dry_run: ${{ inputs.dry_run }}
+      commit: ${{ !inputs.dry_run && inputs.commit }}
+      soak_minutes: ${{ inputs.soak_minutes }}
+      verify_only: ${{ inputs.dry_run && !inputs.probe_store }}
+
+  stores:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write # job-scoped: re-dispatch ios-testflight / play-publish once on a real run
+    outputs:
+      stores: ${{ steps.stores.outputs.stores }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: iOS TestFlight and Google Play internal status
+        id: stores
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          PUBLISHED_AT: ${{ needs.preflight.outputs.published_at }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PLAY_ENABLED: ${{ vars.PLAY_PUBLISH_ENABLED }}
+        run: bash scripts/ci/promote-stores.sh "$VERSION" "$PUBLISHED_AT" "$DRY_RUN"
+
+  summary:
+    needs: [preflight, microsoft, stores]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write # the only job that comments (standing issue "Store release log")
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Summary table
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROBE_STORE: ${{ inputs.probe_store }}
+          COMMIT: ${{ inputs.commit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          MS_RESULT: ${{ needs.microsoft.result }}
+          MS_READY: ${{ needs.microsoft.outputs.ready }}
+          MS_SHA256: ${{ needs.microsoft.outputs.sha256 }}
+          STORES_JSON: ${{ needs.stores.outputs.stores }}
+        run: bash scripts/ci/promote-summary.sh

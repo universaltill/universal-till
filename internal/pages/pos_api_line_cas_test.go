@@ -52,7 +52,7 @@ func TestLineHandler_ConcurrentRaiseRefusesStaleUpdate(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			rec := postForm(mux, "/api/pos/line", tc.form(key), &tc.user)
+			rec := postFormHtmx(mux, "/api/pos/line", tc.form(key), &tc.user)
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
 			}
@@ -86,7 +86,7 @@ func TestLineHandler_RemovedLineShowsBasketLevelNote(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	setLineSnapshotTestHook(t, func() { dp.Engine.RemoveLine(key) })
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d", rec.Code)
 	}
@@ -105,7 +105,7 @@ func TestLineHandler_AlreadyRemovedLineShowsNote(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	dp.Engine.RemoveLine(key)
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d", rec.Code)
 	}
@@ -119,7 +119,7 @@ func TestLineHandler_AlreadyRemovedLineShowsNote(t *testing.T) {
 
 func TestLineHandler_ElevationPromptResyncsAfterSettle(t *testing.T) {
 	mux, key, _, _ := seedPricedLine(t, 3)
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
@@ -148,7 +148,7 @@ func TestLineHandler_WeighedDiscountEditIsNotReduction(t *testing.T) {
 	mgrID, _ := newElevationTestPrincipals(t, dp, "mgr-weigh", "cashier-weigh", "445566")
 	cashier := &auth.User{ID: mgrID, Role: "manager"}
 
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "discount": {"10"}}, cashier)
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "discount": {"10"}}, cashier)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("discount edit: code %d prompt %v", rec.Code, isElevationPrompt(rec))
 	}
@@ -178,7 +178,7 @@ func TestLineHandler_WeighedDiscountEditIsNotReduction(t *testing.T) {
 // Documents why the include went: the main-era field set is a reduction.
 func TestLineHandler_WeighedTwoDecimalQtyPostIsGated(t *testing.T) {
 	mux, _, key := seedWeighedLine(t)
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"0.12"}, "discount": {"10"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"0.12"}, "discount": {"10"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
@@ -192,14 +192,14 @@ func TestLineHandler_WeighedStepperAndTypedQty(t *testing.T) {
 	if err := dp.Engine.UpdateLineByKey(key, 0.125, 10); err != nil {
 		t.Fatal(err)
 	}
-	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"1"}, "discount": {"10"}}, cashier); rec.Code != http.StatusOK {
+	if rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"1"}, "discount": {"10"}}, cashier); rec.Code != http.StatusOK {
 		t.Fatalf("stepper: %d", rec.Code)
 	}
 	l := dp.Engine.Basket().Lines[0]
 	if l.Qty != 1.125 || l.LineDiscount != money.FromMinor(10) {
 		t.Fatalf("stepper: qty %v disc %v", l.Qty, l.LineDiscount)
 	}
-	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"0.1"}}, cashier); !isElevationPrompt(rec) {
+	if rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"0.1"}}, cashier); !isElevationPrompt(rec) {
 		t.Fatalf("typed lower qty must prompt, got %d", rec.Code)
 	}
 }
@@ -233,7 +233,7 @@ func TestLineHandler_RaceNoUngatedReduction(t *testing.T) {
 					cur := dp.Engine.Basket().Lines[0].Qty
 					form = url.Values{"key": {key}, "qty": {strconv.FormatFloat(cur, 'f', -1, 64)}, "discount": {"1"}}
 				}
-				rec := postForm(mux, "/api/pos/line", form, cashier)
+				rec := postFormHtmx(mux, "/api/pos/line", form, cashier)
 				if rec.Code == http.StatusOK && !isElevationPrompt(rec) && form.Get("delta") != "" {
 					atomic.AddInt64(&raises, 1)
 				}
@@ -280,7 +280,7 @@ func TestLineHandler_ElevationReplaysFromQty(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
@@ -297,7 +297,7 @@ func TestLineHandler_StaleApprovalRefusedWhenLineChangedSincePrompt(t *testing.T
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	cashier := &auth.User{ID: blockedID, Role: "cashier"}
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
@@ -307,7 +307,7 @@ func TestLineHandler_StaleApprovalRefusedWhenLineChangedSincePrompt(t *testing.T
 		t.Fatal(err)
 	}
 	retry.Set("override_pin", "445566")
-	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	rec = postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -336,13 +336,13 @@ func TestLineHandler_MatchingFromQtyApprovalStillApplies(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	cashier := &auth.User{ID: blockedID, Role: "cashier"}
-	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
 	retry := promptHiddenFields(t, rec.Body.String())
 	retry.Set("override_pin", "445566")
-	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	rec = postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
 		t.Fatalf("approved retry: %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -362,7 +362,7 @@ func TestLineHandler_InvalidFromQtyIs400(t *testing.T) {
 				t.Fatal(err)
 			}
 			key := dp.Engine.Basket().Lines[0].LineKey
-			rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "from_qty": {bad}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+			rec := postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "from_qty": {bad}}, &auth.User{ID: "cashier-1", Role: "cashier"})
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid from_qty") {
 				t.Fatalf("want 400 invalid from_qty, got %d: %s", rec.Code, rec.Body.String())
 			}
@@ -381,12 +381,12 @@ func TestLineHandler_StaleApprovalWithWrongPINIsConflictNotPrompt(t *testing.T) 
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	cashier := &auth.User{ID: blockedID, Role: "cashier"}
-	retry := promptHiddenFields(t, postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier).Body.String())
+	retry := promptHiddenFields(t, postFormHtmx(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier).Body.String())
 	if err := dp.Engine.UpdateLineByKey(key, 5, 0); err != nil {
 		t.Fatal(err)
 	}
 	retry.Set("override_pin", "000000") // wrong: must never reach the PIN check
-	rec := postForm(mux, "/api/pos/line", retry, cashier)
+	rec := postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if rec.Code != http.StatusConflict || isElevationPrompt(rec) {
 		t.Fatalf("stale retry must 409 before elevation, got %d prompt=%v", rec.Code, isElevationPrompt(rec))
 	}
@@ -402,7 +402,7 @@ func TestLineHandler_StaleCodeAddressedApprovalShowsNote(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	cashier := &auth.User{ID: blockedID, Role: "cashier"}
-	rec := postForm(mux, "/api/pos/line", url.Values{"code": {"ABC"}, "qty": {"1"}}, cashier)
+	rec := postFormHtmx(mux, "/api/pos/line", url.Values{"code": {"ABC"}, "qty": {"1"}}, cashier)
 	if !isElevationPrompt(rec) {
 		t.Fatalf("want prompt, got %d", rec.Code)
 	}
@@ -412,7 +412,7 @@ func TestLineHandler_StaleCodeAddressedApprovalShowsNote(t *testing.T) {
 	}
 	dp.Engine.RemoveLine(key)
 	retry.Set("override_pin", "445566")
-	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	rec = postFormHtmx(mux, "/api/pos/line", retry, cashier)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "data-line-changed") {
 		t.Fatalf("want 409 with the note, got %d: %s", rec.Code, rec.Body.String())
 	}

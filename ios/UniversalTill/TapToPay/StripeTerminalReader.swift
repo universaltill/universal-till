@@ -61,7 +61,7 @@ final class StripeTerminalReader: NSObject, PaymentReader {
         lock.lock()
         defer { lock.unlock() }
         if !Terminal.isInitialized() {
-            Terminal.initWithTokenProvider(GoConnectionTokenProvider())
+            Terminal.initWithTokenProvider(DelegatingTokenProvider.shared)
         }
     }
 
@@ -121,6 +121,16 @@ final class StripeTerminalReader: NSObject, PaymentReader {
     }
 
     private var discoverHandler: DiscoveryHandler?
+
+    func disconnect(completion: @escaping () -> Void) {
+        guard Terminal.isInitialized(), Terminal.shared.connectedReader != nil else {
+            completion()
+            return
+        }
+        DispatchQueue.main.async {
+            Terminal.shared.disconnectReader { _ in completion() }
+        }
+    }
 
     // MARK: payment
 

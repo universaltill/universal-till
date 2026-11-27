@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paybroker"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/readerlink"
 )
 
@@ -221,30 +222,42 @@ func withdrawReader(w http.ResponseWriter, r *http.Request, d *common.Deps, c da
 var errNoReaderMethod = errors.New("no single reader-capable payment method")
 
 // resolveReaderMethod is the payment method a paired phone takes taps for: the
-// one active payment method whose plugin declares the readers hook. Zero or
-// several is refused (the manager configures one first); core never names a
-// provider.
+// one active payment method whose plugin declares the readers hook. A phone is
+// a TAP reader, so when several methods declare the hook (a shop with a
+// server-driven card method, a second provider and a Tap to Pay entry, the
+// normal case, ut-docs#6538 live test 2026-11-26) the single entry that is
+// marked as a tap entry (config {"tap":true}, plugins.IsTapEntryConfig) is the
+// method. Zero, or several with no single tap entry, is refused (the manager
+// configures one first); core never names a provider.
 func resolveReaderMethod(ctx context.Context, d *common.Deps) (method, pluginID string, err error) {
 	plug := data.NewPluginRepo(d.Db)
 	entries, err := plug.ListPaymentEntries(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	found := 0
+	type hit struct{ method, pluginID string }
+	var all, taps []hit
 	for _, e := range entries {
 		ok, herr := plug.HasActiveHook(ctx, e.PluginID, readersHook(e.EntryKey))
 		if herr != nil {
 			return "", "", herr
 		}
-		if ok {
-			found++
-			method, pluginID = e.EntryKey, e.PluginID
+		if !ok {
+			continue
+		}
+		h := hit{e.EntryKey, e.PluginID}
+		all = append(all, h)
+		if plugins.IsTapEntryConfig(e.ConfigJSON) {
+			taps = append(taps, h)
 		}
 	}
-	if found != 1 {
-		return "", "", errNoReaderMethod
+	switch {
+	case len(all) == 1:
+		return all[0].method, all[0].pluginID, nil
+	case len(taps) == 1:
+		return taps[0].method, taps[0].pluginID, nil
 	}
-	return method, pluginID, nil
+	return "", "", errNoReaderMethod
 }
 
 // uniqueReaderName makes the phone's name unique among active readers by
@@ -385,6 +398,66 @@ func registerReaderManagement(mux *http.ServeMux, d *common.Deps) {
 		httpx.RenderPartial("ui/partials/tills_card_readers.html", map[string]any{"Readers": rows, "MsgKey": msgKey})(w, r)
 	}
 
+	// ut-docs#6538 phase 2 (G9, G13a): this main till's id (so a phone can be
+	// paired by typing the address and id when mDNS cannot be used) and the
+	// manager's switch for phone card readers. The switch is this till's own
+	// setting (never synced) and needs the manager PIN; it does nothing for a
+	// shop the cloud has not enabled for phone readers (token/create refused
+	// there), which the caption says. Nothing here for a following till.
+	renderSettings := func(w http.ResponseWriter, r *http.Request, status int, msgKey string) {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		id, err := discovery.TillID(r.Context(), data.NewSettingsRepo(d.Db))
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "card_readers", err)
+			return
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+		}
+		httpx.RenderPartial("ui/partials/tills_reader_settings.html", map[string]any{
+			"On": phoneReaderPairingOn(r.Context(), d), "TillID": id, "MsgKey": msgKey})(w, r)
+	}
+	mux.HandleFunc("GET /ui/tills/reader-settings", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		renderSettings(w, r, http.StatusOK, "")
+	})
+	mux.HandleFunc("POST /ui/tills/reader-settings/phone-pairing", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		want := r.Form.Get("enabled")
+		if want != "on" && want != "off" {
+			http.Error(w, "enabled must be on or off", http.StatusBadRequest)
+			return
+		}
+		actor, ok := authorizePairingManager(w, r, d.AuthSvc)
+		if !ok {
+			return
+		}
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), settingPhoneReaderPairing, want); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "card_readers", err)
+			return
+		}
+		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, actor, "card_reader", "phone_pairing", "card_readers_phone_pairing_changed",
+			map[string]string{"enabled": want}, time.Now().UTC().Format(time.RFC3339), "")
+		w.Header().Set("HX-Trigger", "tills-changed")
+		msg := "tap.reader.phone_pairing.now_off"
+		if want == "on" {
+			msg = "tap.reader.phone_pairing.now_on"
+		}
+		renderSettings(w, r, http.StatusOK, msg)
+	})
+
 	mux.HandleFunc("GET /ui/tills/reader-requests", func(w http.ResponseWriter, r *http.Request) {
 		if deny(w, r) {
 			return
@@ -518,21 +591,70 @@ func wireReaderLink(d *common.Deps) *readerlink.Service {
 		}
 		return readerlink.Reader{}, false
 	}
-	svc := readerlink.New(readerlink.Config{
+	tills := data.NewTillsRepo(d.Db)
+	cfg := readerlink.Config{
 		Link: d.Link,
 		ByRef: func(ctx context.Context, ref string) (readerlink.Reader, bool) {
-			return lookup(ctx, func(c data.CardReader) bool { return c.ReaderRef == ref })
+			if rd, ok := lookup(ctx, func(c data.CardReader) bool { return c.ReaderRef == ref }); ok {
+				return rd, true
+			}
+			if d.RelayReaders != nil { // an additional till: a phone of its main
+				return d.RelayReaders.ByRef(ctx, ref)
+			}
+			return readerlink.Reader{}, false
 		},
 		ByID: func(ctx context.Context, id string) (readerlink.Reader, bool) {
-			return lookup(ctx, func(c data.CardReader) bool { return c.ID == id })
+			if rd, ok := lookup(ctx, func(c data.CardReader) bool { return c.ID == id }); ok {
+				return rd, true
+			}
+			if d.RelayReaders != nil {
+				return d.RelayReaders.ByID(ctx, id)
+			}
+			return readerlink.Reader{}, false
 		},
 		Attempts: data.NewPaymentAttemptRepo(d.Db),
 		Broker: func(ctx context.Context, provider, op string, body []byte) ([]byte, error) {
 			return paybroker.Call(ctx, paybroker.CallerCore, provider, op, body)
 		},
-	})
+		// The relay half (main till): an additional till's sale to a phone.
+		Relay: &readerlink.RelayConfig{
+			TillRole: func(ctx context.Context, tillID string) (string, bool) {
+				role, ok, err := tills.RoleByID(ctx, tillID)
+				return role, ok && err == nil
+			},
+			TillPeer:  d.Link.TillPeer,
+			PairingOn: func(ctx context.Context) bool { return phoneReaderPairingOn(ctx, d) },
+			Currency:  func(context.Context) string { return d.CurrentState().Currency },
+			Readers: func(ctx context.Context) []readerlink.Reader {
+				rows, err := readers.ListActive(ctx)
+				if err != nil {
+					return nil
+				}
+				var out []readerlink.Reader
+				for _, c := range rows {
+					if c.Kind != data.CardReaderKindPhone || c.Source != data.CardReaderSourcePaired {
+						continue
+					}
+					if provider, isTap := tapEntry(ctx, d, c.MethodKey); isTap && provider != "" {
+						out = append(out, readerlink.Reader{ID: c.ID, Ref: c.ReaderRef, Name: c.Name, Provider: provider, Active: creds.Active(ctx, c.ID)})
+					}
+				}
+				return out
+			},
+			Audit: func(a readerlink.RelayAudit) { auditReaderRelay(d, a) },
+		},
+	}
+	if d.RelayReaders != nil {
+		cfg.Phones = d.RelayReaders
+	}
+	svc := readerlink.New(cfg)
+	if d.RelayReaders != nil {
+		d.RelayReaders.Bind(svc)
+	}
 	d.Link.SetReaderSink(svc)
+	d.Link.SetRelaySink(svc)
 	d.Link.HandleReader(fleetlink.TypeReaderToken, svc.TokenHandler)
+	d.Link.HandleRelay(svc.ListHandler, svc.RelayHandler)
 	devicepay.SetRemote(svc)
 	d.ReaderPay = svc
 	return svc
@@ -553,4 +675,24 @@ func readerPresence(d *common.Deps, readerID string) string {
 		return st.State
 	}
 	return fleetlink.ReaderUnavailable // linked but has not reported yet
+}
+
+// auditReaderRelay writes the audit row of one relayed collect: till, reader,
+// amount, currency, key, outcome. It has no field for the PaymentIntent secret.
+func auditReaderRelay(d *common.Deps, a readerlink.RelayAudit) {
+	if d == nil || d.Db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entity := a.ReaderID
+	if entity == "" {
+		entity = a.TillID
+	}
+	payload := map[string]any{"till_id": a.TillID, "reader_id": a.ReaderID, "idempotency_key": a.Key,
+		"amount_minor": a.AmountMinor, "currency": a.Currency, "outcome": a.Outcome}
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "", "card_reader", entity, "card_reader_relay", payload,
+		time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+		logging.L().Warnf("reader relay: audit row not written: %v", err)
+	}
 }

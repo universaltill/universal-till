@@ -1,0 +1,40 @@
+# Code review: internal/pages test time and CI test durations (ut-docs#7091), Reviewer 2026-11-27
+
+Scope: branch `test/7091-pages-test-time` (Dev: Sonnet; Reviewer: Opus 5.5). Test-only speed-ups for `internal/pages` plus duration reporting in CI. No migration, no `en.json` key, no user-visible behaviour.
+
+What shipped
+- `internal/plugins`: `ShareCompileCacheForTest()` (`wasm_compile_cache_fortest.go`) sets a package var holding one in-memory wazero compilation cache; `newPluginRuntime(nil)` uses it and `newWasmRuntimeWithCacheFor` skips the on-disk cache while it is set. Nil (inert) unless called. `internal/pages` `TestMain` calls it, so each WASM guest compiles once per test binary.
+- `internal/pages`: `newSyncDepsWithPath` clones the package's migrated `realDBTemplate` before `appdb.Open` (as `openPagesTestDB` already does) instead of replaying every migration at 95 call sites; `lanPolicyTTL` const → var seam (restored with `t.Cleanup`) so `TestLANPolicy_AutoOnOffAndWindow` doesn't sleep through 2 s TTLs; `stubUpdateChecks` stubs the three update-check seams in `TestStoreChannel_UpdateRoutesAndCard` (it reached the real release API).
+- `scripts/ci/gotestdur`: stdlib tool that reads `go test -json`, prints output the way plain `go test` does (a test's output only on fail/skip), then per-package and slowest-20 top-level test durations, also to `$GITHUB_STEP_SUMMARY`; exits 1 on any fail/build-fail or no package result.
+- CI: `ci.yml` test-heavy and pages-shuffle, `release.yml` release-tests pipe `-json` into gotestdur under `shell: bash` (`-eo pipefail`); release-tests `timeout-minutes` 40 → 45 (= 20 × 2 serial `-timeout 20m` commands + 5). `ci-heavy-tests_test.sh` and `release-job-timeouts_test.sh` pin the wiring, with self-tests.
+
+Numbers (4-core cloud container, `go test -json -count=1 ./internal/pages`)
+- Package wall time 759.1 s (main adf5617f) → 491.0 s (-35 %, target ≤ 570 s); 6455 top-level tests both sides (`go test -list`).
+- Top offenders before → after: TestTaxFirstLoadCheck 21.7 s → 6.5 s; TestStoreChannel_UpdateRoutesAndCard 15.9 s → 0.4 s; TestSyncJoin_InvisibleCharsNameRefusedLocally 9.5 s → 0.5 s; TestLANPolicy_AutoOnOffAndWindow 6.2 s → 0.3 s; TestFiscalSignAsk_ApprovedRegardlessOfReceiptPolicy 7.3 s → 1.0 s; TestTxnRef_1100CardSalesRefundFirstAndLastByOwnRef 13.4 s → 12.1 s (now the top; not touched). After: top-20 all ≤ 12.1 s.
+- Whichever WASM test runs first still pays the compile (13.4 s for TestTaxFirstLoadCheck in a 39.6 s targeted subset here) — expected, it moves with -shuffle.
+
+Findings
+- F1 (important, FIXED): gotestdur swallowed compiler and vet errors. Since Go 1.24 `go test -json` reports them as `build-output` events (`ImportPath` set, no `Package`), which fell through the `switch`; a CI build failure showed only `FAIL p [build failed]` with no reason. Reproduced with a real undefined-identifier and a real vet `Printf` failure. Now printed verbatim. The existing `TestBuildFailExits1AndPrintsOutput` fed a build-output line but never asserted it — a false pass; it now asserts the compiler line (fails before the fix, passes after; verified by stashing the fix).
+- F2 (low, FIXED): shellcheck SC2001 at `scripts/ci/release-job-timeouts_test.sh:126` (`sed 's/&&/\n/g' <<<"$code"`). Replaced with `${code//&&/$'\n'}`; output byte-identical on a multi-line `&&` sample; self-test passes, and a mutated copy of `release.yml` with an extra `&& go test` is still split and reported. `shellcheck scripts/ci/*.sh`: 0 issues.
+- F3 (low, FIXED/hardened): `ShareCompileCacheForTest` is exported from a non-`_test` file (unavoidable: `export_test.go` doesn't cross packages). It is inert unless called, named and documented test-only. Added `TestShareCompileCacheForTest_OnlyCalledFromTests`, which fails if any non-`_test.go` file in the module calls it (verified with a planted caller).
+- F4 (nit, ACCEPTED): on a `-timeout` panic gotestdur prints the package's `FAIL p 2.0s` line before the hung test's buffered output and the goroutine dump (package-level output is printed at once, test buffers flush on the package `fail`). Everything is shown, exit 1; only the order differs from plain `go test`.
+- F5 (nit, ACCEPTED): cloned DBs share the template's migration-091 random `stock_upload_state.stream_id`/`started_at`. Same as every `openPagesTestDB` caller already; no sync test compares two tills' stream ids.
+- Checked, no finding:
+  - Shared cache safety (wazero v1.12.0): `runtime.Close` closes the engine only when the runtime has no cache, so one test closing its runtime never closes the shared cache; compiled modules are ref-counted under the engine mutex (`CompiledModule.Close` → `DeleteCompiledModule` only drops a count), so concurrent users are safe; host functions are package-level funcs (no per-runtime closure to cross-wire); every runtime uses the same `newPluginRuntime` config, so `ensureTermination` matches. The var is written only in `TestMain` before `m.Run`; `internal/plugins` has no `t.Parallel`, so its own seam test can't race. No pages test asserts compile-cache outcomes or the on-disk cache.
+  - `newSyncDepsWithPath`: the file still exists at the returned path (snapshot/restore/reopen work unchanged); the template is the full migrated chain, i.e. the same schema version `Open` would produce.
+  - gotestdur exit status: fail, build-fail, panic/timeout, empty input → 1; skip output shown; passing-test buffers dropped at pass (memory bounded by running tests, plugins `-v` leg included); a `$GITHUB_STEP_SUMMARY` open error is logged and does not fail the step (informational).
+  - CI: every touched step has `shell: bash`; each `matrix.cmd` is a single `go test`, so appending `-json` is correct; release-tests' two lines stop at the first failure under `-e`; both guards' parsers cover the new forms and their self-tests catch the mutations.
+
+Extra verification (Reviewer): `go build ./...`; `go vet` and `golangci-lint run ./internal/plugins/... ./internal/pages/... ./scripts/ci/...` (0 issues); `gofmt -l` clean; `go test -count=1 ./scripts/ci/...` ok; `bash scripts/ci/release-job-timeouts_test.sh` and `bash scripts/ci/ci-heavy-tests_test.sh` pass; `shellcheck scripts/ci/*.sh` 0; targeted pages run (TestSyncJoin_/TestSyncPair/TestStoreChannel_/TestLANPolicy_/TestTaxFirstLoadCheck/TestFiscalSignAsk_/RealWasm/JoinSuccess/Rejoin) piped through gotestdur: ok, 39.6 s; plugins seam tests ok. Full pages package not re-run (Tester: 491 s, 6455 tests, plus a shuffle run of the touched tests).
+
+Pre-flight: review record — updated (this file); till user-visible behaviour — n/a (test/CI only); `web/help/` / docs-shots — n/a (no UI); `reference/` — n/a (no behaviour change); README — n/a (not stale); `en.json` / `en.meta.json` — n/a (no keys); ADR — n/a (no decision change); migrations — n/a (none); plugin type / host function / manifest — n/a.
+
+Verdict: MERGE after CI.
+
+Deferred
+- TestTxnRef_1100CardSalesRefundFirstAndLastByOwnRef (12.1 s) is now the slowest pages test; template-cloning the remaining `db.Open` callers was skipped by Dev (time box). Epic checklist line on ut-docs#7091, not a blocker.
+
+## CI follow-up (after the PR opened)
+
+- `desktop-shell`'s `guard-deadcode-baseline.sh` flagged `ShareCompileCacheForTest` as an unreachable func (`deadcode -test=false` cannot see a call made only from `_test.go`). Fixed without growing the baseline: the setter func became the exported var `plugins.SharedCompileCacheForTest`, which pages `TestMain` sets before `m.Run` and clears after. Vars are not reported by deadcode. `TestSharedCompileCacheForTest_OnlySetFromTests` now refuses any non-test file other than its own two that names the var. Re-verified: build, vet, golangci-lint 0, the plugins seam tests, and the WASM-heavy pages tests. [no-subagent: mechanical func-to-var change for a CI guard]
+- `test-heavy (race - enroll, …)` was red on `internal/enroll` `TestCanRecover/no_key`, a package this diff does not touch. It is a race between the subtest's `paths.Init` and `Init`'s background approval-key reporter. Filed as ut-docs#7164.

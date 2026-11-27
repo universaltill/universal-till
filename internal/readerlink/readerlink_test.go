@@ -194,6 +194,18 @@ func (f *fakeAttempts) Get(_ context.Context, key string) (data.PaymentAttempt, 
 	return a, ok, nil
 }
 
+func (f *fakeAttempts) SetPIID(_ context.Context, key, pi string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.m[key]
+	if !ok || a.State != data.AttemptPending {
+		return data.ErrAttemptSettled
+	}
+	a.PIID = pi
+	f.m[key] = a
+	return nil
+}
+
 type rig struct {
 	t        *testing.T
 	hub      *fleetlink.Hub
@@ -204,7 +216,10 @@ type rig struct {
 	readers  map[string]Reader // by id
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T) *rig { return newRigCfg(t, nil) }
+
+// newRigCfg is newRig with a hook to adjust the Service's Config.
+func newRigCfg(t *testing.T, adjust func(r *rig, c *Config)) *rig {
 	t.Helper()
 	cfg := fleetlink.DefaultConfig()
 	cfg.PingInterval = 50 * time.Millisecond
@@ -213,7 +228,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{t: t, broker: newFakeBroker(), readers: map[string]Reader{},
 		attempts: &fakeAttempts{m: map[string]data.PaymentAttempt{}}}
 	r.hub = fleetlink.NewHub(fleetlink.HubOptions{Config: cfg})
-	r.svc = New(Config{
+	cfgSvc := Config{
 		Link: r.hub,
 		ByRef: func(_ context.Context, ref string) (Reader, bool) {
 			r.mu.Lock()
@@ -236,7 +251,11 @@ func newRig(t *testing.T) *rig {
 		TokensPerMinute: 3,
 		Margin:          time.Second,
 		AckTimeout:      time.Second,
-	})
+	}
+	if adjust != nil {
+		adjust(r, &cfgSvc)
+	}
+	r.svc = New(cfgSvc)
 	r.hub.SetReaderSink(r.svc)
 	r.hub.HandleReader(fleetlink.TypeReaderToken, r.svc.TokenHandler)
 	t.Cleanup(r.hub.Close)
@@ -869,4 +888,196 @@ func TestProgressNamesTheReaderAndPhase(t *testing.T) {
 	}
 	ph.send(t, fleetlink.TypeReaderResult, "", fleetlink.ReaderResult{IdempotencyKey: key, Status: fleetlink.ResultCancelled})
 	await(t, res)
+}
+
+// G1 (review 2026-11-25): a phone that acks accepted:false started nothing, so
+// the unused PaymentIntent is cancelled and the till gets start_failed/busy.
+func TestPhoneAckNotAcceptedCancelsThePaymentIntent(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	ctx, cancel := ctxFor(5 * time.Second)
+	defer cancel()
+	res := r.collect(ctx, "rd_aa", req(key, 500))
+	f := ph.recv(t)
+	ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: false})
+	got := await(t, res)
+	if got.Status != devicepay.StatusDeclined || got.DeclineCode != "start_failed" || got.Reason != devicepay.ReasonReaderBusy {
+		t.Fatalf("accepted:false ack = %+v, want declined start_failed/reader_busy", got)
+	}
+	if r.broker.count("session_cancel") != 1 {
+		t.Fatal("the unused PaymentIntent was not cancelled")
+	}
+}
+
+// G2 (review 2026-11-25): no ack in time means the phone may have started, so the
+// answer is pending/link_lost (never declined) and the PaymentIntent is NOT cancelled.
+func TestAckTimeoutIsPendingNeverDeclinedAndKeepsThePaymentIntent(t *testing.T) {
+	r := newRigCfg(t, func(_ *rig, c *Config) { c.AckTimeout = 150 * time.Millisecond })
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	ctx, cancel := ctxFor(5 * time.Second)
+	defer cancel()
+	res := r.collect(ctx, "rd_aa", req(key, 500))
+	_ = ph.recv(t) // the phone got the collect frame and never answers
+	got := await(t, res)
+	if got.Status != devicepay.StatusPending || got.Reason != devicepay.ReasonLinkLost {
+		t.Fatalf("ack timeout = %+v, want pending/link_lost", got)
+	}
+	if r.broker.count("session_cancel") != 0 {
+		t.Fatal("a possibly-started PaymentIntent was cancelled on an ack timeout")
+	}
+}
+
+// ---- ut-docs#6538 cancel bug: a cashier's Cancel must stop the phone and the PI ----
+
+func ids(body map[string]any) (key, pi bool) {
+	_, key = body["idempotency_key"]
+	_, pi = body["payment_intent_id"]
+	return
+}
+
+// The cloud refuses a status body carrying both identifiers, so the till sends
+// exactly one: the PaymentIntent once known.
+func TestStatusAndCancelSendExactlyOneIdentifier(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	r.broker.fail("session_cancel", &paybroker.HTTPError{Status: 409, Code: "payment_succeeded"})
+	r.broker.set("session_status", statusJSON("requires_payment_method", 0))
+	res := r.collect(context.Background(), "rd_aa", req(key, 500))
+	f := ph.recv(t)
+	ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: true})
+	waitPhase(t, r.svc, PhaseOnPhone)
+	r.svc.CancelActive()
+	await(t, res)
+	st := r.broker.last("session_status")
+	if k, p := ids(st); k == p || !p {
+		t.Fatalf("session_status body %v, want exactly payment_intent_id", st)
+	}
+	cn := r.broker.last("session_cancel")
+	if k, p := ids(cn); k || !p {
+		t.Fatalf("session_cancel body %v, want payment_intent_id only", cn)
+	}
+}
+
+func TestPaymentIntentRecordedOnTheAttemptRightAfterCreate(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	res := r.collect(context.Background(), "rd_aa", req(key, 500))
+	f := ph.recv(t)
+	r.attempts.mu.Lock()
+	got := r.attempts.m[key]
+	r.attempts.mu.Unlock()
+	if got.PIID != "pi_1" || got.State != data.AttemptPending {
+		t.Fatalf("attempt after create = %+v, want PIID pi_1 and still pending", got)
+	}
+	ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: true})
+	r.svc.CancelActive()
+	await(t, res)
+}
+
+// A phone that keeps collecting until it is told to stop: the cashier's Cancel
+// must reach it as reader.cancel, then the PaymentIntent is cancelled.
+func TestCashierCancelStopsTheCollectingPhone(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	res := r.collect(context.Background(), "rd_aa", req(key, 500))
+	f := ph.recv(t)
+	ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: true})
+	waitPhase(t, r.svc, PhaseOnPhone)
+	if !r.svc.CancelActive() {
+		t.Fatal("CancelActive found nothing in flight")
+	}
+	c := ph.recv(t)
+	if c.Type != fleetlink.TypeReaderCancel || decode[fleetlink.ReaderCancel](t, c.Payload).IdempotencyKey != key {
+		t.Fatalf("phone saw %+v, want reader.cancel for the key", c)
+	}
+	if got := await(t, res); got.Status != devicepay.StatusCancelled {
+		t.Fatalf("result = %+v, want cancelled", got)
+	}
+	if r.broker.count("session_cancel") != 1 {
+		t.Fatal("the PaymentIntent was not cancelled")
+	}
+}
+
+// Cancel pressed while the main still waits for the phone's ack.
+func TestCancelWhileAckAwaitedStopsPhoneAndIntent(t *testing.T) {
+	r := newRigCfg(t, func(_ *rig, c *Config) { c.AckTimeout = 4 * time.Second })
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	res := r.collect(context.Background(), "rd_aa", req(key, 500))
+	_ = ph.recv(t) // collect frame, never acked
+	r.svc.CancelActive()
+	c := ph.recv(t)
+	if c.Type != fleetlink.TypeReaderCancel {
+		t.Fatalf("phone saw %+v, want reader.cancel", c)
+	}
+	start := time.Now()
+	got := await(t, res)
+	if got.Status != devicepay.StatusCancelled || time.Since(start) > 2*time.Second {
+		t.Fatalf("result = %+v after %v, want cancelled promptly (not after the ack timeout)", got, time.Since(start))
+	}
+	if r.broker.count("session_cancel") != 1 {
+		t.Fatal("the PaymentIntent was not cancelled")
+	}
+}
+
+// Cancel pressed before the PaymentIntent even exists: nothing goes to the
+// phone, the new PaymentIntent is cancelled, the answer is cancelled.
+func TestCancelBeforeAckWindowNeverStartsThePhone(t *testing.T) {
+	r := newRig(t)
+	ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+	r.attempt(key, 500)
+	entered, release := make(chan struct{}), make(chan struct{})
+	r.broker.mu.Lock()
+	r.broker.handlers["session_create"] = func(map[string]any) ([]byte, error) {
+		close(entered)
+		<-release
+		return []byte(`{"payment_intent_id":"pi_1","client_secret":"pi_1_secret_X","location_id":"tml_main"}`), nil
+	}
+	r.broker.mu.Unlock()
+	res := r.collect(context.Background(), "rd_aa", req(key, 500))
+	<-entered
+	r.svc.CancelActive()
+	close(release)
+	if got := await(t, res); got.Status != devicepay.StatusCancelled {
+		t.Fatalf("result = %+v, want cancelled", got)
+	}
+	if !ph.quiet(200 * time.Millisecond) {
+		t.Fatal("a collect frame reached the phone after the cashier cancelled")
+	}
+	if r.broker.count("session_cancel") != 1 {
+		t.Fatal("the PaymentIntent was not cancelled")
+	}
+}
+
+// A cancel the cloud refuses re-reads the status (which now works).
+func TestRefusedCancelSettlesFromTheStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status, want string
+	}{
+		{"succeeded", devicepay.StatusApproved},
+		{"canceled", devicepay.StatusCancelled},
+		{"requires_payment_method", devicepay.StatusCancelled},
+		{"processing", devicepay.StatusPending},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			r := newRig(t)
+			ph := r.link("rd-1", "rd_aa", fleetlink.ReaderReady)
+			r.attempt(key, 500)
+			r.broker.fail("session_cancel", &paybroker.HTTPError{Status: 409, Code: "payment_succeeded"})
+			r.broker.set("session_status", statusJSON(tc.status, 500))
+			res := r.collect(context.Background(), "rd_aa", req(key, 500))
+			f := ph.recv(t)
+			ph.send(t, fleetlink.TypeReaderCollect, f.ID, fleetlink.ReaderCollectAck{Accepted: true})
+			waitPhase(t, r.svc, PhaseOnPhone)
+			r.svc.CancelActive()
+			if got := await(t, res); got.Status != tc.want {
+				t.Fatalf("status %s: result = %+v, want %s", tc.status, got, tc.want)
+			}
+		})
+	}
 }

@@ -11,3 +11,56 @@
 "ttp_preparing" = "Getting Tap to Pay ready…";
 "ttp_preparing_progress" = "Getting Tap to Pay ready… %d%%";
 "ttp_setup_failed" = "Tap to Pay on iPhone couldn't be set up. Open Settings › Payments to try again.";
+
+/* Phone card-reader mode (ut-docs#6538, ADR-0198 §6). English only in the code
+   PR; other languages come from Weblate. Wording rule: never "declined" and never
+   "charged" except where the outcome is genuinely unsure (tests grep these). */
+"reader_chip_ready" = "Card reader: Ready";
+"reader_chip_not_set_up" = "Card reader: Not set up";
+"reader_chip_offline" = "Card reader: Offline";
+"reader_chip_needs_manager" = "Card reader: Needs a manager";
+"reader_chip_busy" = "Card reader: In use";
+"reader_chip_paused" = "Card reader: Paused";
+"reader_sheet_title" = "Card reader";
+"reader_sheet_done" = "Done";
+"reader_pair_title" = "Pair as a card reader";
+"reader_pair_found" = "Tills found nearby";
+"reader_pair_none" = "No till found yet. Check that this phone and the till are on the same Wi-Fi.";
+"reader_pair_enter_address" = "Enter address";
+"reader_pair_address" = "Till address (host:port)";
+"reader_pair_till_id" = "Till ID (shown on the till's Tills page)";
+"reader_pair_start" = "Pair";
+"reader_pair_waiting_title" = "Check this code on the till";
+"reader_pair_waiting_help" = "Ask a manager to approve on the main till. Check the same code shows there.";
+"reader_pair_cancel" = "Cancel";
+"reader_pair_denied" = "The manager did not approve this phone.";
+"reader_pair_expired" = "This request ran out of time.";
+"reader_pair_needs_tls" = "The till is not offering a secure connection yet. A manager can turn on card readers on the till.";
+"reader_pair_not_found" = "No answer from that till.";
+"reader_pair_refused" = "The till refused this phone.";
+"reader_try_again" = "Try again";
+"reader_ready_for" = "Ready for %@";
+"reader_ready_keep_open" = "Keep this phone unlocked and open to take card payments.";
+"reader_forget" = "Forget this reader";
+"reader_forget_confirm" = "Forget this reader? The till will need to approve this phone again.";
+"reader_revoked" = "This phone is no longer a card reader for %@. It holds no shop data.";
+"reader_revoked_generic" = "This phone is no longer a card reader. It holds no shop data.";
+"reader_pair_again" = "Pair again";
+"reader_needs_setup" = "This phone needs a one-off setup before it can take card payments.";
+"reader_set_up" = "Set up this phone";
+"reader_offline" = "Looking for the till…";
+"reader_connecting" = "Connecting to the till…";
+"reader_paused" = "Open this app to take card payments.";
+"reader_request_from" = "Request from %@";
+"reader_hold_card" = "Hold the card near the top of the phone.";
+"reader_time_left" = "%@ left";
+"reader_cancel" = "Cancel";
+"reader_result_done" = "Done";
+"reader_result_cancelled" = "Cancelled";
+"reader_result_card_not_accepted" = "Card not accepted";
+"reader_result_time_up" = "Time is up";
+"reader_result_pending" = "Ask the cashier";
+"reader_result_lost" = "Lost contact with the main till. Ask the cashier to check the payment.";
+"reader_toast_refused" = "A payment request from %@ was refused because this phone was taking a card payment. Nothing was charged.";
+"reader_toast_refused_unnamed" = "A payment request was refused because this phone was taking a card payment. Nothing was charged.";
+"reader_a11y_incoming" = "Card payment requested";

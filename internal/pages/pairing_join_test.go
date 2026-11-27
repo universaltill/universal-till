@@ -823,3 +823,32 @@ func TestPairJoin_PlainRefusalHeaderShowsActionableMessage(t *testing.T) {
 		})
 	}
 }
+
+// T7 (ut-docs#7097): the joining till names its own device in the pair request
+// so the main till can keep one pending request per device.
+func TestPairStart_SendsTheRequestersDeviceID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	old := pairRequestDeviceID
+	pairRequestDeviceID = func() string { return "till-55555555-5555-4555-8555-555555555555" }
+	t.Cleanup(func() { pairRequestDeviceID = old })
+	var got map[string]string
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/sync/pair-request" {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"id":"req-1"},"error":null}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(primary.Close)
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+	if rec := postPairStart(t, rmux, primary.URL, "primary-till-1", "Bar Till"); rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: %d %s", rec.Code, rec.Body.String())
+	}
+	if got["device_id"] != "till-55555555-5555-4555-8555-555555555555" {
+		t.Fatalf("pair-request body = %v, want device_id", got)
+	}
+}

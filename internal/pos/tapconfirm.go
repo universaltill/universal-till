@@ -148,12 +148,13 @@ type TapStatus struct {
 	Last4               string `json:"last4"`
 }
 
-// brokerRef is the body core sends for an attempt: its own key (and the
-// PaymentIntent core already recorded), never anything from a request.
+// brokerRef is the body core sends for an attempt: exactly one identifier
+// (the cloud refuses both), the PaymentIntent core recorded when it has one,
+// else its own key; never anything from a request.
 func brokerRef(a data.PaymentAttempt) ([]byte, error) {
 	req := map[string]string{"idempotency_key": a.Key}
 	if a.PIID != "" {
-		req["payment_intent_id"] = a.PIID
+		req = map[string]string{"payment_intent_id": a.PIID}
 	}
 	return json.Marshal(req)
 }

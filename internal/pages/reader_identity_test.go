@@ -966,13 +966,21 @@ func TestReaderSectionsLayout(t *testing.T) {
 			t.Errorf("app.css lacks %q", want)
 		}
 	}
-	page, err := os.ReadFile(repoFile("web", "ui", "pages", "tills.html"))
+	add, err := os.ReadFile(repoFile("web", "ui", "partials", "tills_tab_add.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pc := string(page)
-	if i, j := strings.Index(pc, `id="tills-pairing-card"`), strings.Index(pc, "/ui/tills/reader-requests"); j < i || strings.Index(pc[i:j], "\n  </div>") < 0 {
-		t.Error("the reader sections must sit after, not inside, the pairing card")
+	rd, err := os.ReadFile(repoFile("web", "ui", "partials", "tills_tab_readers.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ut-docs#7057: the reader sections have their own tab, so they can never
+	// sit inside the pairing card of the Add a till tab.
+	if strings.Contains(string(add), "/ui/tills/reader-requests") {
+		t.Error("the reader sections must not live inside the Add a till tab")
+	}
+	if !strings.Contains(string(rd), "/ui/tills/reader-requests") {
+		t.Error("the Card readers tab must load the reader requests")
 	}
 }
 
@@ -1114,5 +1122,37 @@ func TestReaderProofFixtureMatchesTheGoProof(t *testing.T) {
 	got := discovery.PrimaryProof(discovery.HashBearer(f.Bearer), f.Response.Data.PrimaryTillID, f.Request.TillID, f.Request.Nonce, f.HostPort, f.PinSeen)
 	if got != f.Response.Data.Proof {
 		t.Fatalf("fixture proof %q, Go computes %q", f.Response.Data.Proof, got)
+	}
+}
+
+// ut-docs#6538 live test 2026-11-26: the owner's Mac had three active payment
+// methods that each declare a readers hook (a server-driven card method, a
+// second provider, and a Tap to Pay entry), so approving the phone failed
+// with "no single reader-capable payment method". A phone is a TAP reader:
+// when several methods have the hook, the one entry marked as a tap entry
+// ({"tap":true}, plugins.IsTapEntryConfig) is the method; with no or several
+// tap entries the old rule (exactly one reader-capable method) still holds.
+func TestResolveReaderMethodPrefersTheSingleTapEntry(t *testing.T) {
+	g := newReaderRig(t, true) // seeds the reader-capable method "pay"
+	seedReaderPlugin(t, g.d, "p.other", "other", true)
+	seedReaderPlugin(t, g.d, "p.tap", "taptender", true)
+	if _, _, err := resolveReaderMethod(t.Context(), g.d); err == nil {
+		t.Fatal("three reader-capable methods and no tap entry must still be refused")
+	}
+	if _, err := g.d.Db.Exec(`UPDATE plugin_entries SET config_json = '{"provider":"x","tap":true}' WHERE key = 'taptender'`); err != nil {
+		t.Fatal(err)
+	}
+	method, pluginID, err := resolveReaderMethod(t.Context(), g.d)
+	if err != nil {
+		t.Fatalf("one tap entry among several reader methods must resolve, got %v", err)
+	}
+	if method != "taptender" || pluginID != "p.tap" {
+		t.Fatalf("want taptender/p.tap, got %s/%s", method, pluginID)
+	}
+	if _, err := g.d.Db.Exec(`UPDATE plugin_entries SET config_json = '{"tap":true}' WHERE key = 'other'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := resolveReaderMethod(t.Context(), g.d); err == nil {
+		t.Fatal("two tap entries are ambiguous and must be refused")
 	}
 }

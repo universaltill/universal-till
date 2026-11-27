@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/entitlement"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/offsitebackup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -543,5 +544,84 @@ func TestOffsite_StartNewKeyWithoutOwnerApprovalSaysAskTheOwner(t *testing.T) {
 	}
 	if _, _, err := offsitebackup.Shared(d.Cfg, d.Db).Uploader.Keys.Load("st_1"); err == nil {
 		t.Fatal("the till kept a key the cloud refused")
+	}
+}
+
+// ut-docs#7058: a dead device credential says what to do on the card.
+
+func TestCardReasonKey(t *testing.T) {
+	cases := []struct {
+		reason   string
+		hasOwner bool
+		key      string
+		link     bool
+	}{
+		{"pair_again", true, "backup.cloud.err.pair_again", true},
+		{"pair_again", false, "backup.cloud.err.register_new", true},
+		{"till_replaced", true, "backup.cloud.err.till_replaced", false},
+		{"till_moved", true, "backup.cloud.err.till_moved", true},
+		{"till_removed", false, "backup.cloud.err.till_removed", true},
+		{"service_unavailable", true, "backup.cloud.err.service_unavailable", false},
+		{"owner_approval", true, "backup.cloud.key.err.owner_approval", false},
+		{"disk", true, "backup.cloud.err.disk", false},
+		{"other", true, "backup.cloud.err.upload_other", false},
+		{"", true, "backup.cloud.err.upload_other", false},
+		{"bogus", true, "backup.cloud.err.upload_other", false},
+	}
+	for _, c := range cases {
+		key, link := cardReasonKey(c.reason, c.hasOwner)
+		if key != c.key || link != c.link {
+			t.Errorf("cardReasonKey(%q, %v) = %q, %v; want %q, %v", c.reason, c.hasOwner, key, link, c.key, c.link)
+		}
+		if httpx.T("en", key) == key {
+			t.Errorf("key %q is not in en.json", key)
+		}
+	}
+}
+
+func TestOffsite_CardCredentialRefusalSaysWhatToDo(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	ctx := context.Background()
+	_ = d.Settings.Set(ctx, data.OffsiteRefusedReasonKey, "pair_again")
+	_ = d.Settings.Set(ctx, data.OffsiteFailingSinceKey, time.Now().UTC().Format(time.RFC3339))
+	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "true")
+	b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
+	if !strings.Contains(b, `data-state="refused"`) || !strings.Contains(b, "not connected to your shop") ||
+		!strings.Contains(b, `data-testid="backup-cloud-reason-link"`) || !strings.Contains(b, `href="/settings#registration"`) ||
+		!strings.Contains(b, `class="set-row set-below"><a class="btn secondary"`) {
+		t.Fatalf("owned store card: %s", b)
+	}
+	if strings.Contains(b, "Something went wrong") {
+		t.Fatalf("falls back to the restore line: %s", b)
+	}
+	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "false")
+	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); !strings.Contains(b, "Reconnect it in Settings") {
+		t.Fatalf("anonymous store card: %s", b)
+	}
+	// A replaced till has no card.
+	_ = d.Settings.Set(ctx, "till_identity.replaced", "1")
+	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); strings.TrimSpace(b) != "" {
+		t.Fatalf("replaced till shows a card: %s", b)
+	}
+}
+
+func TestOffsite_CloudFailingChipHiddenWhenNotMainReplacedOrRefused(t *testing.T) {
+	for name, set := range map[string][2]string{
+		"additional till": {"sync.primary_url", "http://192.168.1.5:8080"},
+		"replaced":        {"till_identity.replaced", "1"},
+		"refused":         {data.OffsiteRefusedReasonKey, "pair_again"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux, d, _ := offsiteMux(t, true)
+			ctx := context.Background()
+			_ = d.Settings.Set(ctx, data.OffsiteFailingSinceKey, time.Now().Add(-60*time.Hour).UTC().Format(time.RFC3339))
+			if b := getAs(mux, "/ui/backup-copy-chip", &mgrUser).Body.String(); !strings.Contains(b, "sb-backup-cloud-failing") {
+				t.Fatalf("control: chip missing before the condition: %s", b)
+			}
+			_ = d.Settings.Set(ctx, set[0], set[1])
+			if b := getAs(mux, "/ui/backup-copy-chip", &mgrUser).Body.String(); strings.Contains(b, "sb-backup-cloud-failing") {
+				t.Fatalf("chip shown: %s", b)
+			}
+		})
 	}
 }

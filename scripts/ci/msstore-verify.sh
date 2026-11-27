@@ -17,7 +17,9 @@
 #      --verify-only) and signer TASK RUNNER TECHNOLOGY LTD
 #   5. the installer supports a silent install (/S) -- the installer.nsi of
 #      the tag, via check-installer-silent.sh
-#   6. soak: the URL serves the same bytes over a window (msstore-soak.sh)
+#   6. the publish-installer blob URL (the one the Store fetches) answers HTTP
+#      200 with no redirect, and a soak over a window serves the same bytes
+#      (msstore-soak.sh); result.json `url` is that blob URL
 #
 # Env: REPO (default universaltill/universal-till), SIGN_PUBLISHER and
 # SIGN_CA_BUNDLE (sign-exe.sh), UT_RELEASE_KEYS_HEX, SOAK_CHECKS (3),
@@ -82,7 +84,7 @@ meta="$(gh release view "$tag" --repo "$REPO" --json isDraft,isPrerelease,assets
 [ "$(jq -r '.isPrerelease' <<<"$meta")" = false ] || die "release ${tag} is a prerelease"
 
 name="unitill-pos-setup-${version}.exe"
-url="https://github.com/${REPO}/releases/download/${tag}/${name}"
+gh_url="https://github.com/${REPO}/releases/download/${tag}/${name}"
 asset="$(jq -c --arg n "$name" '[.assets[] | select(.name==$n)][0] // empty' <<<"$meta")"
 [ -n "$asset" ] || die "release ${tag} has no asset ${name}"
 api_digest="$(jq -r '.digest // empty' <<<"$asset")"
@@ -90,7 +92,7 @@ api_size="$(jq -r '.size' <<<"$asset")"
 [[ "$api_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the GitHub asset digest for ${name} is missing or not sha256"
 
 exe="$out/dl/${name}"
-curl -fsSL --proto '=https' --proto-redir '=https' -o "$exe" "$url" || die "download of ${url} failed"
+curl -fsSL --proto '=https' --proto-redir '=https' -o "$exe" "$gh_url" || die "download of ${gh_url} failed"
 sha="$(shasum -a 256 "$exe" | awk '{print $1}')"
 size="$(wc -c <"$exe" | tr -d ' ')"
 [ "sha256:${sha}" = "$api_digest" ] || die "downloaded sha256 ${sha} != GitHub asset digest ${api_digest}"
@@ -120,6 +122,16 @@ if [ -z "$nsi" ]; then
 fi
 "$SILENT_CMD" "$nsi" || die "installer does not support a silent install (/S)"
 silent=true
+
+# The Store fetches the publish-installer BLOB (Partner Center rejects redirecting
+# URLs; the GitHub asset 302s). Prove that exact URL: answers 200 with no
+# Location, then soak it against the digest and size proved above.
+installer_base="$(sed -n 's/^INSTALLER_BASE=//p' "${ROOT_DIR}/scripts/ci/msstore-submit.endpoints" | sed -n 1p)"
+[[ "$installer_base" =~ ^https://[a-z0-9.-]+\.blob\.core\.windows\.net/[a-z0-9-]+$ ]] || die "INSTALLER_BASE in msstore-submit.endpoints is missing or malformed"
+url="${installer_base}/windows/${tag}/${name}"
+probe="$(curl -sS -I --proto '=https' --proto-redir '=https' -o /dev/null -w '%{http_code} %{redirect_url}' "$url")" \
+  || die "publish-installer did not run for this tag: ${url} is not reachable"
+[ "$probe" = "200 " ] || die "publish-installer did not run for this tag, or the blob redirects: ${url} answered '${probe}' (the Store needs HTTP 200 with no redirect)"
 
 "$SOAK_CMD" "$url" "$sha" "$size" "${SOAK_CHECKS:-3}" "${SOAK_INTERVAL:-60}" || die "soak check failed"
 

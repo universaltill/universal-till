@@ -33,6 +33,9 @@
     <!-- ut-docs#1103: arrow-key navigation for the radiogroup tile pickers
          (opt-in via data-roving-radiogroup). -->
     <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
+    <!-- ut-docs#3428: scan the main till's pairing QR (this page loads no app.js). -->
+    <script defer src="/public/qr-scan.js?v={{ assetv "public/qr-scan.js" }}"></script>
+    <script defer src="/public/join-scan.js?v={{ assetv "public/join-scan.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
@@ -658,6 +661,11 @@
                    wire shape, not something an operator can type or recognise. Reuse the same
                    friendly hint tills.html's join form already uses, so both screens read
                    consistently. -->
+              {{/* ut-docs#3428: scan the main till's pairing QR. Fill-then-confirm: a
+                   scan only fills the code below and shows the host; the person adds a till
+                   name and presses Join (the replace-data checkbox still gates the submit).
+                   Shared binder: web/public/join-scan.js. */}}
+              <button type="button" class="btn secondary" id="setup-join-scan" data-join-scan data-testid="join-scan-btn">{{ T "scan.pair.button" }}</button>
               <label>{{ T "tills.join_code" }}
                 <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
               </label>
@@ -666,9 +674,36 @@
               <label>{{ T "tills.join_address" }}
                 <input type="text" name="address" dir="ltr" placeholder="{{ T "tills.join_address_ph" }}" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false">
               </label>
+              <div id="setup-join-scanned" class="join-scanned" hidden>
+                <span class="tag ok" data-join-scanned-text></span>
+                <button type="button" class="btn secondary" id="setup-join-scan-clear" data-join-scan-clear>{{ T "tills.join_scan.clear" }}</button>
+              </div>
+              <p id="setup-join-scan-next" class="muted" aria-live="polite" data-join-scan-next></p>
               <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
               <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
             </form>
+            {{/* ut-docs#3428: camera overlay for the pairing scan (same pattern as the
+                 sell-screen scan overlay; strings ride on data-msg-* because the scripts
+                 are static files). */}}
+            <div id="setup-join-scan-overlay" class="ai-identify-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setup-join-scan-title"
+                 data-decoder-v="{{ assetv "public/vendor/barcode-detector/ponyfill.js" }}"
+                 data-msg-permission-denied="{{ T "scan.pair.permission_denied" }}"
+                 data-msg-no-camera="{{ T "scan.pair.no_camera" }}"
+                 data-msg-busy="{{ T "scan.camera.camera_busy" }}"
+                 data-msg-not-ut="{{ T "scan.pair.not_ut_code" }}"
+                 data-msg-scanning="{{ T "scan.pair.scanning" }}"
+                 data-msg-scanned-from="{{ T "scan.pair.scanned_from" }}"
+                 data-msg-scanned-next="{{ T "scan.pair.scanned_next" }}">
+              <div class="ai-identify-panel">
+                <h3 id="setup-join-scan-title">{{ T "scan.pair.title" }}</h3>
+                <video id="setup-join-scan-video" class="camera-overlay-video" autoplay playsinline muted></video>
+                <div id="setup-join-scan-status" class="ai-identify-status" aria-live="polite"></div>
+                <div class="ai-identify-controls">
+                  <button type="button" class="btn secondary" id="setup-join-scan-close">{{ T "scan.pair.close" }}</button>
+                  <button type="button" class="btn secondary" id="setup-join-scan-type">{{ T "scan.pair.type_instead" }}</button>
+                </div>
+              </div>
+            </div>
             {{/* ADR-0166 §2: the main-till choice. Posts the my.universaltill.com
                  code to the guarded first-boot route (nonce header), which holds
                  the pairing in memory and reloads /setup on "Your shop". No

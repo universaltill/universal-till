@@ -47,7 +47,7 @@ test('settings: invoice, telemetry and till-name saves refresh their region, no 
   await expect(page.locator('#settings-telemetry-region form')).toBeVisible();
 
   // Till name (Tills card, two forms with a region each).
-  await page.goto('/settings#settings-tills');
+  await page.goto('/tills?tab=this');
   await page.evaluate(() => { (window as any).__ut2902 = 'still-here'; });
   const tn = page.locator('#settings-till-name-region');
   await tn.locator('form').evaluate((f) => f.setAttribute('data-stale', '1'));

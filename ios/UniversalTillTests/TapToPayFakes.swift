@@ -40,6 +40,8 @@ final class FakeReader: PaymentReader {
     // retrieve
     var retrieveCalls: [String] = []
     var retrieveResult: Result<ReaderIntent, ReaderError> = .success(FakeReader.intent(.requiresPaymentMethod))
+    var holdRetrieve = false
+    var pendingRetrieve: ((Result<ReaderIntent, ReaderError>) -> Void)?
 
     // collect
     var collectCalls = 0
@@ -81,7 +83,14 @@ final class FakeReader: PaymentReader {
 
     func retrieveIntent(clientSecret: String, completion: @escaping (Result<ReaderIntent, ReaderError>) -> Void) {
         retrieveCalls.append(clientSecret)
+        if holdRetrieve { pendingRetrieve = completion; return }
         completion(retrieveResult)
+    }
+
+    func finishRetrieve(_ r: Result<ReaderIntent, ReaderError>) {
+        let c = pendingRetrieve
+        pendingRetrieve = nil
+        c?(r)
     }
 
     func collect(_ intent: ReaderIntent, completion: @escaping (Result<ReaderIntent, ReaderError>) -> Void) -> ReaderCancelable {
@@ -92,6 +101,13 @@ final class FakeReader: PaymentReader {
             pendingCollect = completion
         }
         return cancelable
+    }
+
+    var disconnectCalls = 0
+    func disconnect(completion: @escaping () -> Void) {
+        disconnectCalls += 1
+        connected = false
+        completion()
     }
 
     func finishCollect(_ r: Result<ReaderIntent, ReaderError>) {

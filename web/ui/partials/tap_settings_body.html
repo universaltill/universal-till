@@ -21,6 +21,25 @@
 {{ end }}
 {{ if .HintKey }}<p{{ if not .IsNext }} class="muted"{{ end }} id="tap-hint-{{ .ID }}" data-testid="tap-hint-{{ .ID }}">{{ T .HintKey }}</p>{{ end }}
 {{ end }}
+{{/* ut-docs#6458: the Connect onboarding button of the account step. A real
+     link to a fixed host (system browser, never htmx); offline it is a
+     disabled button with its reason next to it. Check status re-reads the
+     account fresh. No fee wording here. */}}
+{{ define "tap_settings_connect" }}
+{{ if .Connect.Show }}
+<div class="tap-connect" data-testid="tap-connect">
+  <a class="btn primary tap-btn" data-testid="tap-connect-open" href="{{ .Connect.URL }}" target="_blank" rel="noopener" hx-boost="false">{{ if .Connect.Continue }}{{ T "tap.settings.connect.continue" }}{{ else }}{{ T "tap.settings.connect.open" }}{{ end }}</a>
+  <p class="muted" id="tap-connect-hint">{{ T "tap.settings.connect.hint" }}</p>
+  <button type="button" class="btn secondary tap-btn" data-testid="tap-connect-check"
+          hx-get="/settings/tap-to-pay/status?check=1" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this">{{ T "tap.settings.connect.check" }}</button>
+</div>
+{{ else if .Connect.Offline }}
+<div class="tap-connect" data-testid="tap-connect">
+  <button type="button" class="btn primary tap-btn" data-testid="tap-connect-offline" disabled aria-describedby="tap-connect-hint">{{ T "tap.settings.connect.open" }}</button>
+  <p class="muted" id="tap-connect-hint">{{ T "tap.settings.reason.offline" }}</p>
+</div>
+{{ end }}
+{{ end }}
 {{ define "tap_settings_body.html" }}
 {{ if not .Available }}
 <section id="tap-settings" class="card tap-settings" data-testid="tap-unavailable">
@@ -28,7 +47,7 @@
 </section>
 {{ else }}
 <section id="tap-settings" class="card tap-settings" aria-labelledby="tap-settings-title" data-testid="tap-settings" data-state="{{ .State }}"
-         {{ if eq .State "preparing" }}hx-get="/settings/tap-to-pay/status" hx-trigger="every 2s" hx-swap="outerHTML"{{ end }}>
+         {{ if eq .State "preparing" }}hx-get="/settings/tap-to-pay/status" hx-trigger="every 2s" hx-swap="outerHTML"{{ else if .Connect.Show }}hx-get="/settings/tap-to-pay/status?check=1" hx-trigger="focus from:window throttle:5s" hx-swap="outerHTML"{{ end }}>
   <div id="tap-status" role="status" aria-live="polite" aria-atomic="true" data-testid="tap-status">
     <h2 id="tap-settings-title" tabindex="-1"><span aria-hidden="true">{{ .Icon }}</span> {{ T (printf "tap.settings.state.%s" .State) }}
       <span class="tag{{ if eq .State "ready" }} ok{{ else if eq .State "needs_setup" }} warn{{ end }}">{{ T (printf "tap.settings.state.%s" .State) }}</span>
@@ -55,6 +74,7 @@
       {{ if eq $s.ID "allow" }}{{ if $s.Done }}<span class="tag ok" data-testid="tap-permission-granted">{{ T "tap.settings.permission.granted" }}</span>{{ else }}<span class="tag warn" data-testid="tap-permission-missing">{{ T "tap.settings.permission.missing" }}</span>{{ end }}{{ end }}
       {{ if $s.Detail }}<details class="tap-details" data-testid="tap-account-detail"><summary>{{ T "tap.settings.details" }}</summary><code dir="ltr">{{ $s.Detail }}</code></details>{{ end }}
       {{ if not $s.IsNext }}{{ template "tap_settings_action" $s }}{{ end }}
+      {{ if eq $s.ID "account" }}{{ template "tap_settings_connect" $ }}{{ end }}
     </li>
     {{ end }}
   </ol>

@@ -153,6 +153,13 @@ jobs:
           bash scripts/ci/msstore-verify_test.sh
           bash scripts/ci/msstore-submit_test.sh
           bash scripts/ci/msstore-workflow_test.sh
+          bash scripts/ci/release-msstore-verify_test.sh
+      - name: Store promote-release scripts and workflow (ut-docs#6407)
+        run: |
+          bash scripts/ci/promote-preflight_test.sh
+          bash scripts/ci/promote-stores_test.sh
+          bash scripts/ci/promote-summary_test.sh
+          bash scripts/ci/promote-release-workflow_test.sh
       - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)
@@ -832,7 +839,11 @@ jobs:
       - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: Test ${{ matrix.name }}
-        run: ${{ matrix.cmd }}
+        # ut-docs#7091: -json piped through gotestdur prints per-package and
+        # slowest-test durations (and $GITHUB_STEP_SUMMARY); shell: bash is
+        # `-eo pipefail`, so go test's exit status survives the pipe.
+        shell: bash
+        run: ${{ matrix.cmd }} -json | go run ./scripts/ci/gotestdur
 
   pages-shuffle:
     # ut-docs#3865 (follow-up to ut-docs#3822 / PR #1742): internal/pages
@@ -869,7 +880,9 @@ jobs:
       - name: Test internal/pages (-shuffle=${{ matrix.seed }})
         # -count=1: a cached pass would skip the run. -timeout 20m: same
         # margin as build's own internal/pages step (ut-docs#1992).
-        run: go test -timeout 20m -count=1 -shuffle=${{ matrix.seed }} ./internal/pages
+        # -json | gotestdur: durations in the log (ut-docs#7091).
+        shell: bash
+        run: go test -timeout 20m -count=1 -shuffle=${{ matrix.seed }} -json ./internal/pages | go run ./scripts/ci/gotestdur
 
   desktop-shell:
     # ut-docs#1071: cmd/unitill-desktop's `desktop && linux` build tag (cgo +

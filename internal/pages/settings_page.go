@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -606,7 +607,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			scale = 1
 		}
 		payMethods, _ := data.NewPOSRepo(d.Db).ListActivePaymentMethods(r.Context())
+		payMethods = withoutExternalCardMethod(payMethods) // ut-docs#6755: no grid button, so no default/fee rule
 		payDefault, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
+		tipPresetsValue := pos.FormatTipPresets(common.TipPresetBPs(r.Context(), d.Settings))
 		type feeRow struct {
 			ID, Name   string
 			PercentMaj string
@@ -993,6 +996,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"restartSupported":      backupRestartSupported(),
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,
+			"tipsEnabled":           common.TipsEnabled(r.Context(), d.Settings),
+			"tipPresetsValue":       tipPresetsValue,
 			"payFees":               feeRows,
 			"tapSettingsAvailable":  tapSettingsAvailable(), // ut-docs#6458: link only with a native bridge
 			"exportEntries":         exportEntries,
@@ -1084,6 +1089,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"registerBlocked": registerBlockedView(r, d, locale),
 			"registerFacts":   registerFactsView(r, d, locale),
 			"reconnectPanel":  reconnectPanelView(r, d),
+			// ADR-0222: the same sentence as the status-bar chip, and the code
+			// field open when its button brought the person here.
+			"healNotice":    healNoticeView(r, d, locale),
+			"openReconnect": r.URL.Query().Get("reconnect") == "1" || healNeedsCode(healChipStatus()),
 			// ut-docs#6959: unknown counts as unclaimed (Claim button stays).
 			"storeClaimed": storeHasOwner(r.Context(), d.Settings),
 		}
@@ -1138,6 +1147,48 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsAudit(r, posRepo, elev, "settings", "payments.default_method", "payments_default_changed",
 			map[string]any{"method": method})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
+	// Cashier tip entry at checkout: the on/off switch and the preset
+	// percentages. An unchecked box is an explicit "0" (not unset), because
+	// unset means "on for a service shop". Same elevation + audit shape as
+	// payments-default.
+	mux.HandleFunc("POST /api/settings/payments-tips", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		enabled := "0"
+		if v := strings.ToLower(strings.TrimSpace(r.Form.Get("enabled"))); v == "on" || v == "1" || v == "true" {
+			enabled = "1"
+		}
+		rawPresets := strings.TrimSpace(r.Form.Get("presets"))
+		presets := ""
+		if rawPresets != "" {
+			bps := pos.ParseTipPresetList(rawPresets)
+			if len(bps) == 0 {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, "settings.payments.tip_presets_invalid")))
+				return
+			}
+			presets = pos.FormatTipPresets(bps)
+		} else {
+			presets = pos.TipPresetsDefault
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/payments-tips", "#pay-tips-msg",
+				httpx.T(locale, "elevation.summary.payments_tips"),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}, {Name: "presets", Value: rawPresets}}, elev)
+			return
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyTipsEnabled: enabled, common.KeyTipPresets: presets}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyTipsEnabled, "payments_tips_changed",
+			map[string]any{"enabled": enabled, "presets": presets})
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
@@ -1306,6 +1357,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				key = "settings.enrol.service_unavailable"
 			case errors.Is(err, enroll.ErrTillNotRegistered):
 				key = "settings.enrol.not_registered"
+			default:
+				// A 401 is the cloud refusing this till's credential, not a
+				// network problem: say so, and tell the heal engine (it probes
+				// first, so a stray 401 never rotates anything).
+				var he *enroll.RegisterHTTPError
+				if errors.As(err, &he) && he.Status == http.StatusUnauthorized {
+					key = "settings.enrol.claim_unauthorized"
+					switch he.Code {
+					case "unauthorized", "token_retired", "device_revoked":
+						credheal.Report(credheal.Signal{Source: "claim", Code: he.Code})
+					}
+				}
 			}
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, key)))
 			return
@@ -1367,7 +1430,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// gate as new-shop (Fable review M2): a healthy till or one of a
 		// claimed shop never reaches the cloud from here.
 		if !tillLockedOutAnonymous(r.Context(), d) {
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, reconnectRefusalKey(r.Context(), d))))
 			return
 		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
@@ -1402,7 +1465,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
 		if !tillLockedOutAnonymous(r.Context(), d) {
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, reconnectRefusalKey(r.Context(), d))))
 			return
 		}
 		if r.Form.Get("confirm_new_shop") != "1" {
@@ -1418,8 +1481,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			})
 			return
 		}
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
+		// Irreversible and the panel is manager-only: a step-up, so even a
+		// manager session proves a PIN and the request is same-origin (L3).
+		elev := checkStepUp(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome != elevated {
 			renderElevationPrompt(w, r, "/api/enrol/new-shop", "#new-shop-msg",
 				httpx.T(locale, "elevation.summary.enrol_new_shop"),
 				[]elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}}, elev)
@@ -1458,7 +1523,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// The wipe ran (StartAsNewStore does it first): say so, then why.
 			reason := ""
 			if err != nil {
-				if msg := reconnectResultHTML(locale, err); msg != "" {
+				// "Nothing changed. Try again later" would be false after a wipe
+				// that will retry by itself: those two add no reason.
+				msg := reconnectResultHTML(locale, err)
+				generic := msg == html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_server_error")) ||
+					msg == html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_failed"))
+				if msg != "" && !generic {
 					reason = " " + msg
 				}
 			}

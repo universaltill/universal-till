@@ -369,12 +369,12 @@ A bottle-deposit (Pfandrückgabe) payout is recorded against **this till's
 own register's** open shift — even when another register's shift is open
 at the same time, it never lands on the other drawer. On a shop with more
 than one register, the till has to know which register it is first: set
-"Cash register for payouts" in Settings → Tills, or the payout is refused with
+"Cash register for payouts" in Settings → Tills & devices, or the payout is refused with
 a message pointing you there.
 
 Opening a new shift shows a register picker too. On a shop with more than
 one register it now defaults to this till's own register (set under
-Settings → Tills), so opening a shift on the till you're standing at
+Settings → Tills & devices), so opening a shift on the till you're standing at
 normally needs no picking — you can still choose a different register
 from the list for the rare case a shift needs opening on one.
 
@@ -576,6 +576,10 @@ main till and never receives siblings' sales back down. Picking "All tills"
 or a specific other till on a replica shows a message explaining that
 cross-till sales are only available on the shop's main till, instead of
 a table that's quietly empty with nothing to explain why.
+
+### Refunds in the Journal
+
+A refund shows as its own row, with a minus amount and a line "Refund of #…" linking to the sale it paid back. That sale carries a chip: **Refunded** when all of it has been paid back, or **Partly refunded** with how much of the sale has been paid back so far. **Refund pending** means a card refund was sent but the payment service has not confirmed it yet; it never shows as Refunded until that is settled. Do not start a new refund for that sale. Open the refund screen for it and tap **Refund** again to settle it; if it still shows as pending after the till restarts, ask a manager to check it under Settings → Payments → Payments needing attention. The minus sign is only how the Journal list shows a refund; a receipt's detail page, receipts, reports and exports show the refund amount as a positive figure, and the detail page marks it with a Refund label. Open a receipt to see the same chip and amounts on its detail page.
 
 ## The audit log
 

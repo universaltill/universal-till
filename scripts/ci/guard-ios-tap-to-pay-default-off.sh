@@ -20,7 +20,11 @@
 #      anything but NO (or, in project.yml, the $(UT_TAP_TO_PAY)
 #      pass-through): =YES, : "YES", or a value from a variable;
 #   4. ios/UniversalTill/UniversalTill.dev.entitlements holds any key other
-#      than com.apple.developer.proximity-reader.payment.acceptance.
+#      than com.apple.developer.proximity-reader.payment.acceptance;
+#   5. phone card-reader mode (UT_READER_MODE, ut-docs#6538) is pinned the same
+#      way: base "NO", Release "NO" for UT_READER_MODE and UT_READER_MODE_INFO,
+#      Info.plist UTReaderModeEnabled = $(UT_READER_MODE_INFO), and no file
+#      assigns either to anything but NO.
 #
 # ut-docs#6460 relaxes rule 2 once Apple's distribution grant is recorded.
 #
@@ -107,10 +111,22 @@ if unquote(enabled) != "$(UT_TAP_TO_PAY_INFO)":
 if "CODE_SIGN_ENTITLEMENTS" not in release or unquote(release.get("CODE_SIGN_ENTITLEMENTS")) != "":
     err('ios/project.yml: the Release config must set CODE_SIGN_ENTITLEMENTS: "" (no Tap to Pay entitlement in TestFlight).')
 
+# 5. Phone card-reader mode (ut-docs#6538) is default OFF and never in Release.
+if unquote(base.get("UT_READER_MODE")) != "NO":
+    err('ios/project.yml: targets.UniversalTill.settings.base must set UT_READER_MODE: "NO" (reader mode default OFF, ut-docs#6538).')
+if unquote(release.get("UT_READER_MODE")) != "NO":
+    err('ios/project.yml: the Release config must set UT_READER_MODE: "NO" (reader mode needs the development-only entitlement).')
+if unquote(release.get("UT_READER_MODE_INFO")) != "NO":
+    err('ios/project.yml: the Release config must set UT_READER_MODE_INFO: "NO" (a command-line UT_READER_MODE=YES '
+        'must not switch a Release build on).')
+reader_on = dig(project, "targets", "UniversalTill", "info", "properties", "UTReaderModeEnabled")
+if unquote(reader_on) != "$(UT_READER_MODE_INFO)":
+    err('ios/project.yml: info.properties.UTReaderModeEnabled must be $(UT_READER_MODE_INFO), the switch Release pins to NO.')
+
 # 3. Nothing a build can run turns the flag on (README documents it). Any
 #    assigned value other than NO counts — YES, or one read from a variable
 #    — except project.yml's own $(UT_TAP_TO_PAY) pass-through.
-turn_on = re.compile(r"""\bUT_TAP_TO_PAY(?:_INFO)?\s*[:=]\s*["']?(?!NO\b|\$\(UT_TAP_TO_PAY\))[^\s"']+""")
+turn_on = re.compile(r"""\b(?:UT_TAP_TO_PAY|UT_READER_MODE)(?:_INFO)?\s*[:=]\s*["']?(?!NO\b|\$\(UT_TAP_TO_PAY\)|\$\(UT_READER_MODE\))[^\s"']+""")
 TOPS = (".github", "ios", "scripts", "Makefile")
 SKIP = {"ios/README.md", "scripts/ci/guard-ios-tap-to-pay-default-off.sh",
         "scripts/ci/guard-ios-tap-to-pay-default-off_test.sh"}
@@ -162,5 +178,5 @@ if os.path.exists(ent):
 
 if fail:
     sys.exit(1)
-print("guard-ios-tap-to-pay-default-off: OK (Tap to Pay default OFF; Release never carries the entitlement)")
+print("guard-ios-tap-to-pay-default-off: OK (Tap to Pay and reader mode default OFF; Release never carries the entitlement)")
 PY

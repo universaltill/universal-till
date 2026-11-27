@@ -525,8 +525,11 @@ window.utCurrency = (function(){
       }
       paymentsList.classList.remove('empty');
       var html = payments.map(function(payment, idx){
-        var net = payment.amount - (payment.change || 0);
+        var net = payment.amount - (payment.change || 0) - (payment.tip || 0);
         var details = formatMoney(net);
+        if (payment.tip) {
+          details += ' <small>' + escapeHtml(fmt(msg.msgTipNote, formatMoney(payment.tip))) + '</small>';
+        }
         if (payment.change) {
           details += ' ' + escapeHtml(fmt(msg.msgChangeNote, formatMoney(payment.change)));
         }
@@ -546,7 +549,7 @@ window.utCurrency = (function(){
 
     function netPayments(){
       return payments.reduce(function(sum, payment){
-        return sum + (payment.amount - (payment.change || 0));
+        return sum + (payment.amount - (payment.change || 0) - (payment.tip || 0));
       }, 0);
     }
 
@@ -612,9 +615,27 @@ window.utCurrency = (function(){
         setStatus(msg.msgChangeExceeds, 'error');
         return false;
       }
+      // The tip is part of the amount handed over (core's convention); it is
+      // never counted toward the bill. Voucher legs cannot carry one.
+      var tipMinor = voucherID ? 0 : toMinor(data.get('tip'));
+      if (tipMinor < 0) tipMinor = 0;
+      if (tipMinor > amountMinor - changeMinor) {
+        setStatus(msg.msgTipExceeds, 'error');
+        return false;
+      }
+      // Slip guard, the same as the quick-pay tip row and the server: the
+      // tips of all legs together are at most the bill (500 typed for 5.00).
+      var tipsSoFar = payments.reduce(function(sum, p){ return sum + (p.tip || 0); }, 0);
+      if (tipMinor > 0 && amountDue() > 0 && tipsSoFar + tipMinor > amountDue()) {
+        setStatus(msg.msgTipTooLarge, 'error');
+        return false;
+      }
       var payment = { method: method, amount: amountMinor };
       if (changeMinor > 0) {
         payment.change = changeMinor;
+      }
+      if (tipMinor > 0) {
+        payment.tip = tipMinor;
       }
       // ut-docs#6566: the chosen registry card reader (several ready), or the
       // one ready reader; absent for a method with no registry readers.
@@ -639,7 +660,7 @@ window.utCurrency = (function(){
       payments.push(payment);
       renderPayments();
       clearForm();
-      setStatus(fmt(msg.msgAdded, methodLabel(method), formatMoney(payment.amount - (payment.change || 0))), 'success');
+      setStatus(fmt(msg.msgAdded, methodLabel(method), formatMoney(payment.amount - (payment.change || 0) - (payment.tip || 0))), 'success');
       return true;
     }
 
@@ -761,8 +782,12 @@ window.utCurrency = (function(){
         return;
       }
       var amountInput = form.querySelector('input[name="amount"]');
+      // The amount to hand over also covers the tip typed for this leg.
+      var tipInput = form.querySelector('input[name="tip"]');
+      var tipNow = tipInput ? toMinor(tipInput.value) : 0;
+      if (tipNow < 0) tipNow = 0;
       if (amountInput) {
-        amountInput.value = window.utCurrency.toMajor(remaining);
+        amountInput.value = window.utCurrency.toMajor(remaining + tipNow);
         amountInput.focus();
       }
       var changeInput = form.querySelector('input[name="change"]');
@@ -919,8 +944,120 @@ window.utCurrency = (function(){
     syncReaderField();
   }
 
+  // Tip row of the payment panel (payments.tips_enabled). "No tip" is the
+  // default; a preset posts tip_bp (the server rounds the percent against the
+  // real total, half up), a typed amount posts tip in minor units. The preview
+  // amounts below use the same integer half-up rule as pos.TipForPercentBP, so
+  // the figure on the button is the figure charged. Pure client state: it
+  // never touches the network, so a tip never blocks a sale.
+  function initTipRow(){
+    var row = document.getElementById('tip-row');
+    if (!row || row.dataset.bound === '1') return;
+    row.dataset.bound = '1';
+    var bpField = document.getElementById('tip-bp');
+    var minorField = document.getElementById('tip-minor');
+    var customField = document.getElementById('tip-custom-field');
+    var customInput = document.getElementById('tip-custom-input');
+    var totalEl = document.getElementById('tip-total');
+    var kind = 'none';
+    var bp = 0;
+
+    function billTotal(){
+      var el = document.querySelector('.basket .total');
+      var minor = el ? parseInt(el.getAttribute('data-minor') || '', 10) : NaN;
+      return isNaN(minor) ? 0 : minor;
+    }
+    function percentTip(total, basisPoints){
+      if (total <= 0 || basisPoints <= 0) return 0;
+      return Math.floor((total * basisPoints + 5000) / 10000);
+    }
+    function fmt(template, arg){
+      return String(template || '').replace('%s', arg);
+    }
+    function currentTip(total){
+      if (kind === 'percent') return percentTip(total, bp);
+      if (kind === 'custom') {
+        var n = window.utCurrency.parseMinor(customInput ? customInput.value : '');
+        return isNaN(n) || n < 0 ? 0 : n;
+      }
+      return 0;
+    }
+    function refresh(){
+      var total = billTotal();
+      row.querySelectorAll('[data-tip-kind="percent"]').forEach(function(btn){
+        var amt = btn.querySelector('.tip-opt-amt');
+        var t = percentTip(total, parseInt(btn.getAttribute('data-tip-bp'), 10));
+        if (amt) amt.textContent = total > 0 ? window.utCurrency.format(t) : '';
+      });
+      bpField.value = kind === 'percent' ? String(bp) : '';
+      var tip = currentTip(total);
+      minorField.value = kind === 'custom' && tip > 0 ? String(tip) : '';
+      var tooLarge = tip > total && total > 0;
+      if (customInput) customInput.setAttribute('aria-invalid', tooLarge ? 'true' : 'false');
+      if (tooLarge) {
+        totalEl.hidden = false;
+        totalEl.setAttribute('role', 'alert');
+        totalEl.classList.add('error');
+        totalEl.textContent = row.dataset.msgTooLarge || '';
+      } else if (tip > 0) {
+        totalEl.hidden = false;
+        totalEl.removeAttribute('role');
+        totalEl.classList.remove('error');
+        totalEl.textContent = fmt(row.dataset.msgTotal, window.utCurrency.format(total + tip));
+      } else {
+        totalEl.hidden = true;
+        totalEl.textContent = '';
+      }
+    }
+    function choose(btn){
+      kind = btn.getAttribute('data-tip-kind');
+      bp = kind === 'percent' ? parseInt(btn.getAttribute('data-tip-bp'), 10) : 0;
+      row.querySelectorAll('.tip-opt').forEach(function(o){
+        var on = o === btn;
+        o.classList.toggle('active', on);
+        o.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      if (customField) customField.hidden = kind !== 'custom';
+      if (kind === 'custom' && customInput) customInput.focus();
+      refresh();
+    }
+    row.addEventListener('click', function(e){
+      var btn = e.target.closest('.tip-opt');
+      if (btn && row.contains(btn)) choose(btn);
+    });
+    if (customInput) customInput.addEventListener('input', refresh);
+    // A tip above the bill never leaves the till: the tap on a method button
+    // (or the card-reader form's submit) is stopped before htmx sees it, and
+    // the message under the field says why. The server refuses it too, but
+    // only with the generic failure notice.
+    function stopOverTip(e){
+      var elt = e.target && e.target.closest ? e.target.closest('[hx-include*="#tip-minor"]') : null;
+      if (!elt) return;
+      var total = billTotal();
+      if (total > 0 && currentTip(total) > total) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (customInput) customInput.focus();
+      }
+    }
+    document.addEventListener('click', stopOverTip, true);
+    document.addEventListener('submit', stopOverTip, true);
+    // A new basket total re-prices the preset amounts; an emptied basket
+    // (the sale just completed, or was cleared) goes back to "No tip".
+    document.body.addEventListener('htmx:afterSwap', function(){
+      if (billTotal() === 0 && kind !== 'none') {
+        if (customInput) customInput.value = '';
+        choose(row.querySelector('[data-tip-kind="none"]'));
+        return;
+      }
+      refresh();
+    });
+    refresh();
+  }
+
   ready(initSplitTender);
   document.addEventListener('htmx:afterSwap', initSplitTender);
+  ready(initTipRow);
   document.addEventListener('htmx:load', initSplitTender);
 })();
 
@@ -2471,102 +2608,13 @@ utSellCamera(function(){
 // tapping it explains why instead of the button silently being absent.
 (function(){
   if (!window.utScan) return;
-  // The decoder outlives any one sell page (ut-docs#3807): fetched once per
-  // document, whichever page bound it.
+  // The decoder lives in qr-scan.js (shared with the setup wizard's pairing
+  // scan, ut-docs#3428) and outlives any one sell page (ut-docs#3807). It is
+  // cached per document there; `detector` is this page's handle on it.
   var detector = null;
-  var detectorPromise = null;
-  // Formats this product's wedge scanners actually read (ut-docs#423's
-  // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
-  // self-order use later. An explicit list keeps decode behaviour the
-  // same across browsers rather than however each one's default differs.
-  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'];
-  var DECODER_DIR = '/public/vendor/barcode-detector/';
-  // Content version of the decoder (ponyfill.js; the wasm is pinned to it by
-  // web/vendor_barcode_decoder_test.go), so both get immutable caching and
-  // an upgrade changes the URL instead of being refetched on every load.
-  // Read from the overlay's data-decoder-v at bind time.
-  var DECODER_QS = '';
-
-  function nativeDetector(){
-    // typeof-check, not `'BarcodeDetector' in window`: a test stubbing the
-    // property to undefined must still read as unsupported.
-    if (typeof window.BarcodeDetector !== 'function') return null;
-    try {
-      return new window.BarcodeDetector({ formats: FORMATS });
-    } catch (e) {
-      return null; // throws if the browser supports none of FORMATS
-    }
-  }
-
-  function loadVendoredDetector(){
-    return new Promise(function(resolve, reject){
-      function build(){
-        var api = window.BarcodeDetectionAPI;
-        // The ponyfill defaults to fetching its wasm from a CDN; point it at
-        // the copy this till serves itself (offline-first, no third party).
-        // prepareZXingModule resolves only once the wasm is instantiated, so
-        // a missing/broken file surfaces here, not as a silent per-frame
-        // failure later.
-        api.prepareZXingModule({
-          overrides: { locateFile: function(path){ return DECODER_DIR + path + DECODER_QS; } },
-          fireImmediately: true
-        }).then(function(){
-          resolve(new api.BarcodeDetector({ formats: FORMATS }));
-        }, function(err){
-          // Forget the failed instance so the next tap fetches it again.
-          try { api.purgeZXingModule(); } catch (e) { /* nothing to purge */ }
-          reject(err);
-        });
-      }
-      if (window.BarcodeDetectionAPI) { build(); return; }
-      var s = document.createElement('script');
-      s.src = DECODER_DIR + 'ponyfill.js' + DECODER_QS;
-      s.onload = function(){
-        if (window.BarcodeDetectionAPI) { build(); return; }
-        s.remove();
-        reject(new Error('decoder missing'));
-      };
-      s.onerror = function(){
-        s.remove(); // let the next tap retry with a fresh <script>
-        reject(new Error('decoder failed to load'));
-      };
-      document.head.appendChild(s);
-    });
-  }
-
-  // Chromium exposes BarcodeDetector even where the platform service behind
-  // it is missing (e.g. Android without Play services); then every detect()
-  // rejects and scanning would spin forever. getSupportedFormats() resolves
-  // to [] in that case, so only a native detector that reads at least one of
-  // FORMATS is trusted; otherwise the vendored decoder is used.
-  function usableNativeDetector(){
-    var native = nativeDetector();
-    if (!native) return Promise.resolve(null);
-    var probe = window.BarcodeDetector.getSupportedFormats;
-    if (typeof probe !== 'function') return Promise.resolve(native);
-    return Promise.resolve().then(function(){ return probe.call(window.BarcodeDetector); })
-      .then(function(formats){
-        var ok = (formats || []).some(function(f){ return FORMATS.indexOf(f) !== -1; });
-        return ok ? native : null;
-      }, function(){ return null; });
-  }
-
   function getDetector(){
-    if (detector) return Promise.resolve(detector);
-    if (!detectorPromise) {
-      detectorPromise = usableNativeDetector()
-        .then(function(native){ return native || loadVendoredDetector(); })
-        .then(function(d){ detector = d; return d; }, function(err){
-          detectorPromise = null;
-          throw err;
-        });
-    }
-    return detectorPromise;
+    return window.utGetBarcodeDetector().then(function(d){ detector = d; return d; });
   }
-
-  // The same lazy decoder, for other camera surfaces (the plugin settings
-  // page's one-time key code scan, ut-docs#6960).
-  window.utGetBarcodeDetector = getDetector;
 
   utSellCamera(function(){
     var openBtn = document.getElementById('barcode-scan-open');
@@ -2580,7 +2628,7 @@ utSellCamera(function(){
     var stream = null;
     var rafID = null;
     var candidate = null; // last decoded value, awaiting a matching read
-    if (msgs.decoderV) DECODER_QS = '?v=' + encodeURIComponent(msgs.decoderV);
+    if (msgs.decoderV && window.utQrScan) window.utQrScan.setDecoderVersion(msgs.decoderV);
 
     openBtn.hidden = false;
 

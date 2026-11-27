@@ -15,8 +15,9 @@ SHA="$(shasum -a 256 "$W/rel/unitill-pos-setup-1.2.3.exe" | awk '{print $1}')"
 SIZE="$(wc -c <"$W/rel/unitill-pos-setup-1.2.3.exe" | tr -d ' ')"
 cat >"$W/bin/curl" <<'C'
 #!/usr/bin/env bash
-out=""; url=""
-while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done
+out=""; url=""; head=0
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -I) head=1; shift;; -*) shift;; *) url=$1; shift;; esac; done
+if [ "$head" = 1 ]; then echo "HEAD $url" >>"$MOCK_LOG"; case "$url" in *blob.core.windows.net*) printf '%s' "${MOCK_BLOB_PROBE-200 }";; esac; [ -z "${MOCK_BLOB_RC:-}" ] || exit "$MOCK_BLOB_RC"; exit 0; fi
 echo "$url" >>"$MOCK_LOG"
 cp "$MOCK_REL/$(basename "$url")" "$out"
 C
@@ -40,7 +41,13 @@ chmod +x "$W/bin/"* "$W/ok.sh" "$W/fail.sh"
 export PATH="$W/bin:$PATH" MOCK_LOG="$W/log" MOCK_REL="$W/rel" REPO=o/r
 export SIGN_PUBLISHER="TASK RUNNER TECHNOLOGY LTD" UT_RELEASE_KEYS_HEX=aa
 export UT_MSSTORE_TEST=1
-export SIGN_EXE="$W/ok.sh" SOAK_CMD="$W/ok.sh" SILENT_CMD="$W/ok.sh" SIG_VERIFY_CMD="$W/ok.sh"
+cat >"$W/soak.sh" <<'S'
+#!/usr/bin/env bash
+echo "$*" >"$SOAK_LOG"
+S
+chmod +x "$W/soak.sh"
+export SOAK_LOG="$W/soaklog"
+export SIGN_EXE="$W/ok.sh" SOAK_CMD="$W/soak.sh" SILENT_CMD="$W/ok.sh" SIG_VERIFY_CMD="$W/ok.sh"
 printf '%s  unitill-pos-setup-1.2.3.exe\n' "$SHA" >"$W/rel/checksums.txt"; echo sig >"$W/rel/checksums.txt.sig"
 meta() { printf '{"isDraft":%s,"isPrerelease":%s,"assets":[{"name":"unitill-pos-setup-1.2.3.exe","size":%s,"digest":"sha256:%s"}]}' "${1:-false}" "${2:-false}" "${3:-$SIZE}" "${4:-$SHA}"; }
 fails=0
@@ -53,7 +60,15 @@ export INSTALLER_NSI="$W/ok.sh"
 export MOCK_META; MOCK_META="$(meta)"
 t 0 "a good release is ready" v1.2.3; verdict true
 grep -q 'releases/download/v1.2.3/unitill-pos-setup-1.2.3.exe' "$W/log" && ! grep -q latest "$W/log" && echo "ok   - versioned URL, never /latest/" || { echo "FAIL - URL" >&2; fails=$((fails+1)); }
+BLOB=https://unitillinstallers.blob.core.windows.net/installers/windows/v1.2.3/unitill-pos-setup-1.2.3.exe
+[ "$(cut -d' ' -f1 "$W/soaklog")" = "$BLOB" ] && echo "ok   - the soak runs against the blob URL" || { echo "FAIL - soak URL: $(cat "$W/soaklog")" >&2; fails=$((fails+1)); }
+[ "$(cut -d' ' -f2,3 "$W/soaklog")" = "$SHA $SIZE" ] && echo "ok   - soak gets the proved sha256 and size" || { echo "FAIL - soak args" >&2; fails=$((fails+1)); }
+[ "$(jq -r .url "$W/out/result.json")" = "$BLOB" ] && echo "ok   - result.json url is the blob URL" || { echo "FAIL - result url" >&2; fails=$((fails+1)); }
 t 0 "tag without v is normalised" 1.2.3
+MOCK_BLOB_RC=22 t 1 "blob missing (publish-installer not green) is not ready" v1.2.3; verdict false
+jq -e '.reason | contains("publish-installer")' "$W/out/result.json" >/dev/null && echo "ok   - reason names publish-installer" || { echo "FAIL - reason" >&2; fails=$((fails+1)); }
+MOCK_BLOB_PROBE="302 https://elsewhere/x" t 1 "a redirecting blob is not ready" v1.2.3; verdict false
+MOCK_BLOB_PROBE="404 " t 1 "a 404 blob is not ready" v1.2.3
 t 1 "bad tag" latest; 
 t 1 "bad tag with suffix" v1.2.3-rc1
 MOCK_META="$(meta true)" t 1 "draft refused" v1.2.3; verdict false

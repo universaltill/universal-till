@@ -1,0 +1,22 @@
+{{/* The tab bar (ut-docs#7057). Real <a href>; HTMX enhances. On a phone the
+     bar is replaced by one full-width <select> (CSS .tills-tabs). Count tags
+     never replace the words. Swapped out of band by the tab fragment so the
+     active tab and the counts stay right. */}}
+<nav id="tills-nav" class="tills-tabs" aria-label="{{ T "settings.cat.devices.label" }}"{{ if .OOB }} hx-swap-oob="true"{{ end }}>
+  <div class="tab-bar" role="tablist">
+    {{ range .TabIDs }}
+    <a class="tab{{ if eq . $.Tab }} active{{ end }}" role="tab" id="tills-tab-{{ . }}" data-testid="tills-tab-{{ . }}"
+       href="/tills?tab={{ . }}" hx-get="/ui/tills/tab/{{ . }}" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab={{ . }}"
+       aria-selected="{{ if eq . $.Tab }}true{{ else }}false{{ end }}" aria-controls="tills-tab"{{ if ne . $.Tab }} tabindex="-1"{{ end }}>{{ template "tills_tab_label" . }}{{ if and (eq . "add") $.PendingCount }}<span class="tag warn count" data-testid="tills-count-add" aria-label="{{ printf (T "tills.tab.count_waiting") $.PendingCount }}">{{ $.PendingCount }}</span>{{ end }}{{ if and (eq . "others") $.OthersCount }}<span class="tag warn count" data-testid="tills-count-others" aria-label="{{ printf (T "tills.tab.count_look") $.OthersCount }}">{{ $.OthersCount }}</span>{{ end }}</a>
+    {{ end }}
+  </div>
+  <form class="tab-select" action="/tills" method="get">
+    <label class="small muted" for="tills-tab-select">{{ T "tills.tab.select_label" }}</label>
+    <select id="tills-tab-select" name="tab" x-data @change="window.location = '/tills?tab=' + $el.value">
+      {{ range .TabIDs }}<option value="{{ . }}"{{ if eq . $.Tab }} selected{{ end }}>{{ template "tills_tab_label" . }}</option>{{ end }}
+    </select>
+    <noscript><button class="btn secondary" type="submit">{{ T "tills.tab.go" }}</button></noscript>
+  </form>
+</nav>
+
+{{ define "tills_tab_label" }}{{ if eq . "this" }}{{ T "settings.tills.role_label" }}{{ else if eq . "settings" }}{{ T "nav.settings" }}{{ else }}{{ T (printf "tills.tab.%s" .) }}{{ end }}{{ end }}

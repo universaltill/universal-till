@@ -31,7 +31,7 @@ test.describe('join refused for sales brings the tick box (ut-docs#4560)', () =>
       await page.setViewportSize(vp);
       // The refusal is a deliberate 409; the browser logs every 4xx.
       const assertClean = watchConsole(page, /status of 409/);
-      await page.goto('/tills');
+      await page.goto('/tills?tab=add&need=join');
       await page.waitForSelector('.tills-join');
       // Whatever other specs left on this shared till, put the page in the
       // state the card is about: rendered with no tick box, then a sale.
@@ -50,7 +50,8 @@ test.describe('join refused for sales brings the tick box (ut-docs#4560)', () =>
 
       // The refusal shows where the join's message goes, and the box lands
       // above the tabs.
-      await expect(page.locator('#join-msg')).toContainText('✗');
+      // ut-docs#7097 (T2): the refusal is a plain next step now, not a red cross.
+      await expect(page.locator('#join-msg')).toContainText('One more step: this device already has its own sales');
       const box = page.locator('#pairing-replace-slot #pairing-replace-local');
       await expect(box).toHaveCount(1);
       await expect(page.locator('#pairing-replace-warning')).toBeVisible();
