@@ -78,6 +78,8 @@ var regionCard = map[string]string{
 	// The receipt designer is a link on its own page; its keys are shown in
 	// the Receipts & printers category, so they follow the printer card.
 	"receipt-designer": "settings-printer",
+	// The cashier tip form is a fieldset inside the Payments card (ut-docs#7107).
+	"settings-payments-tips": "settings-payments",
 }
 
 // ClassForRegion returns the base class a registry region carries: the class

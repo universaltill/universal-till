@@ -181,7 +181,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
     },
     {
       "key": "payments.tip_presets",
@@ -200,7 +208,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
     },
     {
       "key": "sale.display_no_scheme",

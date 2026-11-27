@@ -13,6 +13,7 @@ func TestClassForRegion(t *testing.T) {
 		ok     bool
 	}{
 		{"settings-payments", uislot.ClassEssential, true},
+		{"settings-payments-tips", uislot.ClassEssential, true},
 		{"settings-stock-tracking", uislot.ClassCommon, true},
 		{"settings-barcode", uislot.ClassAdvanced, true},
 		{"settings-currency-display", uislot.ClassEssential, true}, // inherits settings-currency
