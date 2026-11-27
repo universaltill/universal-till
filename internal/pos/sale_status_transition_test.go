@@ -133,3 +133,41 @@ func TestUpdateSaleStatus_ElevatedRecordsBlockedActor(t *testing.T) {
 		t.Fatalf("audit actor/blocked = %q/%q, want mgr1/cashier1", actor, blocked)
 	}
 }
+
+// ut-docs#7140: UpdateSaleStatusFrom refuses, inside the write transaction,
+// when the status is no longer the one an approval was bound to.
+func TestUpdateSaleStatusFrom_StaleExpectedFromRefusedNothingWritten(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	id := seedStatusSale(t, db, "open") // the approval was bound while "parked"
+
+	err := UpdateSaleStatusFrom(ctx, db, id, "parked", "voided", "mgr1", "cashier1", "r", false)
+	if !errors.Is(err, ErrSaleStatusTransition) {
+		t.Fatalf("err = %v, want ErrSaleStatusTransition", err)
+	}
+	if got := saleStatusOf(t, db, id); got != "open" {
+		t.Fatalf("status = %q, want open (nothing written)", got)
+	}
+	if n := auditCountFor(t, db, id); n != 0 {
+		t.Fatalf("audit rows = %d, want 0", n)
+	}
+}
+
+func TestUpdateSaleStatusFrom_MatchingOrEmptyExpectedFromApplies(t *testing.T) {
+	ctx := context.Background()
+	for _, expected := range []string{"parked", ""} {
+		db := setupSaleDB(t)
+		id := seedStatusSale(t, db, "parked")
+		if err := UpdateSaleStatusFrom(ctx, db, id, expected, "voided", "mgr1", "cashier1", "r", false); err != nil {
+			t.Fatalf("expectedFrom %q: %v", expected, err)
+		}
+		if got := saleStatusOf(t, db, id); got != "voided" {
+			t.Fatalf("expectedFrom %q: status = %q, want voided", expected, got)
+		}
+		if n := auditCountFor(t, db, id); n != 1 {
+			t.Fatalf("expectedFrom %q: audit rows = %d, want 1", expected, n)
+		}
+		db.Close()
+	}
+}
