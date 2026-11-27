@@ -696,6 +696,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			// ut-docs#5058 UT-5: a re-joining till's own receipt prefix
 			// (T<n>-), kept when no other till holds or used it.
 			ReceiptPrefix string `json:"receipt_prefix"`
+			// ut-docs#7097: the joining till's own device id; a re-join from
+			// the same device under a new name keeps its row. Absent on an
+			// older till: rows are matched by name as before.
+			DeviceID string `json:"device_id"`
 		}
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.NewDecoder(r.Body).Decode(&in)
@@ -818,6 +822,36 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				sameName = false
 			}
 		}
+		// ut-docs#7097: the same device coming back under a NEW name is a rename,
+		// not a second till. Only when that row has been quiet (a live row is a
+		// live device, as for the name rule above) and the new name is free.
+		in.DeviceID = strings.TrimSpace(in.DeviceID)
+		if replaceID == "" && validRequesterDeviceID(in.DeviceID) && in.DeviceID != "" {
+			byDev, found, derr := repo.TillByDeviceID(r.Context(), in.DeviceID)
+			if derr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", derr)
+				return
+			}
+			// A rename takes the row only with the same proof as the name rule:
+			// a manager approved a request that NAMED this device. A typed code,
+			// a QR token, or a self-asserted device id never unlocks it (review
+			// 2026-11-27, finding 1).
+			approvedDev, approvedOK, perr := pairingRepo.RequesterDeviceForToken(r.Context(), presented)
+			if perr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", perr)
+				return
+			}
+			if found && approvedOK && approvedDev == in.DeviceID && !byDev.SeenWithin(time.Now(), replaceLiveWindow) && !strings.EqualFold(name, primaryName) {
+				taken, terr := repo.NameTakenExcept(r.Context(), name, byDev.ID)
+				if terr != nil {
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", terr)
+					return
+				}
+				if !taken {
+					replaceID, existing, sameName = byDev.ID, byDev, false
+				}
+			}
+		}
 		nameTaken := sameName
 		if strings.EqualFold(name, primaryName) || nameTaken {
 			common.LogAndLocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.name_taken", "sync_api",
@@ -851,6 +885,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				tillPrefix, err = repo.ReceiptPrefixOf(r.Context(), replaceID)
 				tillNo = data.TillNumberOfPrefix(tillPrefix)
 			}
+			if err == nil && existing.Name != name {
+				_, err = repo.UpdateName(r.Context(), replaceID, name) // ut-docs#7097: rename keeps the row
+			}
 		} else {
 			tillID, tillNo, tillPrefix, err = repo.EnrolTillPrefix(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
 		}
@@ -862,6 +899,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
+		}
+		if in.DeviceID != "" && validRequesterDeviceID(in.DeviceID) {
+			if err := repo.SetDeviceID(r.Context(), tillID, in.DeviceID); err != nil {
+				logging.L().Warnf("sync: remember device id of enrolled till %s: %v", tillID, err)
+			}
 		}
 		// A satellite (only ever enrolled over TLS, above) is pinned from
 		// enrolment: its bearer is refused on plain HTTP at once, not from
@@ -1516,6 +1558,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	}
 
 	enrol := map[string]string{"token": token, "name": name, "role": role}
+	if id := pairRequestDeviceID(); id != "" {
+		enrol["device_id"] = id // ut-docs#7097: a rename keeps this till's row
+	}
 	if rejoin {
 		// ut-docs#5058 UT-5: keep numbering where this till left off.
 		enrol["receipt_prefix"] = settingTrim(r.Context(), d, "sync.receipt_prefix")

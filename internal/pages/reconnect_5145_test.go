@@ -665,3 +665,24 @@ func TestNewShop_WipedThenServerErrorDoesNotSayNothingChanged(t *testing.T) {
 		t.Fatalf("body = %s", body)
 	}
 }
+
+// T4 / AC10 (ut-docs#7097): a till whose data folder is in use on two machines
+// says so (chip + Settings notice) instead of re-arming a date for ever.
+func TestInUseElsewhereShowsTheBlockedChipAndNotice(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+	if err := d.Settings.Set(t.Context(), "till_identity.in_use_elsewhere_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if !strings.Contains(body, `data-cloud-auth="blocked"`) || !strings.Contains(body, "on two machines") {
+		t.Fatalf("manager chip = %s", body)
+	}
+	cash := getAs(mux, "/ui/cloud-auth-chip", &cashUser).Body.String()
+	if strings.Contains(cash, "two machines") || !strings.Contains(cash, `data-cloud-auth="blocked"`) {
+		t.Fatalf("cashier chip must be neutral: %s", cash)
+	}
+	settings := getAs(mux, "/settings", &mgrUser).Body.String()
+	if !strings.Contains(settings, `data-testid="register-blocked"`) || !strings.Contains(settings, "on two machines") {
+		t.Fatalf("settings notice missing: %s", settings)
+	}
+}

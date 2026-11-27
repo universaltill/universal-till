@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "8ae9a7eb3621c19c83cc510659ae71f4caac17a2902e35b829e9e28abb5a3248",
+      "en": "84693e1c8b519c528ea27d6de56bed7992843fcb538a83a9bc1be8685a5a1a09",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -123,7 +123,7 @@
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
     },
     "multitill": {
-      "en": "c78ca55f8becf3d70bc77bcc5c00fba3d0623b46edb8d1c404c3ce897cd011ac",
+      "en": "891976cb491017a88b248a02d1366ecd001eba91fd0432cfc09cd8a34550b39c",
       "fa": "268fe26a9cef33ac32276707b3a7b8cc848dedb14e945162d0da7d59c43047a8",
       "ar": "57c2dc97d3fb535c17c0f23900f5a398ba10b0f54b9dc66c7a2f8a9dafa6689c",
       "tr": "b6c50a109b42607b1afd80944976ba0ad0f1898b3403d38d31313113983ec51c"
@@ -661,7 +661,7 @@
       "sha256": "bb0aea14621ecc0c7651e203d793cde9c1a7f132df41324ad8b493ab23a0494a"
     },
     "internal/pages/register_blocked.go": {
-      "sha256": "9914bf4ace63b360106df64412394b696dabb45c9e18e5b06bed9b77fed2f806"
+      "sha256": "59f70ae4063cd9e7f068d2f82b2bd4f0c4e3d9735e1db1949c620bb61fade2a8"
     },
     "internal/pages/register_follows_till.go": {
       "sha256": "5331fc90ae4979fb09002afa5819d8a58e13c04680b647378c689f077a09a495"
@@ -730,7 +730,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "f37f0c9e4efd37e714a79cd87d552c37e5d07f1832fa590c8d47dfbc0d021682"
+      "sha256": "c0c18180adbbfd6496a3e39bcbec0d7d2f5218354cc2e9f12d80cd8028370cc9"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -1489,7 +1489,7 @@
       "sha256": "5db33f344f2eb86646a1ac20a8c897366c7d1d372c12e11ab405cfdfa256fe71"
     },
     "web/public/pairing-stream.js": {
-      "sha256": "e52176c5b6d045326558ea34b412535889caf67ef9a10bf2b72dcdd0db7dd269"
+      "sha256": "7e1341a9b4dd001e92e62bf2a8230b734e4ead9474242bc1e695ca4cf126cb9e"
     },
     "web/public/photo-cutout-worker.js": {
       "sha256": "9583f3b6af0d92b83aef6bc0c5bc03b8ddaa376aeccb5033faef54e199e51f82"
@@ -1535,6 +1535,9 @@
     },
     "web/public/till-confirm.js": {
       "sha256": "d424d67894d2bfdcd3b8b2b8db373793574641f787309ac76e263cd0eb76f973"
+    },
+    "web/public/tills-live.js": {
+      "sha256": "02c956614d2be4e648a0f026f38e445569b12f8991ae569b076f804e7263f1b3"
     },
     "web/public/tour.js": {
       "sha256": "374d570a8168ba362e519b819edb2c3d4569282f1c7610fe7aeafe07fbe04433"
@@ -1798,7 +1801,7 @@
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
     },
     "web/ui/pages/tills.html": {
-      "sha256": "e66c58a031aa77d14214c5c67116169ac542c6297fad21f89654370d47bbeed1"
+      "sha256": "d68666dcc4cb6a926f748bcadea55b44e09a9f385350ddf2ccf01669a760b4d2"
     },
     "web/ui/pages/translations.html": {
       "sha256": "669732ceb602e1b75cb8d829b7c8bb10c998da311be19b93319fd6efec319d79"
@@ -2179,7 +2182,7 @@
       "sha256": "501789ea6cf1a885d5653a5be1bf25a483fea0a64380e2d006acd3a4c65d6368"
     },
     "web/ui/partials/tills_roster.html": {
-      "sha256": "3c33b2ac12c736e7ed655232fb39c6e93ed96fcc6e9f7bff99ccf3d31bc08088"
+      "sha256": "ee3f2b8a09d56e9e46f79edee85fb34c507fcf89bd19f1c8477c006f032d5d7f"
     },
     "web/ui/partials/tills_sales_mirror.html": {
       "sha256": "d157c79e5ddf66d7c8c0b7171c0914f6b358df390dca7a7d8628538d99655101"
@@ -2194,7 +2197,7 @@
       "sha256": "5be5e325e580d52d5d22faf4ca4b98a5eaf30293b7b64c84168fd9579e419827"
     },
     "web/ui/partials/tills_tab_others.html": {
-      "sha256": "b493401a6176e89e49f4b25c9ca12e9bfc1fe32f7e425c2e458e058cabe8ddf8"
+      "sha256": "2d10cd8fafacb0e74aa304200787a9be922fac4ac7e6a31a556b3e8109941c44"
     },
     "web/ui/partials/tills_tab_readers.html": {
       "sha256": "8ff87a6be5ac20ca265173fc1a4070407193f3af6f760d9b4256fad61cc20b64"

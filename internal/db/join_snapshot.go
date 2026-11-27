@@ -103,7 +103,7 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)
 	}
-	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL, bearer_prev_hash = NULL`)
+	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL, bearer_prev_hash = NULL, device_id = NULL`)
 	if execErr == nil {
 		// ut-docs#2730: nor this till's own cloud identity — above all its
 		// store token. The joining replica gets its own device id at
