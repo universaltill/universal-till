@@ -517,7 +517,7 @@ func TestSyncPushPluginRecords_RejectedRowRaisesAKeyedProblemThatResolves_3697(t
 	rdp := recordsReplica(t, srv.URL)
 	queueRecord(t, rdp, "p.a", "r1")
 	syncPushTick(context.Background(), rdp, &http.Client{Timeout: 5 * time.Second})
-	key := pluginRecordsProblemKey("p.a")
+	key := plugins.RecordsProblemKey("p.a")
 	if key != "plugin_records.rejected.p.a" {
 		t.Fatalf("problem key = %q", key)
 	}

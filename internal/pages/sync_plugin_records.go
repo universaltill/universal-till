@@ -37,15 +37,11 @@ const (
 	pluginRecordsPushBatches = 5
 	// pluginRecordsRespCap bounds what the replica reads of an answer.
 	pluginRecordsRespCap = 1 << 20
-	// pluginRecordsProblemPrefix keys the replica's Problems entry.
-	pluginRecordsProblemPrefix = "plugin_records.rejected."
 )
 
 // pluginRecordsBatchDeadline bounds one batch's deliveries; the rest are
 // reported retry. A var so a test can shorten it.
 var pluginRecordsBatchDeadline = 15 * time.Second
-
-func pluginRecordsProblemKey(pluginID string) string { return pluginRecordsProblemPrefix + pluginID }
 
 // pluginRecordWire is one record on the wire. plugin_id is stamped by the
 // replica's core from the stored row, which was stamped from the calling
@@ -252,19 +248,17 @@ func containsString(list []string, s string) bool {
 }
 
 // syncPushPluginRecords is the replica's plugin-records step of
-// syncPushTick: sweep the outbox, then send due rows in batches of at most
-// RecordWireBatchMax. Never blocks a sale: it runs in the sync loop (which
+// syncPushTick: sweep the outbox (so an expired row is never sent), then
+// send due rows in batches of at most RecordWireBatchMax. The sweep and the
+// Problems refresh also run hourly on every till from housekeeping
+// (plugins.RecordsHousekeeping), whatever its role. Never blocks a sale: it runs in the sync loop (which
 // pauses during commit bursts) and touches only the outbox and the network.
 // 401/403/404/409/429/5xx/network keep every row and back off; a malformed-
 // batch 4xx rejects the batch; a 200 acts per record.
 func syncPushPluginRecords(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
 	repo := data.NewPluginRecordsRepo(d.Db)
-	if res, err := repo.Sweep(ctx, time.Now().UTC()); err != nil {
-		logging.L().Warnf("plugin records: sweep outbox: %v", err)
-	} else if res.Expired > 0 {
-		logging.L().Warnf("plugin records: %d queued record(s) older than %d days were rejected as expired", res.Expired, int(data.RecordPendingMaxAge.Hours()/24))
-	}
-	defer refreshPluginRecordsProblems(ctx, repo)
+	plugins.SweepRecords(ctx, repo, time.Now())
+	defer plugins.RefreshRecordsProblems(ctx, repo)
 
 	for i := 0; i < pluginRecordsPushBatches; i++ {
 		now := time.Now().UTC()
@@ -384,25 +378,4 @@ func rejectOutboxRow(ctx context.Context, d *common.Deps, repo *data.PluginRecor
 	}
 	_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", "plugin", o.PluginID, "plugin_record_rejected",
 		map[string]any{"collection": o.Collection, "id": o.RecordID, "reason": reason}, now.Format(time.RFC3339), "")
-}
-
-// refreshPluginRecordsProblems keeps one keyed Problem per plugin that has
-// rejected rows, and resolves it when none remain.
-func refreshPluginRecordsProblems(ctx context.Context, repo *data.PluginRecordsRepo) {
-	rejected, err := repo.RejectedByPlugin(ctx)
-	if err != nil {
-		return
-	}
-	for plugin, n := range rejected {
-		if k := pluginRecordsProblemKey(plugin); !logging.HasOpenProblem(k) {
-			logging.L().WarnProblemf(k, "plugin %s: %d record(s) could not be delivered to the main till and were rejected", plugin, n)
-		}
-	}
-	logging.ResolveProblemsWhere(func(key string) bool {
-		if !strings.HasPrefix(key, pluginRecordsProblemPrefix) {
-			return false
-		}
-		_, still := rejected[strings.TrimPrefix(key, pluginRecordsProblemPrefix)]
-		return !still
-	})
 }
