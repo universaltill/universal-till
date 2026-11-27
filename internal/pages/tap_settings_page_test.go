@@ -2,10 +2,12 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -774,5 +777,171 @@ func TestTapOffering_DeclinedAndPinPanels(t *testing.T) {
 				t.Fatalf("sales=%d lock=%q, want 0 and none (basket unlocked)", e.sales(t), e.dp.Engine.TenderLock())
 			}
 		})
+	}
+}
+
+// ut-docs#6458 / ux-spec-6463-6458 section 5: the Connect onboarding button.
+
+const connectNotOnboarded = `{"ready":false,"source":"connect","livemode":false,"connected":false,"reason":"not_configured"}`
+const connectDue = `{"ready":false,"source":"connect","livemode":false,"connected":true,"details_submitted":true,"reason":""}`
+
+func connectRig(t *testing.T, status string) *tapSettingsEnv {
+	t.Helper()
+	e := tapSettingsRig(t)
+	e.dp.Cfg.Marketplace.StoreID = "s-1"
+	e.broker.setStatus(status)
+	return e
+}
+
+func TestTapSettings_ConnectButton_NotOnboarded(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, `data-testid="tap-connect-open"`, "Set up in my.universaltill.com", "Opens in your browser.", `data-testid="tap-connect-check"`)
+	tag := openingTag(rec.Body.String(), `data-testid="tap-connect-open"`)
+	for _, s := range []string{`target="_blank"`, `rel="noopener"`, `hx-boost="false"`} {
+		if !strings.Contains(tag, s) {
+			t.Fatalf("connect link lacks %s: %s", s, tag)
+		}
+	}
+	if strings.Contains(rec.Body.String(), "tap-connect-continue") {
+		t.Fatal("continue variant shown before the account exists")
+	}
+}
+
+func TestTapSettings_ConnectLinkUsesFixedHostAndStoreID(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	e.dp.Cfg.Marketplace.StoreID = "s 1&x=<y>"
+	rec := e.do("manager", "GET", "/settings/tap-to-pay?store=evil&host=evil.example", nil)
+	tag := openingTag(rec.Body.String(), `data-testid="tap-connect-open"`)
+	wantHref := `href="https://my.universaltill.com/en-gb/card-payments?from=app&amp;store=s&#43;1%26x%3D%3Cy%3E"`
+	if !strings.Contains(tag, wantHref) {
+		t.Fatalf("href = %s, want %s", tag, wantHref)
+	}
+	if strings.Contains(rec.Body.String(), "evil") {
+		t.Fatal("input reached the page")
+	}
+}
+
+func TestTapSettings_ConnectButtonContinueWhenRequirementsDue(t *testing.T) {
+	e := connectRig(t, connectDue)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, `data-testid="tap-connect-open"`, "Continue in my.universaltill.com", "Stripe needs more information.")
+	if strings.Contains(rec.Body.String(), "Set up in my.universaltill.com") {
+		t.Fatal("start wording shown for a started account")
+	}
+}
+
+func TestTapSettings_ConnectButtonHiddenWhenReady(t *testing.T) {
+	e := connectRig(t, `{"ready":true,"source":"connect","livemode":false,"connected":true}`)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, "Using the Stripe account connected to this shop.")
+	if strings.Contains(rec.Body.String(), "tap-connect") {
+		t.Fatal("button shown for a ready account")
+	}
+}
+
+func TestTapSettings_ConnectButtonHiddenWhenOwnKeySource(t *testing.T) {
+	for _, st := range []string{
+		`{"ready":false,"source":"own","reason":"not_configured"}`,
+		`{"ready":false,"source":"own","reason":"needs_attention"}`,
+		`{"ready":true,"source":"own"}`,
+	} {
+		e := connectRig(t, st)
+		rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+		if rec.Code != 200 || strings.Contains(rec.Body.String(), "tap-connect") {
+			t.Fatalf("own-key status %s: code %d, button present", st, rec.Code)
+		}
+	}
+}
+
+func TestTapSettings_ConnectButtonHiddenForViewerWithoutPluginManagement(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	if rec := e.do("cashier", "GET", "/settings/tap-to-pay", nil); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "tap-connect") {
+		t.Fatalf("cashier: code %d", rec.Code)
+	}
+	v := (&tapSettingsCtl{d: e.dp}).build(context.Background(), true, false)
+	if v.Connect.Show {
+		t.Fatal("button offered to a viewer without plugin_management")
+	}
+}
+
+func TestTapSettings_ConnectStoreBuildNoButtonNoPlanWording(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	restore := buildinfo.OverrideChannelForTest(buildinfo.ChannelAppStore)
+	defer restore()
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	body := rec.Body.String()
+	if rec.Code != 200 || strings.Contains(body, "tap-connect") || strings.Contains(body, "my.universaltill.com/") {
+		t.Fatalf("store build shows the link-out: %d", rec.Code)
+	}
+	want(t, rec, 200, esc("Ask the shop owner to connect Stripe in the shop's online account."))
+	lower := strings.ToLower(section(body, `id="tap-settings"`, `</section>`))
+	for _, w := range []string{"plan", "subscription", "upgrade"} {
+		if strings.Contains(lower, w) {
+			t.Fatalf("store build mentions %q", w)
+		}
+	}
+}
+
+func TestTapSettings_ConnectOfflineDisabledWithReason(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	e.broker.setError(503, "unreachable")
+	e.broker.srv.Close() // a dead broker is an offline till
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, `data-testid="tap-connect-offline"`, "No internet connection.")
+	tag := openingTag(rec.Body.String(), `data-testid="tap-connect-offline"`)
+	if !isDisabled(tag) || !strings.Contains(tag, `aria-describedby="tap-connect-hint"`) {
+		t.Fatalf("offline button not disabled with its reason: %s", tag)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="tap-connect-open"`) {
+		t.Fatal("live link shown offline")
+	}
+}
+
+func TestTapSettings_ConnectOfflineHiddenWhenLastKnownOwnKey(t *testing.T) {
+	e := connectRig(t, `{"ready":true,"source":"own"}`)
+	e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	e.broker.srv.Close()
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "tap-connect") {
+		t.Fatalf("own-key shop sees the Connect button offline (code %d)", rec.Code)
+	}
+}
+
+func TestTapSettings_ConnectCheckRereadsStatus(t *testing.T) {
+	e := connectRig(t, connectNotOnboarded)
+	e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	e.broker.setStatus(`{"ready":true,"source":"connect","livemode":false,"connected":true}`)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay/status?check=1", nil)
+	want(t, rec, 200, "Using the Stripe account connected to this shop.")
+	if strings.Contains(rec.Body.String(), "tap-connect") {
+		t.Fatal("button still shown after the account became ready")
+	}
+}
+
+func TestTapSettings_ConnectNoFeeWording(t *testing.T) {
+	b, err := os.ReadFile("web/locales/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for k, v := range m {
+		if !strings.HasPrefix(k, "tap.settings.connect.") {
+			continue
+		}
+		n++
+		l := strings.ToLower(v)
+		for _, w := range []string{"fee", "charge", "adds nothing", "free"} {
+			if strings.Contains(l, w) {
+				t.Errorf("%s mentions %q: %s", k, w, v)
+			}
+		}
+	}
+	if n < 5 {
+		t.Fatalf("only %d tap.settings.connect.* keys", n)
 	}
 }
