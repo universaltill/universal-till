@@ -274,6 +274,31 @@ type WebhookResult struct {
 	OrderIDsTruncated bool `json:"order_ids_truncated,omitempty"`
 }
 
+// WebhookRegisterInput is the AskWebhookRegister payload. CallbackURL is the
+// host's public hook address for this connection (it contains the
+// connection's opaque ref: an adapter never logs it). Topics are the
+// channel's own topic names from the manifest; Mode is WebhookModeEnsure or
+// WebhookModeRemove.
+type WebhookRegisterInput struct {
+	CallbackURL string   `json:"callback_url"`
+	Topics      []string `json:"topics"`
+	Mode        string   `json:"mode"`
+}
+
+// WebhookRegisterResult answers AskWebhookRegister: one TopicState per asked
+// topic. A failure is a stable Code, never the channel's own error text.
+type WebhookRegisterResult struct {
+	Topics map[string]TopicState `json:"topics"`
+}
+
+// TopicState is the outcome for one topic: State is a Topic* constant; Code is
+// set for TopicFailed and TopicUnsupported (scope_missing, topic_not_allowed,
+// throttled, shopify_error style stable codes).
+type TopicState struct {
+	State string `json:"state"`
+	Code  string `json:"code,omitempty"`
+}
+
 // ContactInput / ContactResult: AskContact returns an order's customer
 // contact details for display only; the host never stores or logs them.
 type ContactInput struct {
