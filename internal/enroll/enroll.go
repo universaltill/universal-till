@@ -809,6 +809,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 
 	// Startup fill: explicit (env) values win, the persisted identity fills
 	// the gaps. Safe to mutate cfg here — the server hasn't started yet.
+	setApprovalReportKV(kv)
 	m := &cfg.Marketplace
 	// ut-docs#5127: once per start, in the background, offline-safe. Runs
 	// after the startup fill below on the same config copy.

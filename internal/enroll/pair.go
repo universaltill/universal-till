@@ -234,6 +234,7 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 	}
 	// A new identity is not the replaced one (ut-docs#5058).
 	clearReplaced(ctx, kv)
+	clearHeal(ctx, kv)
 	// And a pairing ends a restored-install reset (ut-docs#5157).
 	if err := kv.Set(ctx, keyRestoredAt, ""); err != nil {
 		log.Warnf("enrolment: pair: clear %s: %v", keyRestoredAt, err)

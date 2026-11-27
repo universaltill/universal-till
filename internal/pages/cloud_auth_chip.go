@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/credheal"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -41,7 +42,11 @@ const (
 	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
 	cloudAuthRestored = "restored" // ut-docs#5157: data restored onto a new device
 	cloudAuthBlocked  = "blocked"  // ut-docs#5145: the cloud will not re-register this till yet
+	cloudAuthHeal     = "heal"     // ADR-0222: reconnecting by itself, or why it cannot
 )
+
+// healChipStatus is the heal engine's status; a var so tests can pin it.
+var healChipStatus = credheal.Current
 
 // cloudAuthChipVariant picks the chip's words.
 func cloudAuthChipVariant(st cloudsync.AuthChip, hasOwner bool) string {
@@ -174,6 +179,17 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 			return
 		}
+		// ADR-0222: the till is reconnecting by itself, or says in plain words
+		// why it cannot. From the first refused call, not the third.
+		locale := httpx.ResolveLocale(w, r)
+		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":   cloudAuthHeal,
+				"canManage": canPerform(d, r, "settings"),
+				"heal":      hv,
+			})(w, r)
+			return
+		}
 		st := cloudAuthChipStatus()
 		if !st.Show {
 			w.WriteHeader(http.StatusOK)
@@ -185,7 +201,6 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 		if variant == cloudAuthRegister {
 			// ut-docs#5145: a manager is told where to reconnect; a viewer who
 			// may not open Settings gets the neutral line.
-			locale := httpx.ResolveLocale(w, r)
 			hint = httpx.T(locale, "status.cloud_auth.blocked_hint_short")
 			if canManage {
 				hint = httpx.T(locale, "status.cloud_auth.locked_out_hint")
