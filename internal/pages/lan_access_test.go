@@ -14,6 +14,9 @@ import (
 
 // ut-docs#6955: the gate in front of a desktop main till.
 func TestLANPolicy_AutoOnOffAndWindow(t *testing.T) {
+	prevTTL := lanPolicyTTL // ut-docs#7091: don't sleep through the real 2 s TTL
+	lanPolicyTTL = 30 * time.Millisecond
+	t.Cleanup(func() { lanPolicyTTL = prevTTL })
 	mux, d, _ := newPairingAPITestDeps(t)
 	t.Cleanup(func() { lanaccess.SetPolicy(nil); lanaccess.CloseWindow() })
 	lanaccess.CloseWindow() // other tests show codes in the same process
