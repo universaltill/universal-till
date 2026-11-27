@@ -382,7 +382,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "58b49ef59c6123658c5a89da3c9d6277c5fd0a9be17e76155239b250517361ac"
+      "sha256": "90fa2226a82bbb7cb33ba1bbe851b8e230b7e0c1b90edb22293e960de06a1452"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -532,7 +532,7 @@
       "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
-      "sha256": "9f851fe7beb893311b8e260cd831dfa7735191452cdf8231623ebc49895f422e"
+      "sha256": "99b300c5e371c11129c9fe2db147c3e0cd9d2ab2cd59fbb914c12fa1735731ce"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -703,7 +703,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "953b739633dc2829496fa71d1a5c1b49c5815592955280845ea0c548dc1cdffa"
+      "sha256": "60564a8604e7e3ca4724a6bcf7a454bb2ff5a7ef3809f182a95dbda391ee50f6"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "83f643a6b362418ba0cd1f1e06fba991a53da87c23eefbda52c6f88ad0de08da"
@@ -727,7 +727,7 @@
       "sha256": "e51ea773adb2cda7afd8b02090230d6906e4a96c5f07b435347f22bd2c10851f"
     },
     "internal/pages/setup_tse.go": {
-      "sha256": "e07c32e951deb1efb9e50705b564a9f562f4024267943412686f62cb189c7298"
+      "sha256": "8c6ef220ae4d9d8f2b5e81e8bf85080bd7ec4cf2722fb8cef588bf788ad28958"
     },
     "internal/pages/setup_update_check.go": {
       "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"

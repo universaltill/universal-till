@@ -99,6 +99,17 @@ const (
 // this card.
 const tseCredentialHeldKey = "fiscal.signing_device_credential_held"
 
+// tseStatusCredentialRestored is only ever an audit status (never persisted
+// in the provisioning record): the boot check found the credential readable
+// again and cleared a stale credential_missing record (ut-docs#7050).
+const tseStatusCredentialRestored = "credential_restored"
+
+// bootTSECredentialCheck is the one boot-time entry point init.go calls
+// (ut-docs#7050); a test pins both the call and what it does.
+func bootTSECredentialCheck(ctx context.Context, d *common.Deps) {
+	reconcileTSECredentialMarker(ctx, d)
+}
+
 // tseProvisioningState is the JSON persisted under
 // common.KeyTSEProvisioningState — it survives a process restart between the
 // wizard's own attempt and the background retry, same contract as
@@ -575,28 +586,54 @@ func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (str
 
 // reconcileTSECredentialMarker runs once at boot on the main till (ut-docs#7050,
 // local only — no network, never blocks boot; errors are logged, not returned).
-// (1) Backfill: a readable credential on disk and no marker -> write the marker.
+// (1) Backfill: a readable credential on disk and a never-written (unset or
+// empty) marker -> write the marker; an explicit "false" is never re-armed.
 // (2) Detect a restore: marker set + signing_device_configured true + no
-// readable credential + no provisioning record -> persist credential_missing so
-// Settings offers setup again. Never touches the configured flag, the gate, or
-// an existing record; a replica writes nothing.
+// credential file + no provisioning record -> persist credential_missing so
+// Settings offers setup again. Only "no such file" or an undecodable file
+// counts as missing; any other read error (an unreadable fiscal/ directory)
+// is logged and writes nothing, because Retry would revoke a working key.
+// (3) A credential_missing record whose credential reads fine again is
+// cleared and audited.
+// Never touches the configured flag, the gate, or any other record; a replica
+// writes nothing.
+//
+// Limitation: boot-only. A replica promoted to main without a restart, or a
+// backup taken mid-provisioning (marker not yet written, credential still
+// in flight), is not flagged until the next boot. The marker is written for
+// any country (finishTSEProvisioning names the provisioned one) but this
+// check reads only the DE posture row (tseProvisionCountry).
 func reconcileTSECredentialMarker(ctx context.Context, d *common.Deps) {
 	if tseRequireMainTill(ctx, d) != nil {
 		return
 	}
 	cred, ok, lerr := fiscal.NewSigningDeviceCredentialStore().Load()
+	if lerr != nil && !credentialStoreUndecodable(lerr) {
+		logging.L().Warnf("tse credential marker: credential unreadable, leaving state as is: %v", lerr)
+		return
+	}
 	held := lerr == nil && ok && len(cred) > 0
-	marker, _, err := d.Settings.Get(ctx, tseCredentialHeldKey)
+	marker, markerSet, err := d.Settings.Get(ctx, tseCredentialHeldKey)
 	if err != nil {
 		logging.L().Warnf("tse credential marker: read: %v", err)
 		return
 	}
 	if held {
-		if marker != "true" {
+		// Backfill only a never-written marker (the pre-#7050 install). An
+		// explicit "false" is an owner's manual configured write retiring the
+		// marker: a credential file still on disk must not re-arm it.
+		if !markerSet || strings.TrimSpace(marker) == "" {
 			// settings-write:allow TSE credential marker backfill: main till only, gated by tseRequireMainTill above (ut-docs#7050)
 			if err := d.Settings.Set(ctx, tseCredentialHeldKey, "true"); err != nil {
 				logging.L().Warnf("tse credential marker: backfill: %v", err)
 			}
+		}
+		if st, err := loadTSEProvisioningState(ctx, d); err == nil && st != nil && st.Status == tseStatusCredentialMissing {
+			if err := saveTSEProvisioningState(ctx, d, nil); err != nil {
+				logging.L().Errorf("tse credential marker: clear credential_missing: %v", err)
+				return
+			}
+			auditTSEProvisioning(ctx, d, tseSystemActor, tseStatusCredentialRestored, "")
 		}
 		return
 	}
@@ -617,6 +654,16 @@ func reconcileTSECredentialMarker(ctx context.Context, d *common.Deps) {
 		return
 	}
 	auditTSEProvisioning(ctx, d, tseSystemActor, st.Status, st.ErrorCode)
+}
+
+// credentialStoreUndecodable reports whether a Load error is the
+// "file exists but is not a usable credential" kind (the store wraps JSON
+// decode errors), as opposed to an I/O error that says nothing about
+// whether the credential travelled.
+func credentialStoreUndecodable(err error) bool {
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syn) || errors.As(err, &typ)
 }
 
 // requeueTSEKickoffState is the shared move-back-to-pending step

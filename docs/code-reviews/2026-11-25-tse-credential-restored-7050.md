@@ -5,7 +5,7 @@ Complexity: medium · Built by Sonnet · Reviewed by Opus 5.5, in a fresh contex
 
 Pre-flight: Any change: review record = this file; help = `web/help/en/backups.md` updated (English only; `web/help/img/manifest.json` hash refreshed, no screenshot change); en.json = one new key `settings.tse.credential_missing` with `en.meta.json` metadata; migrations/catimport = n/a; `gofmt -l .` empty; `go build ./...` OK; `go vet ./internal/pages` clean; `golangci-lint run ./...` 0 issues; `go test ./...` all ok (internal/pages and internal/plugins re-run alone with a longer `-timeout`: 713 s / 976 s); `go test -race ./internal/pages -run 'TSE|Tse'` ok; 144 of 146 build-job guards pass, 2 environment-only (`guard-catimport-version.sh`: no catimport tags fetched; `guard-shellcheck-version.sh`: no shellcheck binary, so shellcheck not run locally).
 
-**Verdict: ship after fixes. Not merged** — the card ran out of its time budget before the fix round (see the card).
+**Verdict (2026-11-27, after two fix rounds): ship.** Round 1 verdict was "ship after fixes"; the card ran out of its time budget before the fix round, which a later `:41` run finished under the PR-SWEEP #5153 exception (see "Fix rounds" below).
 
 ## Change
 
@@ -29,3 +29,30 @@ Mutation checks: removing the marker write fails 2 tests; skipping the `credenti
 7. **Nit** — marker written for any country, boot check reads only `.de`; add a comment or a per-country key.
 
 Checked and fine: same route, `canPerform(settings)` gate and CSRF as Retry; no identity in audit or logs; escaped template values; i18n/meta, RTL logical CSS, no showModal/native confirm; backward-compatible 409.
+
+## Fix rounds (2026-11-27, `lane:cloud-41`, PR-SWEEP #5153 sweep)
+
+`main` merged in first (conflict only in `web/help/img/manifest.json`: backups topic hash recomputed from the merged markdown, surface record refreshed with `update-docs-shots-surface-hash.sh`; no screenshotted pixel changes).
+
+**Round 1 (Sonnet Dev):**
+- Finding 1 fixed: only "no such file" or a decode error counts as a missing credential, and any other read error logs and writes nothing. A `credential_missing` record whose credential reads fine is cleared and audited as `credential_restored`.
+- Finding 2: the marker is cleared when the configured flag is written manually, on the owner upsert and on the main till's sync apply. Writing the marker key is refused on the free-text upsert (400), sync apply (`fiscal_not_settable`), `rejectRemoteFiscalPostureWrite` and the `set_setting` directive.
+- Finding 3 documented: the boot-only limitation is in the reconcile doc comment.
+- Finding 4 fixed: a test for marker + no credential file + configured false (no record written), and the `bootTSECredentialCheck` helper with its tests.
+- Finding 5 fixed: a load error returns 500, and the 422 path applies only while the record still needs the identity; otherwise the existing 409 is returned.
+- Finding 7 fixed: comment added.
+- Nit 6 accepted. The limit predates this change and belongs to the wizard.
+
+**Round 2 review (Opus 5.5, fresh context, round-1 diff only):**
+1. Medium: the boot backfill re-armed a marker that a manual write had set to `"false"`, which reopened finding 2. Fixed: the backfill now runs only for an unset or empty marker. Regression test `TestReconcileTSECredentialMarker_DoesNotRearmExplicitFalse`.
+2. Low: a no-op re-save cleared the marker. Fixed: the marker is cleared only on a real change of the stored value, in both the upsert and sync apply. Tests cover re-saving the same value and changing it.
+3. Low: the init wiring test was a substring check. It now uses go/parser + go/ast and requires a real call that comes before `StartTSEProvisionRetry`. Verified: commenting the call out fails the test, and moving it after the retry service fails it.
+4. Nit: added a test that a follower till's upsert never writes the marker locally.
+
+Round 2 was the follow-up the medium tier allows for a Medium finding. Only its fixes were re-verified, with no further review round.
+
+**Verification:**
+- Tester (Sonnet, independent, on the round-1 snapshot): `gofmt`, build, vet and `golangci-lint` (0 issues) pass. Full `go test ./internal/pages` passes (510 s), as do `internal/cloudsync` and `-race` on the TSE tests. 68 of 70 build-job guards pass; the 2 failures are environment-only (no catimport tags fetched, no shellcheck binary), and the diff touches neither area. Three mutation checks were spot-checked independently.
+- Round 2 Dev: targeted `internal/pages` tests and lint pass. Orchestrator: re-ran the backfill mutation and it fails with "boot backfill re-armed a marker…"; restored, the targeted suite passes (77 s).
+
+Pre-flight (fix rounds): review record = this file. No new en.json keys, no template change. Help unchanged in these rounds (`backups.md` already updated in round 0). Migrations, catimport and SQL: n/a. docs-shots surface record refreshed, no pixel change. Follow-up #7051 (status-bar chip) was already filed.

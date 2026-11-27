@@ -3,14 +3,20 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"html"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1832,5 +1838,367 @@ func TestSettingsTSEBlock_CredentialMissingOnReplicaIsHintOnly(t *testing.T) {
 		if strings.Contains(page, `data-testid="`+id+`"`) {
 			t.Fatalf("replica renders %s", id)
 		}
+	}
+}
+
+// --- ut-docs#7050 fix round (Opus 5.5 findings) ---
+
+// Finding 1: only "not exist" / decode errors mean "credential missing". Any
+// other read error (here: the credential path is unreadable as a file) must
+// not record credential_missing — Retry would revoke a working key.
+func TestReconcileTSECredentialMarker_UnreadableCredentialWritesNothing(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	store := fiscal.NewSigningDeviceCredentialStore()
+	if err := os.MkdirAll(store.Path(), 0o700); err != nil { // a directory where the file belongs: ReadFile fails, not "not exist"
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if v := tseStateRaw(t, d); v != "" {
+		t.Fatalf("a transient read error wrote state %q", v)
+	}
+}
+
+// Finding 1b: the credential reads fine and the record says it is missing
+// (restored, then the file came back / re-provisioned): clear and audit.
+func TestReconcileTSECredentialMarker_ClearsCredentialMissingWhenCredentialReadable(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialMissing, Country: "DE", ErrorCode: "credential_missing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if v := tseStateRaw(t, d); v != "" {
+		t.Fatalf("credential_missing record not cleared: %q", v)
+	}
+	entries, err := data.NewPOSRepo(d.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && strings.Contains(e.DataJSON, tseStatusCredentialRestored) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("clearing not audited: %+v", entries)
+	}
+}
+
+func TestReconcileTSECredentialMarker_KeepsOtherRecordsWhenCredentialReadable(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{Status: tseStatusAwaitingReady, Country: "DE"}); err != nil {
+		t.Fatal(err)
+	}
+	before := tseStateRaw(t, d)
+	reconcileTSECredentialMarker(t.Context(), d)
+	if after := tseStateRaw(t, d); after != before {
+		t.Fatalf("record changed: %q -> %q", before, after)
+	}
+}
+
+// Finding 4a: marker + no file + configured flag false -> nothing recorded.
+func TestReconcileTSECredentialMarker_MarkerNoFileNotConfiguredWritesNothing(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	if err := d.Settings.Set(t.Context(), tseCredentialHeldKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTSECredentialMarker(t.Context(), d)
+	if v := tseStateRaw(t, d); v != "" {
+		t.Fatalf("state written although the shop is not configured: %q", v)
+	}
+}
+
+// Finding 4b: init.go must call the boot check. bootTSECredentialCheck is
+// the one function init calls; this fails if it stops reconciling, and
+// TestInit_CallsBootTSECredentialCheck fails if init stops calling it.
+func TestBootTSECredentialCheck_FlagsRestoredTill(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	seedRestoredTill(t, d)
+	bootTSECredentialCheck(t.Context(), d)
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st == nil || st.Status != tseStatusCredentialMissing {
+		t.Fatalf("state = %+v, want credential_missing", st)
+	}
+}
+
+func TestInit_CallsBootTSECredentialCheck(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0) // chdirRoot moves the cwd: locate init.go beside this file
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join(filepath.Dir(thisFile), "init.go"), nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initFn *ast.FuncDecl
+	for _, decl := range f.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "Init" {
+			initFn = fd
+		}
+	}
+	if initFn == nil || initFn.Body == nil {
+		t.Fatal("init.go has no func Init")
+	}
+	// Position of the first real call to each name inside Init (a comment or
+	// a string never produces a CallExpr).
+	callPos := func(name string) token.Pos {
+		var pos token.Pos
+		ast.Inspect(initFn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			var id string
+			switch fn := call.Fun.(type) {
+			case *ast.Ident:
+				id = fn.Name
+			case *ast.SelectorExpr:
+				id = fn.Sel.Name
+			}
+			if id == name && (pos == token.NoPos || call.Pos() < pos) {
+				pos = call.Pos()
+			}
+			return true
+		})
+		return pos
+	}
+	boot, retry := callPos("bootTSECredentialCheck"), callPos("StartTSEProvisionRetry")
+	if boot == token.NoPos {
+		t.Fatal("Init no longer calls bootTSECredentialCheck (ut-docs#7050)")
+	}
+	if retry == token.NoPos {
+		t.Fatal("Init no longer calls StartTSEProvisionRetry: the ordering check has nothing to compare against")
+	}
+	if boot >= retry {
+		t.Fatal("Init calls bootTSECredentialCheck after StartTSEProvisionRetry; it must run before the TSE retry service (ut-docs#7050)")
+	}
+}
+
+// Round 2 (1): the backfill is for the pre-#7050 install only (marker row
+// unset). A marker an owner's manual configured write set to "false" is
+// never re-armed by a credential file that is still on disk.
+func TestReconcileTSECredentialMarker_DoesNotRearmExplicitFalse(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	initTestPaths(t)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), tseCredentialHeldKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	admin := auth.User{ID: "m1", Role: "admin"}
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"fiscal.signing_device_configured"}, "value": {"true"}}, &admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "false" {
+		t.Fatalf("precondition: marker = %q, want false", v)
+	}
+	bootTSECredentialCheck(t.Context(), d)
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v == "true" {
+		t.Fatal("boot backfill re-armed a marker the owner's manual configured write cleared")
+	}
+}
+
+// Round 2 (2): only a real transition of the configured flag clears the marker.
+func TestSettingsUpsert_ResavingSameConfiguredValueKeepsMarker(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	for k, v := range map[string]string{
+		fiscal.SigningDeviceConfiguredKey("DE"): "true",
+		tseCredentialHeldKey:                    "true",
+	} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin := auth.User{ID: "m1", Role: "admin"}
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"fiscal.signing_device_configured"}, "value": {"true"}}, &admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("no-op re-save cleared the marker: %q", v)
+	}
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"fiscal.signing_device_configured"}, "value": {"false"}}, &admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert false: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "false" {
+		t.Fatalf("real change left the marker %q, want false", v)
+	}
+}
+
+func TestSyncSettingsApply_ResavingSameConfiguredValueKeepsMarker(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	ctx := t.Context()
+	body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("fiscal.signing_device_configured", "true"), ActorID: "adm-1"})
+	if rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer); rec.Code != http.StatusOK {
+		t.Fatalf("first apply: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := m.dp.Settings.Set(ctx, tseCredentialHeldKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer); rec.Code != http.StatusOK {
+		t.Fatalf("re-apply: %d %s", rec.Code, rec.Body.String())
+	}
+	if v := mustSetting(t, m.dp, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("no-op re-apply cleared the marker: %q", v)
+	}
+	body = settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("fiscal.signing_device_configured", "false"), ActorID: "adm-1"})
+	if rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer); rec.Code != http.StatusOK {
+		t.Fatalf("change apply: %d %s", rec.Code, rec.Body.String())
+	}
+	if v := mustSetting(t, m.dp, tseCredentialHeldKey); v != "false" {
+		t.Fatalf("real change left the marker %q, want false", v)
+	}
+}
+
+// Round 2 (4): an additional till never writes the marker locally; the
+// configured flag goes to the main till, which owns the marker.
+func TestSettingsUpsert_FollowerDoesNotWriteMarkerLocally(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	var gotBody atomic.Value
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody.Store(string(b))
+		http.Error(w, "stub main refuses", http.StatusTeapot)
+	}))
+	t.Cleanup(main.Close)
+	for k, v := range map[string]string{
+		"sync.primary_url":   main.URL,
+		"sync.bearer":        "test-bearer",
+		tseCredentialHeldKey: "true",
+	} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin := auth.User{ID: "m1", Role: "admin"}
+	postForm(mux, "/api/settings/upsert", url.Values{"key": {"fiscal.signing_device_configured"}, "value": {"true"}}, &admin)
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "true" {
+		t.Fatalf("a follower till wrote the marker locally: %q", v)
+	}
+	b, _ := gotBody.Load().(string)
+	if b == "" {
+		t.Fatal("the write never reached the stub main till")
+	}
+	if strings.Contains(b, tseCredentialHeldKey) {
+		t.Fatalf("follower sent the marker to the main till: %s", b)
+	}
+}
+
+// Finding 2: the marker is cleared when the configured flag is set manually,
+// and the marker key itself is not writable through the free-text upsert,
+// the sync apply path or a cloud directive.
+func TestSettingsUpsert_ConfiguredFlagClearsCredentialHeldMarker(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	if err := d.Settings.Set(t.Context(), tseCredentialHeldKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	admin := auth.User{ID: "m1", Role: "admin"}
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"fiscal.signing_device_configured"}, "value": {"true"}}, &admin)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v := tseSettingVal(t, d, fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
+		t.Fatalf("configured.de = %q", v)
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v == "true" {
+		t.Fatalf("marker still %q after a manual configured write", v)
+	}
+}
+
+func TestSettingsUpsert_RefusesCredentialHeldMarker(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	admin := auth.User{ID: "m1", Role: "admin"}
+	for _, val := range []string{"true", "false", ""} {
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {tseCredentialHeldKey}, "value": {val}}, &admin)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("value %q: code=%d, want 400", val, rec.Code)
+		}
+	}
+	if v := tseSettingVal(t, d, tseCredentialHeldKey); v != "" {
+		t.Fatalf("marker written: %q", v)
+	}
+}
+
+func TestRejectRemoteFiscalPostureWrite_RefusesCredentialHeldMarker(t *testing.T) {
+	d := newCloudSyncTestDeps(t)
+	if err := rejectRemoteFiscalPostureWrite(d, tseCredentialHeldKey); err == nil {
+		t.Fatal("a cloud directive may not write the credential-held marker")
+	}
+}
+
+func TestSyncSettingsApply_CredentialHeldMarker(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(tseCredentialHeldKey, "false"), ActorID: "adm-1"})
+	wantSyncSettingsError(t, postSyncSettingsApply(m.mux, body, syncSettingsBearer), http.StatusBadRequest, "fiscal_not_settable")
+
+	if err := m.dp.Settings.Set(t.Context(), tseCredentialHeldKey, "true"); err != nil {
+		t.Fatal(err)
+	}
+	body = settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("fiscal.signing_device_configured", "true"), ActorID: "adm-1"})
+	if rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer); rec.Code != http.StatusOK {
+		t.Fatalf("apply configured: %d %s", rec.Code, rec.Body.String())
+	}
+	if v := mustSetting(t, m.dp, tseCredentialHeldKey); v == "true" {
+		t.Fatalf("marker still %q after a replica's manual configured write", v)
+	}
+}
+
+// Finding 5: the identity-form 422 path.
+func TestRetryTSEProvisioning_IdentityFormNoLongerNeededFallsThrough409(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	initTestPaths(t)
+	// Record moved on to pending_kickoff (identity complete): the form is not needed.
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	form := credMissingIdentityForm()
+	form.Set("tse_tax_number", "") // would be a 422 if the form were still needed
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", form, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code=%d body=%s, want 409 nothing_to_retry", rec.Code, rec.Body.String())
+	}
+	// No record at all: same.
+	if err := saveTSEProvisioningState(t.Context(), d, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/settings/retry-tse-provisioning", form, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("no record: code=%d, want 409", rec.Code)
+	}
+}
+
+func TestRetryTSEProvisioning_IdentityFormLoadErrorIs500(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setCountry(t, d, "DE")
+	initTestPaths(t)
+	if err := d.Settings.Set(t.Context(), common.KeyTSEProvisioningState, "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	form := credMissingIdentityForm()
+	form.Set("tse_tax_number", "")
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", form, &mgrUser)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d body=%s, want 500", rec.Code, rec.Body.String())
 	}
 }
