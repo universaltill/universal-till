@@ -201,15 +201,28 @@ func settingsActorID(r *http.Request) string {
 // state renders an empty 200 body, the same "swap the block away" contract
 // the dismiss endpoint already has.
 func renderTSEProvisioningBlock(w http.ResponseWriter, r *http.Request, st *tseProvisioningState) {
+	renderTSEProvisioningBlockStatus(w, r, st, http.StatusOK, "", tseBusinessIdentity{})
+}
+
+// renderTSEProvisioningBlockStatus is renderTSEProvisioningBlock with an
+// optional non-200 status and the identity form's error key + entered values
+// (ut-docs#7050: the 422 re-render keeps what the manager typed).
+func renderTSEProvisioningBlockStatus(w http.ResponseWriter, r *http.Request, st *tseProvisioningState, status int, errKey string, entered tseBusinessIdentity) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := tseProvisioningViewFor(st)
 	if view == nil {
 		return
 	}
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
 	httpx.RenderPartial("ui/partials/tse_provisioning_block.html", map[string]any{
-		"tseProvisioning": view,
-		"tseRetryable":    tseProvisioningRetryable(st),
-		"tseCanDismiss":   !tseProvisioningDismissBlocked(st),
+		"tseProvisioning":  view,
+		"tseRetryable":     tseProvisioningRetryable(st),
+		"tseCanDismiss":    !tseProvisioningDismissBlocked(st),
+		"tseNeedsIdentity": tseNeedsIdentity(st),
+		"tseIdentityErr":   errKey,
+		"tseIdentity":      entered,
 	})(w, r)
 }
 
@@ -1022,6 +1035,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"languageSwitchPending":  all[common.KeyLocaleSwitchPending] != "", // ut-docs#4477, with installableLangs
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
+			"tseNeedsIdentity":       tseNeedsIdentity(tseState),
+			"tseIdentity":            tseBusinessIdentity{},
+			"tseIdentityErr":         "",
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
 			"tseFollowsMain":         tseRequireMainTill(r.Context(), d) != nil,
 			"missingFiscalSigner":    missingSigner,
@@ -3214,7 +3230,34 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
-		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r))
+		var entered *tseBusinessIdentity
+		if r.PostFormValue("tse_identity_form") == "1" {
+			cur, lerr := loadTSEProvisioningState(r.Context(), d)
+			if lerr != nil {
+				http.Error(w, "could not load state", http.StatusInternalServerError)
+				return
+			}
+			// The form is only for a record that still needs the identity
+			// (credential_missing); otherwise fall through to Retry's own
+			// answer (409 nothing_to_retry), never a 422 for a form the
+			// block no longer shows.
+			if tseNeedsIdentity(cur) {
+				country := tseProvisionCountry
+				if cur.Country != "" {
+					country = cur.Country
+				}
+				id, errKey := parseTSEIdentityForm(country, r.PostFormValue)
+				if errKey == "" && !id.isComplete() {
+					errKey = "setup.error.tse_identity_incomplete" // all-blank is "skip" in the wizard, not here
+				}
+				if errKey != "" {
+					renderTSEProvisioningBlockStatus(w, r, cur, http.StatusUnprocessableEntity, errKey, id)
+					return
+				}
+				entered = &id
+			}
+		}
+		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r), entered)
 		if errors.Is(err, errNoTSERetry) {
 			locale := httpx.ResolveLocale(w, r)
 			httpx.RefuseText(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
@@ -3783,6 +3826,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// for anyone — no role can ever make this key settable here.
 			http.Error(w, "fiscal.signing_device_failing_since is not settable via this endpoint", http.StatusBadRequest)
 			return
+		case tseCredentialHeldKey:
+			// ut-docs#7050: bookkeeping written only by TSE provisioning and
+			// the boot check, and cleared as a side effect of a manual
+			// configured write below; a free-text edit could forge or erase
+			// the very record the restore check reads.
+			http.Error(w, tseCredentialHeldKey+" is not settable via this endpoint", http.StatusBadRequest)
+			return
 		}
 		// Mutating + audit-writing (ut-docs#796): this replaces ONLY the
 		// old flat `if !canPerform(d, r, "settings") { 403 }` outer gate —
@@ -3879,6 +3929,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// additional till; a refusal writes nothing and skips every side
 		// effect below.
 		kv := map[string]string{storageKey: value}
+		// ut-docs#7050: a manual configured write means the shop's signing
+		// device is no longer (only) the cloud-provisioned one (a real change of
+		// the flag only, not a no-op re-save), so the
+		// "credential must be on disk" marker is stale. An additional till
+		// never writes it (its main till does, in sync_settings.go).
+		if logicalKey == wireKeySigningDeviceConfigured && prevFiscalValue != value && !tillFollowsMain(r.Context(), d) {
+			kv[tseCredentialHeldKey] = "false"
+		}
 		// ut-docs#2791 review: keys this write implies travel in the SAME
 		// batch, so the main till applies them in one transaction -- a
 		// second round-trip could land the currency without its

@@ -81,7 +81,34 @@ const (
 	// cloud re-serves the un-acked directive on the next sync tick, so this
 	// self-retries; the state makes the in-between visible, never silent.
 	tseStatusCredentialFailed = "credential_failed"
+	// tseStatusCredentialMissing: this shop's TSE was set up by provisioning
+	// (tseCredentialHeldKey) and signing_device_configured is still true, but
+	// the credential is not on this main till's disk — e.g. restored from a
+	// phone backup/transfer, which leaves fiscal/ out (ut-docs#6918, #7050).
+	// Nothing re-serves it; the manager re-enters the business details and
+	// presses Retry, and the cloud re-mints and revokes the old key (ADR-0053).
+	tseStatusCredentialMissing = "credential_missing"
 )
+
+// tseCredentialHeldKey is a non-secret bookkeeping row: "this shop's DE
+// signing device was cloud-provisioned, so its credential must be on the main
+// till's disk" (ut-docs#7050). Shop-wide (synced) on purpose — same scope as
+// fiscal.signing_device_configured.de; only ever written on the main till and
+// only read by its boot check. It travels in a backup/DB copy, which is how a
+// restore that left the credential file behind is detected. Never cleared by
+// this card.
+const tseCredentialHeldKey = "fiscal.signing_device_credential_held"
+
+// tseStatusCredentialRestored is only ever an audit status (never persisted
+// in the provisioning record): the boot check found the credential readable
+// again and cleared a stale credential_missing record (ut-docs#7050).
+const tseStatusCredentialRestored = "credential_restored"
+
+// bootTSECredentialCheck is the one boot-time entry point init.go calls
+// (ut-docs#7050); a test pins both the call and what it does.
+func bootTSECredentialCheck(ctx context.Context, d *common.Deps) {
+	reconcileTSECredentialMarker(ctx, d)
+}
 
 // tseProvisioningState is the JSON persisted under
 // common.KeyTSEProvisioningState — it survives a process restart between the
@@ -547,10 +574,96 @@ func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (str
 	// pending record must never suppress the record that TSE actually
 	// became configured (review finding, ut-docs#1174 follow-up).
 	auditTSEProvisioning(ctx, d, tseSystemActor, "configured", "")
+	// settings-write:allow TSE credential marker: main till only, gated by tseRequireMainTill above (ut-docs#7050)
+	if err := d.Settings.Set(ctx, tseCredentialHeldKey, "true"); err != nil {
+		logging.L().Warnf("tse provisioning: persist %s: %v", tseCredentialHeldKey, err)
+	}
 	if err := saveTSEProvisioningState(ctx, d, nil); err != nil {
 		logging.L().Warnf("tse provisioning: clear state after success: %v", err)
 	}
 	return msg, nil
+}
+
+// reconcileTSECredentialMarker runs once at boot on the main till (ut-docs#7050,
+// local only — no network, never blocks boot; errors are logged, not returned).
+// (1) Backfill: a readable credential on disk and a never-written (unset or
+// empty) marker -> write the marker; an explicit "false" is never re-armed.
+// (2) Detect a restore: marker set + signing_device_configured true + no
+// credential file + no provisioning record -> persist credential_missing so
+// Settings offers setup again. Only "no such file" or an undecodable file
+// counts as missing; any other read error (an unreadable fiscal/ directory)
+// is logged and writes nothing, because Retry would revoke a working key.
+// (3) A credential_missing record whose credential reads fine again is
+// cleared and audited.
+// Never touches the configured flag, the gate, or any other record; a replica
+// writes nothing.
+//
+// Limitation: boot-only. A replica promoted to main without a restart, or a
+// backup taken mid-provisioning (marker not yet written, credential still
+// in flight), is not flagged until the next boot. The marker is written for
+// any country (finishTSEProvisioning names the provisioned one) but this
+// check reads only the DE posture row (tseProvisionCountry).
+func reconcileTSECredentialMarker(ctx context.Context, d *common.Deps) {
+	if tseRequireMainTill(ctx, d) != nil {
+		return
+	}
+	cred, ok, lerr := fiscal.NewSigningDeviceCredentialStore().Load()
+	if lerr != nil && !credentialStoreUndecodable(lerr) {
+		logging.L().Warnf("tse credential marker: credential unreadable, leaving state as is: %v", lerr)
+		return
+	}
+	held := lerr == nil && ok && len(cred) > 0
+	marker, markerSet, err := d.Settings.Get(ctx, tseCredentialHeldKey)
+	if err != nil {
+		logging.L().Warnf("tse credential marker: read: %v", err)
+		return
+	}
+	if held {
+		// Backfill only a never-written marker (the pre-#7050 install). An
+		// explicit "false" is an owner's manual configured write retiring the
+		// marker: a credential file still on disk must not re-arm it.
+		if !markerSet || strings.TrimSpace(marker) == "" {
+			// settings-write:allow TSE credential marker backfill: main till only, gated by tseRequireMainTill above (ut-docs#7050)
+			if err := d.Settings.Set(ctx, tseCredentialHeldKey, "true"); err != nil {
+				logging.L().Warnf("tse credential marker: backfill: %v", err)
+			}
+		}
+		if st, err := loadTSEProvisioningState(ctx, d); err == nil && st != nil && st.Status == tseStatusCredentialMissing {
+			if err := saveTSEProvisioningState(ctx, d, nil); err != nil {
+				logging.L().Errorf("tse credential marker: clear credential_missing: %v", err)
+				return
+			}
+			auditTSEProvisioning(ctx, d, tseSystemActor, tseStatusCredentialRestored, "")
+		}
+		return
+	}
+	if marker != "true" {
+		return // manual own device / never provisioned
+	}
+	configured, _, err := d.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey(tseProvisionCountry))
+	if err != nil || strings.ToLower(strings.TrimSpace(configured)) != "true" {
+		return
+	}
+	st, err := loadTSEProvisioningState(ctx, d)
+	if err != nil || st != nil {
+		return
+	}
+	st = &tseProvisioningState{Status: tseStatusCredentialMissing, Country: tseProvisionCountry, ErrorCode: "credential_missing"}
+	if err := saveTSEProvisioningState(ctx, d, st); err != nil {
+		logging.L().Errorf("tse credential marker: persist credential_missing: %v", err)
+		return
+	}
+	auditTSEProvisioning(ctx, d, tseSystemActor, st.Status, st.ErrorCode)
+}
+
+// credentialStoreUndecodable reports whether a Load error is the
+// "file exists but is not a usable credential" kind (the store wraps JSON
+// decode errors), as opposed to an I/O error that says nothing about
+// whether the credential travelled.
+func credentialStoreUndecodable(err error) bool {
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syn) || errors.As(err, &typ)
 }
 
 // requeueTSEKickoffState is the shared move-back-to-pending step
@@ -610,8 +723,16 @@ func markTSECredentialFailed(ctx context.Context, d *common.Deps, code string) {
 // credential fetch (a fresh kickoff mints a fresh single-use record,
 // ADR-0053 Decision 1). pending/awaiting states are NOT retryable here —
 // the background ticker and the cloud's directive re-serve own those.
+// credential_missing (ut-docs#7050) is retryable too, but needs the identity
+// re-entered (tseNeedsIdentity).
 func tseProvisioningRetryable(st *tseProvisioningState) bool {
-	return st != nil && (st.Status == tseStatusKickoffRejected || st.Status == tseStatusCredentialFailed)
+	return st != nil && (st.Status == tseStatusKickoffRejected || st.Status == tseStatusCredentialFailed || st.Status == tseStatusCredentialMissing)
+}
+
+// tseNeedsIdentity reports whether the Settings block must collect the
+// business identity before Retry can run (a restored till has none stored).
+func tseNeedsIdentity(st *tseProvisioningState) bool {
+	return tseProvisioningRetryable(st) && !st.Identity.isComplete()
 }
 
 // tseProvisioningDismissBlocked reports whether the Settings notice for st
@@ -653,13 +774,19 @@ var errNoTSERetry = errors.New("no retryable TSE provisioning state")
 // retryTSEProvisioning would POST an empty business_identity to the cloud,
 // which a real backend would reject as invalid_request, permanently and
 // undismissibly, with no UI path back to re-entering the details.
-func retryTSEProvisioning(ctx context.Context, d *common.Deps, actorID string) (*tseProvisioningState, error) {
+//
+// entered (ut-docs#7050) is a caller-validated, complete identity from the
+// Settings form; it is adopted only when the stored one is incomplete.
+func retryTSEProvisioning(ctx context.Context, d *common.Deps, actorID string, entered *tseBusinessIdentity) (*tseProvisioningState, error) {
 	if err := tseRequireMainTill(ctx, d); err != nil {
 		return nil, err
 	}
 	st, err := loadTSEProvisioningState(ctx, d)
 	if err != nil {
 		return nil, err
+	}
+	if entered != nil && tseProvisioningRetryable(st) && !st.Identity.isComplete() {
+		st.Identity = *entered
 	}
 	if !tseProvisioningRetryable(st) || !st.Identity.isComplete() {
 		return nil, errNoTSERetry
@@ -732,6 +859,8 @@ func tseProvisioningViewFor(st *tseProvisioningState) *tseProvisioningView {
 		return &tseProvisioningView{MessageKey: "settings.tse.awaiting_ready"}
 	case tseStatusCredentialFailed:
 		return &tseProvisioningView{MessageKey: "settings.tse.credential_failed"}
+	case tseStatusCredentialMissing:
+		return &tseProvisioningView{MessageKey: "settings.tse.credential_missing"}
 	case tseStatusKickoffRejected:
 		reason := "settings.tse.reason.rejected"
 		switch st.ErrorCode {
