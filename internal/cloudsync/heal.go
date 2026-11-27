@@ -75,6 +75,9 @@ func reportTickRefusal(tickErr error, contacted bool) {
 // (transport, 429, 503, anything unexpected).
 func ProbeCredential(ctx context.Context, cfg *config.Config) credheal.ProbeResult {
 	m := enroll.Effective(cfg).Marketplace
+	if m.StoreID == "" || m.MerchantToken == "" {
+		return credheal.ProbeResult{Err: errors.New("cloudsync: no credential to probe")}
+	}
 	status, _, err := getCheckin(ctx, m.EndpointURL, m.StoreID, m.MerchantToken, false, 0, nil)
 	var se *statusError
 	switch {

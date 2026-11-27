@@ -16,6 +16,9 @@ final class TillController: ObservableObject {
 
     private let queue = DispatchQueue(label: "com.universaltill.pos.server")
     private var booted = false // only touched on the main thread
+    /// Keeps the foreground credential check from firing on every
+    /// notification-centre pull-down (see ForegroundThrottle).
+    private let foregroundThrottle = ForegroundThrottle()
 
     /// First start. onAppear can fire more than once; only the first call
     /// starts anything, so a later one can't reload the page mid-sale.
@@ -59,7 +62,16 @@ final class TillController: ObservableObject {
         case .running(let url):
             queue.async { [weak self] in
                 guard let self = self else { return }
-                if self.serverIsUp(url) { return }
+                if self.serverIsUp(url) {
+                    // A suspended app ran no timers: have the till check its
+                    // cloud credential now and heal it in the background if
+                    // it was rejected meanwhile (ut-docs#7097 T8). Does not
+                    // touch the running server or the sale in progress.
+                    if self.foregroundThrottle.shouldFire() { TillServer.notifyForeground() }
+                    return
+                }
+                // A new server instance: its engine has not been asked yet.
+                self.foregroundThrottle.reset()
                 self.runOnQueue { try TillServer.restart() }
             }
         }

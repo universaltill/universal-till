@@ -727,6 +727,19 @@ till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
 
+## Cloud credential self-heal on resume (ut-docs#7097, ADR-0217)
+
+The heal itself lives in the Go core (`internal/credheal`); no Kotlin sends the
+till's cloud credential. `MainActivity.onResume` calls `Mobile.resume()` (at
+most every 30 s, `ForegroundThrottle`): the engine asks the cloud once and
+renews a rejected credential in the background, or runs an overdue wake. It is
+non-blocking, a no-op until the server is up, and never restarts the server.
+`TillService` is a foreground service, so the engine's own timers keep running
+in the background; the resume call only shortens the wait. A phone restored
+from a backup has no approval key (`secrets/` is excluded from backup), so it
+shows "Reconnect with a code" instead.
+Device checks: `docs/phones-self-heal-device-tests.md`.
+
 ## Screen stays on (ut-docs#5620)
 
 Nothing used to set `FLAG_KEEP_SCREEN_ON`, so the till followed the tablet's

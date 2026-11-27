@@ -187,7 +187,8 @@ type Engine struct {
 	healed   time.Time
 	heals    []time.Time
 
-	sig chan Signal
+	sig      chan Signal
+	resumeCh chan struct{}
 }
 
 func newEngine(d Deps) *Engine {
@@ -213,7 +214,7 @@ func newEngine(d Deps) *Engine {
 	if d.Recover == nil {
 		d.Recover = func(ctx context.Context) (enroll.RecoverOutcome, error) { return enroll.Recover(ctx, d.Cfg, d.KV) }
 	}
-	return &Engine{d: d, st: Status{State: StateOK}, sig: make(chan Signal, sigBuffer)}
+	return &Engine{d: d, st: Status{State: StateOK}, sig: make(chan Signal, sigBuffer), resumeCh: make(chan struct{}, 1)}
 }
 
 // Start loads the saved state and runs the engine until ctx ends. wg, when
@@ -263,6 +264,21 @@ func Report(s Signal) {
 	select {
 	case e.sig <- s:
 	default: // a flood is one signal: the engine is already about to act
+	}
+}
+
+// Resume tells the engine the app came back to the foreground (a phone shell
+// calls it through mobile.Resume). While suspended the process's timers do not
+// run, so a dead credential or an overdue wake would otherwise wait for the next
+// tick. Never blocks; safe from any goroutine; nothing without a running engine.
+func Resume() {
+	e := active.Load()
+	if e == nil {
+		return
+	}
+	select {
+	case e.resumeCh <- struct{}{}:
+	default: // one pending resume is enough
 	}
 }
 
@@ -353,6 +369,8 @@ func (e *Engine) run(ctx context.Context) {
 			return
 		case s := <-e.sig:
 			e.handle(ctx, s)
+		case <-e.resumeCh:
+			e.resume(ctx)
 		case <-timer.C:
 			e.wake(ctx)
 		}
@@ -423,6 +441,33 @@ func (e *Engine) handle(ctx context.Context, s Signal) {
 	}
 	e.enter(ctx, StateHealing, ReasonReconnecting, "", time.Time{}, key)
 	e.round(ctx, s.FromCheckin, s)
+}
+
+// resume is Resume on the loop goroutine: from ok, ask the cloud once (a probe is a real check-in); a dead
+// answer is handled exactly like the first 401 of a tick. From any other state
+// that is not final, an overdue wake (the timer did not run while suspended)
+// runs now; a wake still ahead (a backoff) is left alone.
+func (e *Engine) resume(ctx context.Context) {
+	e.mu.Lock()
+	st, next, pending := e.st, e.nextAt, !e.pending.IsZero()
+	e.mu.Unlock()
+	now := e.d.Now()
+	switch {
+	case st.State == StateNeedsPerson && FinalReason(st.Reason):
+		return
+	case st.State == StateOK && !pending:
+		h := getHooks()
+		if h.Probe == nil {
+			return
+		}
+		pr := h.Probe(ctx)
+		if ctx.Err() != nil || pr.OK || pr.Err != nil || pr.Code == "" {
+			return // working, offline or an answer that says nothing about the credential
+		}
+		e.handle(ctx, Signal{Source: "resume", Code: pr.Code, Reason: pr.Reason, Recover: pr.Recover, FromCheckin: true, At: now})
+	case !next.IsZero() && !next.After(now):
+		e.wake(ctx)
+	}
 }
 
 // wake is the timer firing: a backoff, a waiting date or the daily look.
