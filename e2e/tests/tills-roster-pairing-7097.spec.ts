@@ -9,7 +9,13 @@ const DEVICE = 'till-7097aaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 async function pairRequest(request: any, name: string, secret: string, deviceId: string): Promise<string> {
   const commitment = crypto.createHash('sha256').update(secret).digest('hex');
-  const res = await request.post('/api/sync/pair-request', { data: { device_name: name, commitment, device_id: deviceId } });
+  // The pair-request limiter allows 5 a minute per source and this file sends
+  // 6: on a 429 wait for the window to open instead of failing.
+  let res = await request.post('/api/sync/pair-request', { data: { device_name: name, commitment, device_id: deviceId } });
+  for (let i = 0; i < 8 && res.status() === 429; i++) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    res = await request.post('/api/sync/pair-request', { data: { device_name: name, commitment, device_id: deviceId } });
+  }
   expect(res.status(), await res.text()).toBe(200);
   return (await res.json()).data.id;
 }
@@ -80,16 +86,23 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
   });
 
   test('a till that joins again under a new name keeps its one row', async ({ request }) => {
-    const mint = async () => {
-      const t = await request.post('/api/sync/enroll-token');
-      const m = (await t.text()).match(/<code[^>]*>([^<]+)<\/code>/);
-      return JSON.parse(Buffer.from(m![1].trim(), 'base64url').toString('utf8')).token as string;
-    };
+    test.setTimeout(180_000);
+    // A rename takes the row only for a request a manager approved that NAMED
+    // this device (review 2026-11-27, finding 1): a minted code never does.
     const dev = 'till-7097cccc-cccc-4ccc-8ccc-cccccccccccc';
-    const first = await request.post('/api/sync/enroll', { data: { token: await mint(), name: 'e2e-7097-old-name', device_id: dev } });
+    const joinApproved = async (name: string, secret: string) => {
+      const id = await pairRequest(request, name, secret, dev);
+      const approve = await request.post(`/api/sync/pair-requests/${id}/approve`);
+      expect(approve.ok(), await approve.text()).toBe(true);
+      const poll = await request.get(`/api/sync/pair-requests/${id}`, { headers: { 'X-UT-Pair-Request-Secret': secret } });
+      expect(poll.ok(), await poll.text()).toBe(true);
+      const token = (await poll.json()).data.token as string;
+      return request.post('/api/sync/enroll', { data: { token, name, device_id: dev } });
+    };
+    const first = await joinApproved('e2e-7097-old-name', 'e2e-7097-secret-old');
     expect(first.ok(), await first.text()).toBe(true);
     const firstId = (await first.json()).data.till_id;
-    const second = await request.post('/api/sync/enroll', { data: { token: await mint(), name: 'e2e-7097-new-name', device_id: dev } });
+    const second = await joinApproved('e2e-7097-new-name', 'e2e-7097-secret-new');
     expect(second.ok(), await second.text()).toBe(true);
     expect((await second.json()).data.till_id, 'rename keeps the row').toBe(firstId);
     expect((await second.json()).data.replaced).toBe(true);
