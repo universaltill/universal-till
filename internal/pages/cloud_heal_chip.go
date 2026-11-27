@@ -68,10 +68,9 @@ func healChip(locale string, st credheal.Status, hasOwner bool) (healView, bool)
 		}
 		return v, true
 	case credheal.ReasonMoved:
-		name := st.Detail
-		if name == "" {
-			name = t("unnamed_shop")
-		}
+		// The cloud names the target by its store id, never a display name:
+		// never rendered, the till says "another shop" (review 2026-11-27).
+		name := t("unnamed_shop")
 		return healView{Reason: st.Reason, Short: fmt.Sprintf(t("moved_short"), name), Sentence: fmt.Sprintf(t("moved"), name), Button: t("btn_open"), Href: healHrefRegister}, true
 	case credheal.ReasonStoreDeleted:
 		// ux-notes 3.6 asks for a "Check again" button; it needs a new engine
