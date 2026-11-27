@@ -33,3 +33,8 @@ Verdict: MERGE after CI.
 
 Deferred
 - TestTxnRef_1100CardSalesRefundFirstAndLastByOwnRef (12.1 s) is now the slowest pages test; template-cloning the remaining `db.Open` callers was skipped by Dev (time box). Epic checklist line on ut-docs#7091, not a blocker.
+
+## CI follow-up (after the PR opened)
+
+- `desktop-shell`'s `guard-deadcode-baseline.sh` flagged `ShareCompileCacheForTest` as an unreachable func (`deadcode -test=false` cannot see a call made only from `_test.go`). Fixed without growing the baseline: the setter func became the exported var `plugins.SharedCompileCacheForTest`, which pages `TestMain` sets before `m.Run` and clears after. Vars are not reported by deadcode. `TestSharedCompileCacheForTest_OnlySetFromTests` now refuses any non-test file other than its own two that names the var. Re-verified: build, vet, golangci-lint 0, the plugins seam tests, and the WASM-heavy pages tests. [no-subagent: mechanical func-to-var change for a CI guard]
+- `test-heavy (race - enroll, …)` was red on `internal/enroll` `TestCanRecover/no_key`, a package this diff does not touch. It is a race between the subtest's `paths.Init` and `Init`'s background approval-key reporter. Filed as ut-docs#7164.
