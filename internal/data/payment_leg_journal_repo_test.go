@@ -552,3 +552,83 @@ func TestRefundLegKey_RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#7104 (ADR-0136 D9.8): the open refund legs of one sale.
+
+func openKeys(t *testing.T, r *PaymentLegJournalRepo, sale string) []string {
+	t.Helper()
+	legs, err := r.OpenRefundLegs(context.Background(), sale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range legs {
+		out = append(out, l.RequestID)
+	}
+	return out
+}
+
+func TestOpenRefundLegs_NewestStatePerKey_7104(t *testing.T) {
+	r := NewPaymentLegJournalRepo(newLegJournalDB(t))
+	k := func(n string) string { return RefundLegKey("S", "card", n) }
+	seedLegChain(t, r, k("asked"), LegAsked)
+	seedLegChain(t, r, k("captured"), LegAsked, LegCaptured)
+	seedLegChain(t, r, k("unknown"), LegAsked, LegUnknown)
+	seedLegChain(t, r, k("warned"), LegAsked, LegUnknown, LegWarned)
+	seedLegChain(t, r, k("declined"), LegAsked, LegDeclined)
+	seedLegChain(t, r, k("settled"), LegAsked, LegCaptured, LegSettled)
+	seedLegChain(t, r, k("resolved"), LegAsked, LegUnknown, LegWarned, LegResolved)
+	seedLegChain(t, r, k("recovered"), LegAsked, LegUnknown, LegAsked, LegCaptured, LegSettled)
+	got := openKeys(t, r, "S")
+	want := []string{k("asked"), k("captured"), k("unknown"), k("warned")}
+	if len(got) != len(want) {
+		t.Fatalf("open = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("open = %v, want %v (oldest first)", got, want)
+		}
+	}
+	legs, _ := r.OpenRefundLegs(context.Background(), "S")
+	if legs[2].State != LegUnknown || legs[3].State != LegWarned {
+		t.Fatalf("states = %s,%s, want the newest row of each key", legs[2].State, legs[3].State)
+	}
+}
+
+func TestOpenRefundLegs_ExactSale_7104(t *testing.T) {
+	r := NewPaymentLegJournalRepo(newLegJournalDB(t))
+	seedLegChain(t, r, RefundLegKey("S10", "card", "a:0123456789abcdef"), LegAsked, LegUnknown)
+	seedLegChain(t, r, "authorize-S1", LegAsked, LegUnknown)
+	seedLegChain(t, r, RefundLegKey("S1", "card", "b:0123456789abcdef"), LegAsked, LegUnknown)
+	if got := openKeys(t, r, "S1"); len(got) != 1 || got[0] != RefundLegKey("S1", "card", "b:0123456789abcdef") {
+		t.Fatalf("S1 open = %v, want only its own refund key", got)
+	}
+	if got := openKeys(t, r, "S10"); len(got) != 1 {
+		t.Fatalf("S10 open = %v", got)
+	}
+	if got := openKeys(t, r, ""); len(got) != 0 {
+		t.Fatalf("empty sale id returned %v", got)
+	}
+}
+
+func TestRefundLegAttemptID_7104(t *testing.T) {
+	const dig = "0123456789abcdef"
+	k := RefundLegKey("S1", "card", "att-1:"+dig)
+	if id, ok := RefundLegAttemptID(k, "S1", "card"); !ok || id != "att-1" {
+		t.Fatalf("got %q,%v, want att-1,true", id, ok)
+	}
+	for name, c := range map[string][3]string{
+		"minted uuid tail": {RefundLegKey("S1", "card", "9b2f6a1e-1111-4222-8333-444455556666"), "S1", "card"},
+		"wrong sale":       {k, "S2", "card"},
+		"wrong method":     {k, "S1", "cash"},
+		"short digest":     {RefundLegKey("S1", "card", "att-1:0123"), "S1", "card"},
+		"non-hex digest":   {RefundLegKey("S1", "card", "att-1:0123456789abcdeg"), "S1", "card"},
+		"upper-hex digest": {RefundLegKey("S1", "card", "att-1:0123456789ABCDEF"), "S1", "card"},
+		"empty id":         {RefundLegKey("S1", "card", ":"+dig), "S1", "card"},
+		"extra colon":      {RefundLegKey("S1", "card", "a:b:"+dig), "S1", "card"},
+	} {
+		if id, ok := RefundLegAttemptID(c[0], c[1], c[2]); ok {
+			t.Errorf("%s: got %q,true, want false", name, id)
+		}
+	}
+}
