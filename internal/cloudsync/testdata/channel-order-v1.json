@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.universaltill.com/contracts/channel-order-v1.json",
   "title": "channel_order / channel_order_update directive payload, v1",
-  "description": "Payload of the cloud-to-till directives `channel_order` and `channel_order_update` (reference/contracts/sales-channel-v1.md section 5.1). The directive envelope (StoreDirective) has exactly two required fields, `type` and `payload`, plus the envelope `id` which is the directive's identity (the payload has no id of its own); this schema is the `payload`. Money is an integer in minor units (7399, never 7399.0), tax in basis points, time RFC 3339 UTC with a `Z` suffix. No customer name, address, email or phone: contact details are only ever fetched live (channel.contact.ask). `channel_order_update` carries the full current order; the till applies a payload only when its `revision` is higher than the last applied one for (connection_id, external_order_id). Validators MUST enable format checking (`uuid`, `date-time`); the patterns make the shape hold even where they do not. `qty` is the quantity as ordered plus units added by later edits and is never lowered; removal, cancellation and refund are expressed only through refunded_quantity / restocked_quantity. Cross-field rules (total formula, refunded_quantity <= qty, restocked_quantity <= refunded_quantity, discount_line_minor <= qty*unit_price_minor, refund_total_minor <= total_minor) cannot be expressed in JSON Schema and are enforced by the cloud (section 5.1 'Cloud-enforced checks').",
+  "description": "Payload of the cloud-to-till directives `channel_order` and `channel_order_update` (reference/contracts/sales-channel-v1.md section 5.1). The directive envelope (StoreDirective) has exactly two required fields, `type` and `payload`, plus the envelope `id` which is the directive's identity (the payload has no id of its own); this schema is the `payload`. Money is an integer in minor units (7399, never 7399.0), tax in basis points, time RFC 3339 UTC with a `Z` suffix. No customer name, address, email or phone: contact details are only ever fetched live (channel.contact.ask). `channel_order_update` carries the full current order; the till applies a payload only when its `revision` is higher than the last applied one for (connection_id, external_order_id). Validators MUST enable format checking (`uuid`, `date-time`); the patterns make the shape hold even where they do not. `qty` is the quantity as ordered plus units added by later edits and is never lowered; removal, cancellation and refund are expressed only through refunded_quantity / restocked_quantity. Cross-field rules (total formula, refunded_quantity <= qty, restocked_quantity <= refunded_quantity, discount_line_minor <= qty*unit_price_minor, refund_total_minor <= total_minor) cannot be expressed in JSON Schema and are enforced by the cloud (section 5.1 'Cloud-enforced checks'). Additive delivery fields (delivery, line modifiers/note, order note, four statuses) are specified in sales-channel-v1.md section 14 (ADR-0215, Proposed); fixtures are in fixtures/channel-order-v1/ and checked by scripts/check-channel-order-schema_test.sh.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -79,9 +79,13 @@
         "shipped",
         "cancelled",
         "refunded",
-        "partially_refunded"
+        "partially_refunded",
+        "rejected",
+        "preparing",
+        "ready",
+        "collected"
       ],
-      "description": "ADR-0169 section 9 machine. The cloud's canonical status (the plugin's is only channel-reported, section 2); transitions in section 5.1."
+      "description": "ADR-0169 section 9 machine. The cloud's canonical status (the plugin's is only channel-reported, section 2); transitions in section 5.1. The delivery statuses rejected, preparing, ready and collected are used only by `kind: delivery` channels (sales-channel-v1.md section 14.4)."
     },
     "payment_state": {
       "enum": [
@@ -171,6 +175,46 @@
             "type": "integer",
             "minimum": 0,
             "description": "Running total of refunded units that went back into stock, 0 to refunded_quantity (cloud-enforced). Stock moves by the difference from the last applied revision."
+          },
+          "modifiers": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Chosen options for the line (sales-channel-v1.md section 14.3).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "external_id",
+                "name",
+                "qty",
+                "price_delta_minor"
+              ],
+              "properties": {
+                "external_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "qty": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "price_delta_minor": {
+                  "type": "integer",
+                  "description": "Price change in minor units; may be negative."
+                }
+              }
+            }
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Line-level free text from the platform, at most 500 bytes; same handling as the order note."
           }
         }
       }
@@ -210,6 +254,93 @@
     "customer_country": {
       "type": "string",
       "pattern": "^[A-Z]{2}$"
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service"
+      ],
+      "description": "Delivery-channel facts (sales-channel-v1.md section 14.3, ADR-0215). Absent for webshop channels. Fees and tip are informational and outside total_minor (a delivery fee uses shipping_minor). No customer name, phone, address or email: contact details are only fetched live.",
+      "properties": {
+        "service": {
+          "enum": [
+            "delivery",
+            "collection"
+          ]
+        },
+        "accept_by": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+          "description": "Deadline to accept or reject the order, UTC."
+        },
+        "scheduled_start_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+          "description": "Start of the scheduled window for a pre-order, UTC."
+        },
+        "confirm_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+          "description": "When the platform expects the till's confirmation, UTC."
+        },
+        "prep_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1440,
+          "description": "Preparation time promised, in minutes."
+        },
+        "courier_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Opaque courier reference; never a name or phone."
+        },
+        "pickup_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Code the courier shows at handover."
+        },
+        "tip_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tip in minor units; informational, outside total_minor."
+        },
+        "fees": {
+          "type": "array",
+          "maxItems": 20,
+          "description": "Platform fees, informational, outside total_minor.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "amount_minor"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "amount_minor": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Order-level free text from the platform, at most 500 bytes (maxLength bounds characters; the cloud enforces the byte limit). Held sealed at rest and deleted per ADR-0215 Decision 9; never logged."
     }
   }
 }

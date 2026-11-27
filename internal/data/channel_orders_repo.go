@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,6 +22,58 @@ import (
 
 // ChannelSaleMovementType is the stock_movements.type of a channel order.
 const ChannelSaleMovementType = "channel_sale"
+
+// Delivery orders (ADR-0215, ut-docs#6581): a channel order of kind
+// "delivery" carries the delivery object below and walks new -> accepted |
+// rejected -> preparing -> ready -> collected (+ cancelled / refund facts).
+const (
+	// ChannelKindWebshop is every order without a delivery object.
+	ChannelKindWebshop = "webshop"
+	// ChannelKindDelivery is an order whose payload carried `delivery`.
+	ChannelKindDelivery = "delivery"
+	// DeliveryUnmappedReject (the default) rejects a delivery order with a
+	// line this till cannot match; DeliveryUnmappedPlaceholder records it and
+	// flags the line for a manager.
+	DeliveryUnmappedReject      = "reject"
+	DeliveryUnmappedPlaceholder = "placeholder"
+	// DeliveryRejectUnmapped is channel_orders.reject_reason of an order the
+	// till rejected itself at intake; the reason sent to the platform is
+	// DeliveryRejectReasonItemUnavailable.
+	DeliveryRejectUnmapped = "unmapped_line"
+	// DeliveryUnmappedPolicyKey is the settings key of the policy above.
+	DeliveryUnmappedPolicyKey           = "delivery.unmapped_policy"
+	DeliveryRejectReasonItemUnavailable = "item_unavailable"
+)
+
+// ChannelDeliveryFee is an informational customer-side fee (outside total_minor).
+type ChannelDeliveryFee struct {
+	Kind   string      `json:"kind"`
+	Amount money.Money `json:"amount_minor"`
+}
+
+// ChannelLineModifier is one chosen option of a delivery line (display and
+// kitchen ticket only; never priced into the till's totals).
+type ChannelLineModifier struct {
+	ExternalID string      `json:"external_id"`
+	Name       string      `json:"name"`
+	Qty        int64       `json:"qty"`
+	PriceDelta money.Money `json:"price_delta_minor"`
+}
+
+// ChannelDeliveryInput is the contract's optional `delivery` object. Times are
+// UTC RFC 3339 strings as received ("" when absent). Tip and fees are
+// informational, outside total_minor. No customer data.
+type ChannelDeliveryInput struct {
+	Service          string
+	AcceptBy         string
+	ScheduledStartAt string
+	ConfirmAt        string
+	PrepMinutes      int64
+	CourierRef       string
+	PickupCode       string
+	Tip              money.Money
+	Fees             []ChannelDeliveryFee
+}
 
 // ChannelOrderLineInput is one line of a channel_order(_update) directive
 // (reference/contracts/channel-order-v1.json). CloudItemID and CloudVariantID
@@ -41,6 +94,9 @@ type ChannelOrderLineInput struct {
 	Discount          money.Money
 	RefundedQuantity  int64
 	RestockedQuantity int64
+	// Delivery lines only: the line note and chosen options.
+	Note      string
+	Modifiers []ChannelLineModifier
 }
 
 // ChannelOrderInput is a decoded, validated directive payload. Revision is
@@ -75,6 +131,12 @@ type ChannelOrderInput struct {
 	LocationID string
 	ActorID    string
 	Lines      []ChannelOrderLineInput
+	// Delivery is non-nil for a delivery order; Note is the customer's
+	// instruction text (never logged). UnmappedPolicy is the till setting
+	// (DeliveryUnmapped*; "" = reject) the caller reads.
+	Delivery       *ChannelDeliveryInput
+	Note           string
+	UnmappedPolicy string
 }
 
 // ChannelNegativeStock is a line whose sale movement left on-hand stock below zero.
@@ -97,6 +159,12 @@ type ChannelOrderResult struct {
 	// Moves are the stock movements the order booked, for the caller to
 	// publish as stock.adjusted once the transaction has committed.
 	Moves []ChannelStockMove
+	// AutoRejected: a delivery order with an unmatched line under the reject
+	// policy was recorded without moving stock and a `reject` action queued.
+	AutoRejected bool
+	// LateCancel: the platform cancelled a delivery order at or after
+	// preparing (food already made); the caller tells a manager.
+	LateCancel bool
 }
 
 // ChannelStockMove is one booked movement: Delta is signed (negative for a
@@ -122,6 +190,8 @@ type ChannelOrderLine struct {
 	RefundedQuantity  int64
 	RestockedQuantity int64
 	Unmatched         bool
+	Note              string
+	Modifiers         []ChannelLineModifier
 }
 
 // ChannelOrder is a stored order. LineCount is set by List and Get; Lines by Get.
@@ -155,6 +225,24 @@ type ChannelOrder struct {
 	FulfilmentRank int
 	PendingAction  string
 	RefusedAction  bool
+	// Delivery fields (ADR-0215; zero for a webshop order). Kind is
+	// ChannelKindWebshop or ChannelKindDelivery. AcceptBy is the platform's
+	// deadline; the cloud rejects earlier (act_by), so a UI counts down to
+	// the cloud's figure when it has one.
+	Kind             string
+	Service          string
+	AcceptBy         string
+	ScheduledStartAt string
+	ConfirmAt        string
+	PrepMinutes      int64
+	CourierRef       string
+	PickupCode       string
+	Tip              money.Money
+	Fees             []ChannelDeliveryFee
+	Note             string
+	LateCancel       bool
+	RejectReason     string
+	StatusChangedAt  string
 }
 
 // LineDiscountTotal is the sum of the lines' discount_line_minor (each is for
@@ -222,10 +310,10 @@ func (r *ChannelOrdersRepo) Apply(ctx context.Context, in ChannelOrderInput) (Ch
 		status = "new"
 	}
 	var storedRev int64
-	var storedStatus string
+	var storedStatus, storedKind, storedReject string
 	var storedRank int
-	err = tx.QueryRowContext(ctx, `SELECT id, revision FROM channel_orders WHERE connection_id = ? AND external_order_id = ?`,
-		in.ConnectionID, in.ExternalOrderID).Scan(&res.OrderID, &storedRev)
+	err = tx.QueryRowContext(ctx, `SELECT id, revision, order_kind, reject_reason FROM channel_orders WHERE connection_id = ? AND external_order_id = ?`,
+		in.ConnectionID, in.ExternalOrderID).Scan(&res.OrderID, &storedRev, &storedKind, &storedReject)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	switch {
 	case err != nil && !isNew:
@@ -233,38 +321,99 @@ func (r *ChannelOrdersRepo) Apply(ctx context.Context, in ChannelOrderInput) (Ch
 	case !isNew && in.Revision <= storedRev:
 		return ChannelOrderResult{OrderID: res.OrderID, Duplicate: true}, nil
 	}
+	isDelivery := in.Delivery != nil || storedKind == ChannelKindDelivery
+	kind := ChannelKindWebshop
+	if isDelivery {
+		kind = ChannelKindDelivery
+	}
+	var d ChannelDeliveryInput
+	if in.Delivery != nil {
+		d = *in.Delivery
+	}
+	feesJSON := ""
+	if len(d.Fees) > 0 {
+		b, err := json.Marshal(d.Fees)
+		if err != nil {
+			return res, fmt.Errorf("encode delivery fees: %w", err)
+		}
+		feesJSON = string(b)
+	}
 
+	// The unmapped-line policy (ADR-0215 decision 2): a delivery order with a
+	// line this till cannot match is rejected at intake under the default
+	// policy, before any stock moves.
+	rejectReason := storedReject
+	if isNew && isDelivery && in.UnmappedPolicy != DeliveryUnmappedPlaceholder {
+		for _, l := range in.Lines {
+			_, _, _, matched, merr := r.matchLine(ctx, tx, l)
+			if merr != nil {
+				return res, merr
+			}
+			if !matched {
+				rejectReason = DeliveryRejectUnmapped
+				res.AutoRejected = true
+				break
+			}
+		}
+	}
+
+	nextStatus, nextRank := status, 0
 	if isNew {
 		res.OrderID = uuid.NewString()
+		nextRank = chainRankFor(isDelivery, status)
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO channel_orders (id, connection_id, plugin_key, external_order_id, external_version, revision, last_directive_id,
   order_number, placed_at, currency, status, payment_state, shipping_minor, shipping_tax_bp, shipping_tax_included,
   order_discount_minor, tax_added_minor, refund_total_minor, total_minor, customer_country, currency_mismatch, total_mismatch,
-  fulfilment_rank, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  fulfilment_rank, created_at, updated_at,
+  order_kind, service, accept_by, scheduled_start_at, confirm_at, prep_minutes, courier_ref, pickup_code, tip_minor, fees_json,
+  note, reject_reason, status_changed_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			res.OrderID, in.ConnectionID, in.PluginKey, in.ExternalOrderID, in.ExternalVersion, in.Revision, in.DirectiveID,
 			in.OrderNumber, in.PlacedAt, in.Currency, status, in.PaymentState, in.Shipping.Minor(), in.ShippingTaxBP,
 			boolInt(in.ShippingTaxIncluded), in.OrderDiscount.Minor(), in.TaxAdded.Minor(), in.RefundTotal.Minor(),
 			in.Total.Minor(), in.CustomerCountry, boolInt(in.CurrencyMismatch), boolInt(in.TotalMismatch),
-			chainRank(status), now, now); err != nil {
+			nextRank, now, now,
+			kind, d.Service, d.AcceptBy, d.ScheduledStartAt, d.ConfirmAt, d.PrepMinutes, d.CourierRef, d.PickupCode,
+			d.Tip.Minor(), feesJSON, in.Note, rejectReason, now); err != nil {
 			return res, fmt.Errorf("insert channel order: %w", err)
 		}
 	} else {
 		if err := tx.QueryRowContext(ctx, `SELECT status, fulfilment_rank FROM channel_orders WHERE id = ?`, res.OrderID).Scan(&storedStatus, &storedRank); err != nil {
 			return res, fmt.Errorf("read channel order status: %w", err)
 		}
-		nextStatus, nextRank := nextChannelStatus(storedStatus, status, storedRank)
-		if _, err := tx.ExecContext(ctx, `
-UPDATE channel_orders SET external_version=?, revision=?, last_directive_id=?, order_number=?, status=?, payment_state=?,
-  shipping_minor=?, shipping_tax_bp=?, shipping_tax_included=?, order_discount_minor=?, tax_added_minor=?,
-  refund_total_minor=?, total_minor=?, customer_country=?, currency_mismatch=?, total_mismatch=?, fulfilment_rank=?, updated_at=? WHERE id=?`,
-			in.ExternalVersion, in.Revision, in.DirectiveID, in.OrderNumber, nextStatus, in.PaymentState,
+		if isDelivery {
+			nextStatus, nextRank = nextDeliveryStatus(storedStatus, status, storedRank)
+			res.LateCancel = nextStatus == "cancelled" && storedStatus != "cancelled" && nextRank >= deliveryRank["preparing"]
+		} else {
+			nextStatus, nextRank = nextChannelStatus(storedStatus, status, storedRank)
+		}
+		changedAt := "status_changed_at"
+		args := []any{}
+		if nextStatus != storedStatus {
+			changedAt = "?"
+			args = append(args, now)
+		}
+		args = append(args, in.ExternalVersion, in.Revision, in.DirectiveID, in.OrderNumber, nextStatus, in.PaymentState,
 			in.Shipping.Minor(), in.ShippingTaxBP, boolInt(in.ShippingTaxIncluded), in.OrderDiscount.Minor(),
 			in.TaxAdded.Minor(), in.RefundTotal.Minor(), in.Total.Minor(), in.CustomerCountry, boolInt(in.CurrencyMismatch),
-			boolInt(in.TotalMismatch), nextRank, now, res.OrderID); err != nil {
+			boolInt(in.TotalMismatch), nextRank, now,
+			kind, d.Service, d.AcceptBy, d.ScheduledStartAt, d.ConfirmAt, d.PrepMinutes, d.CourierRef, d.PickupCode,
+			d.Tip.Minor(), feesJSON, in.Note, boolInt(res.LateCancel), res.OrderID)
+		if _, err := tx.ExecContext(ctx, `
+UPDATE channel_orders SET status_changed_at=`+changedAt+`, external_version=?, revision=?, last_directive_id=?, order_number=?, status=?, payment_state=?,
+  shipping_minor=?, shipping_tax_bp=?, shipping_tax_included=?, order_discount_minor=?, tax_added_minor=?,
+  refund_total_minor=?, total_minor=?, customer_country=?, currency_mismatch=?, total_mismatch=?, fulfilment_rank=?, updated_at=?,
+  order_kind=?, service=?, accept_by=?, scheduled_start_at=?, confirm_at=?, prep_minutes=?, courier_ref=?, pickup_code=?,
+  tip_minor=?, fees_json=?, note=?, late_cancel=MAX(late_cancel, ?) WHERE id=?`, args...); err != nil {
 			return res, fmt.Errorf("update channel order: %w", err)
 		}
 	}
+	// A delivery order the till rejected, or the platform rejected, never
+	// stays out of stock: nothing is moved for the first, everything applied
+	// is put back for the second.
+	noMove := rejectReason != ""
+	putAllBack := isDelivery && nextStatus == "rejected"
 
 	pos := NewPOSRepo(r.db)
 	for _, l := range in.Lines {
@@ -278,6 +427,14 @@ FROM channel_order_lines WHERE order_id = ? AND line_id = ?`, res.OrderID, l.Lin
 			return res, fmt.Errorf("look up channel order line: %w", lerr)
 		}
 		st.itemID, st.variantID, st.locationID = itemID.String, variantID.String, locID.String
+		modsJSON := ""
+		if len(l.Modifiers) > 0 {
+			b, merr := json.Marshal(l.Modifiers)
+			if merr != nil {
+				return res, fmt.Errorf("encode line modifiers: %w", merr)
+			}
+			modsJSON = string(b)
+		}
 
 		// A line already moved keeps the slot it moved, whatever happened to
 		// the variant since (deactivated, re-SKUed): its restock must land
@@ -309,13 +466,21 @@ FROM channel_order_lines WHERE order_id = ? AND line_id = ?`, res.OrderID, l.Lin
 			}
 		}
 		qtyApplied, restockedApplied := st.qtyApplied, st.restockedApplied
-		if matched {
+		// Delivery: no movement while the till's own reject stands, and a
+		// rejected order that never booked stock books nothing; one that did
+		// gets every unit put back (restock target = qty).
+		restockTarget := l.RestockedQuantity
+		skip := noMove || (putAllBack && st.qtyApplied == 0)
+		if putAllBack && st.qtyApplied > 0 {
+			restockTarget = st.qtyApplied
+		}
+		if matched && !skip {
 			_, neg, err := r.moveStock(ctx, tx, pos, in, loc, itemID2, variantID2, tracked,
-				-(l.Qty - st.qtyApplied), l.RestockedQuantity-st.restockedApplied, l.SKU, &res.Moves)
+				-(l.Qty - st.qtyApplied), restockTarget-st.restockedApplied, l.SKU, &res.Moves)
 			if err != nil {
 				return res, err
 			}
-			qtyApplied, restockedApplied = l.Qty, l.RestockedQuantity
+			qtyApplied, restockedApplied = l.Qty, restockTarget
 			if neg != nil {
 				neg.LineID, neg.SKU, neg.Name, neg.ItemID = l.LineID, l.SKU, l.Name, itemID2
 				res.NegativeStock = append(res.NegativeStock, *neg)
@@ -328,21 +493,34 @@ FROM channel_order_lines WHERE order_id = ? AND line_id = ?`, res.OrderID, l.Lin
 		if lineIsNew {
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO channel_order_lines (id, order_id, line_id, item_id, variant_id, location_id, sku, name, qty, unit_price_minor,
-  tax_bp, tax_included, discount_line_minor, refunded_quantity, restocked_quantity, unmatched, qty_applied, restocked_applied)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  tax_bp, tax_included, discount_line_minor, refunded_quantity, restocked_quantity, unmatched, qty_applied, restocked_applied,
+  note, modifiers_json)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				uuid.NewString(), res.OrderID, l.LineID, nullIfEmpty(itemID2), nullIfEmpty(variantID2), locVal, l.SKU, l.Name, l.Qty,
 				l.UnitPrice.Minor(), l.TaxBP, boolInt(l.TaxIncluded), l.Discount.Minor(), l.RefundedQuantity,
-				l.RestockedQuantity, boolInt(!matched), qtyApplied, restockedApplied); err != nil {
+				l.RestockedQuantity, boolInt(!matched), qtyApplied, restockedApplied, l.Note, modsJSON); err != nil {
 				return res, fmt.Errorf("insert channel order line: %w", err)
 			}
 		} else if _, err := tx.ExecContext(ctx, `
 UPDATE channel_order_lines SET item_id=COALESCE(?, item_id), variant_id=COALESCE(?, variant_id), location_id=COALESCE(location_id, ?), sku=?, name=?, qty=?, unit_price_minor=?,
-  tax_bp=?, tax_included=?, discount_line_minor=?, refunded_quantity=?, restocked_quantity=?, unmatched=?, qty_applied=?, restocked_applied=?
+  tax_bp=?, tax_included=?, discount_line_minor=?, refunded_quantity=?, restocked_quantity=?, unmatched=?, qty_applied=?, restocked_applied=?,
+  note=?, modifiers_json=?
 WHERE id=?`,
 			nullIfEmpty(itemID2), nullIfEmpty(variantID2), locVal, l.SKU, l.Name, l.Qty, l.UnitPrice.Minor(), l.TaxBP,
 			boolInt(l.TaxIncluded), l.Discount.Minor(), l.RefundedQuantity, l.RestockedQuantity, boolInt(!matched),
-			qtyApplied, restockedApplied, st.rowID); err != nil {
+			qtyApplied, restockedApplied, l.Note, modsJSON, st.rowID); err != nil {
 			return res, fmt.Errorf("update channel order line: %w", err)
+		}
+	}
+
+	// The till's own reject at intake: queue it once, in this transaction, as
+	// a system action (no staff id) so it replays like a staff tap.
+	if res.AutoRejected {
+		if _, err := insertChannelActionTx(ctx, tx, channelActionRow{
+			OrderID: res.OrderID, ConnectionID: in.ConnectionID, ExternalOrderID: in.ExternalOrderID, Action: "reject",
+			BaseRevision: in.Revision, StaffID: "", Now: now, RejectReason: DeliveryRejectReasonItemUnavailable,
+		}); err != nil {
+			return res, err
 		}
 	}
 
@@ -536,6 +714,61 @@ func (r *ChannelOrdersRepo) List(ctx context.Context, limit int) ([]ChannelOrder
 	return out, rows.Err()
 }
 
+// DeliveryOpenStatuses are the delivery statuses still being worked.
+var DeliveryOpenStatuses = []string{"new", "accepted", "preparing", "ready"}
+
+// ListDelivery returns the delivery orders the inbox board shows, with their
+// lines: every order still being worked, plus any that reached a final status
+// at or after doneSince (UTC RFC 3339). Soonest accept deadline first among
+// the open ones, then the newest. Webshop orders are never listed.
+func (r *ChannelOrdersRepo) ListDelivery(ctx context.Context, doneSince string, limit int) ([]ChannelOrder, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, channelOrderSelect+`
+WHERE o.order_kind = 'delivery' AND (o.status IN ('new','accepted','preparing','ready') OR o.status_changed_at >= ?)
+ORDER BY CASE WHEN o.status IN ('new','accepted','preparing','ready') THEN 0 ELSE 1 END,
+  CASE WHEN o.accept_by = '' THEN 1 ELSE 0 END, o.accept_by, o.placed_at DESC LIMIT ?`, doneSince, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list delivery orders: %w", err)
+	}
+	var out []ChannelOrder
+	for rows.Next() {
+		o, err := scanChannelOrder(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for i := range out {
+		full, ok, err := r.Get(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[i].Lines = full.Lines
+		}
+	}
+	return out, nil
+}
+
+// DeliveryWaiting counts the delivery orders waiting for staff to accept or
+// reject (status new, not already rejected by the till itself) and returns
+// the nearest accept deadline ("" when none carries one).
+func (r *ChannelOrdersRepo) DeliveryWaiting(ctx context.Context) (count int, nearestAcceptBy string, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(MIN(CASE WHEN accept_by <> '' THEN accept_by END), '')
+FROM channel_orders WHERE order_kind = 'delivery' AND status = 'new' AND reject_reason = ''`).Scan(&count, &nearestAcceptBy)
+	return count, nearestAcceptBy, err
+}
+
+// channelOrderSelect is the column list of every order read.
 const channelOrderSelect = `
 SELECT o.id, o.connection_id, o.plugin_key, o.external_order_id, o.external_version, o.revision, o.order_number, o.placed_at,
   o.currency, o.status, o.payment_state, o.shipping_minor, o.order_discount_minor, o.tax_added_minor, o.refund_total_minor,
@@ -543,7 +776,9 @@ SELECT o.id, o.connection_id, o.plugin_key, o.external_order_id, o.external_vers
   (SELECT COUNT(*) FROM channel_order_lines l WHERE l.order_id = o.id),
   o.fulfilment_rank,
   COALESCE((SELECT a.action FROM channel_order_actions a WHERE a.order_id = o.id AND a.state = 'pending' ORDER BY a.seq DESC LIMIT 1), ''),
-  EXISTS(SELECT 1 FROM channel_order_actions a WHERE a.order_id = o.id AND a.state = 'refused')
+  EXISTS(SELECT 1 FROM channel_order_actions a WHERE a.order_id = o.id AND a.state = 'refused'),
+  o.order_kind, o.service, o.accept_by, o.scheduled_start_at, o.confirm_at, o.prep_minutes, o.courier_ref, o.pickup_code,
+  o.tip_minor, o.fees_json, o.note, o.late_cancel, o.reject_reason, o.status_changed_at
 FROM channel_orders o`
 
 // Get returns one order with its lines.
@@ -557,7 +792,7 @@ func (r *ChannelOrdersRepo) Get(ctx context.Context, id string) (ChannelOrder, b
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT line_id, COALESCE(item_id,''), COALESCE(variant_id,''), sku, name, qty, unit_price_minor, tax_bp, tax_included,
-  discount_line_minor, refunded_quantity, restocked_quantity, unmatched
+  discount_line_minor, refunded_quantity, restocked_quantity, unmatched, note, modifiers_json
 FROM channel_order_lines WHERE order_id = ? ORDER BY rowid`, id)
 	if err != nil {
 		return o, false, fmt.Errorf("channel order lines: %w", err)
@@ -567,9 +802,15 @@ FROM channel_order_lines WHERE order_id = ? ORDER BY rowid`, id)
 		var l ChannelOrderLine
 		var price, disc int64
 		var taxInc, un int
+		var mods string
 		if err := rows.Scan(&l.LineID, &l.ItemID, &l.VariantID, &l.SKU, &l.Name, &l.Qty, &price, &l.TaxBP, &taxInc,
-			&disc, &l.RefundedQuantity, &l.RestockedQuantity, &un); err != nil {
+			&disc, &l.RefundedQuantity, &l.RestockedQuantity, &un, &l.Note, &mods); err != nil {
 			return o, false, err
+		}
+		if mods != "" {
+			if err := json.Unmarshal([]byte(mods), &l.Modifiers); err != nil {
+				return o, false, fmt.Errorf("channel order line modifiers: %w", err)
+			}
 		}
 		l.UnitPrice, l.Discount = money.FromMinor(price), money.FromMinor(disc)
 		l.TaxIncluded, l.Unmatched = taxInc != 0, un != 0
@@ -583,11 +824,21 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanChannelOrder(s rowScanner) (ChannelOrder, error) {
 	var o ChannelOrder
 	var ship, disc, tax, refund, total int64
-	var mismatch, totalMismatch, refused int
+	var mismatch, totalMismatch, refused, late int
+	var tip int64
+	var fees string
 	if err := s.Scan(&o.ID, &o.ConnectionID, &o.PluginKey, &o.ExternalOrderID, &o.ExternalVersion, &o.Revision,
 		&o.OrderNumber, &o.PlacedAt, &o.Currency, &o.Status, &o.PaymentState, &ship, &disc, &tax, &refund, &total,
-		&o.CustomerCountry, &mismatch, &totalMismatch, &o.CreatedAt, &o.LineCount, &o.FulfilmentRank, &o.PendingAction, &refused); err != nil {
+		&o.CustomerCountry, &mismatch, &totalMismatch, &o.CreatedAt, &o.LineCount, &o.FulfilmentRank, &o.PendingAction, &refused,
+		&o.Kind, &o.Service, &o.AcceptBy, &o.ScheduledStartAt, &o.ConfirmAt, &o.PrepMinutes, &o.CourierRef, &o.PickupCode,
+		&tip, &fees, &o.Note, &late, &o.RejectReason, &o.StatusChangedAt); err != nil {
 		return o, err
+	}
+	o.Tip, o.LateCancel = money.FromMinor(tip), late != 0
+	if fees != "" {
+		if err := json.Unmarshal([]byte(fees), &o.Fees); err != nil {
+			return o, fmt.Errorf("channel order fees: %w", err)
+		}
 	}
 	o.Shipping, o.OrderDiscount, o.TaxAdded = money.FromMinor(ship), money.FromMinor(disc), money.FromMinor(tax)
 	o.RefundTotal, o.Total, o.CurrencyMismatch = money.FromMinor(refund), money.FromMinor(total), mismatch != 0
@@ -642,6 +893,60 @@ func nextChannelStatus(from, to string, maxRank int) (string, int) {
 	}
 	if toChain && tr > maxRank {
 		maxRank = tr
+	}
+	return to, maxRank
+}
+
+// deliveryRank is a delivery status's place on its chain (fulfilment_rank):
+// new 0, accepted 1, preparing 2, ready 3, collected 4 (ADR-0215).
+var deliveryRank = map[string]int{"new": 0, "accepted": 1, "preparing": 2, "ready": 3, "collected": 4}
+
+// chainRankFor is the stored fulfilment_rank of a status for the order's kind.
+func chainRankFor(delivery bool, status string) int {
+	if delivery {
+		return deliveryRank[status]
+	}
+	return chainRank(status)
+}
+
+// nextDeliveryStatus applies ADR-0215's delivery state machine to a stored
+// status (cloud is master; a platform cancel is a fact and never refused):
+// along new -> accepted -> preparing -> ready -> collected only forward
+// (accepted may skip to ready); rejected, cancelled and refunded are
+// terminal; collected is terminal except that a later refund fact is
+// recorded; partially_refunded continues forward only. It returns the new
+// status and the furthest chain rank reached.
+func nextDeliveryStatus(from, to string, maxRank int) (string, int) {
+	fr, fromChain := deliveryRank[from]
+	if fromChain && fr > maxRank {
+		maxRank = fr
+	}
+	tr, toChain := deliveryRank[to]
+	switch from {
+	case "rejected", "cancelled", "refunded":
+		return from, maxRank
+	case "collected":
+		if to == "refunded" || to == "partially_refunded" {
+			return to, maxRank
+		}
+		return from, maxRank
+	case "partially_refunded":
+		if toChain {
+			if tr <= maxRank {
+				return from, maxRank
+			}
+			return to, tr
+		}
+		return to, maxRank
+	}
+	if toChain {
+		if tr < fr {
+			return from, maxRank
+		}
+		if tr > maxRank {
+			maxRank = tr
+		}
+		return to, maxRank
 	}
 	return to, maxRank
 }

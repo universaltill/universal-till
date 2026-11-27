@@ -534,6 +534,7 @@ var nonAdminTables = map[string]string{
 	"channel_orders":        "orders taken at a sales channel, recorded by the main till from a channel_order directive — main-till record, never synced (ut-docs#4768)",
 	"channel_order_actions": "the main till's queued staff actions on channel orders, uploaded to the cloud — main-till bookkeeping, never synced (ut-docs#4768)",
 	"channel_order_lines":   "lines of a channel order — main-till record, never synced (ut-docs#4768)",
+	"delivery_signals":      "the main till's outbox of neutral availability.set / service.set signals for delivery channels — main-till bookkeeping, never synced (ut-docs#6583)",
 	"directive_results":     "generic directive results kept so a re-delivered directive is not applied twice — per-till bookkeeping, never synced (ut-docs#4797)",
 	// ADR-0161 §5 (ut-docs#4429): imports are applied only on the main
 	// till; additional tills get the resulting catalogue rows, never the
@@ -821,6 +822,11 @@ var PerTillSettingPrefixes = []string{
 	"card_readers.relay_last_ref",
 	// ut-docs#6955: whether THIS desktop till lets other devices on its network in.
 	"lan.access",
+	// ADR-0215 (ut-docs#6581, #6583): the main till's delivery settings (the
+	// unmapped-line policy and the store's busy/pause state). Only the main
+	// till records delivery orders and sends their signals, so no other till
+	// holds or syncs them.
+	"delivery.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
@@ -2314,6 +2320,9 @@ var ShopWideSettingPrefixes = []string{
 	// ADR-0200 decision 6 (ut-docs#6618): "Send usage facts" off is for the
 	// whole shop, so every till follows the main till's switch.
 	"registration.stopped",
+	// Delivery service state and unmapped-line policy are the shop's
+	// choice, the same on every till (ut-docs#6988).
+	"delivery.",
 	// Shop identity, money, tax, locale and trading rules.
 	"store.", "shop.", "sale.", "pos.", "payments.", "invoice.", "receipt.",
 	// Fiscal posture and override state (fiscal.pending_sign_retries is

@@ -722,6 +722,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSelfOrderShop(mux, dp)       // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
 	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
 	registerChannelOrdersPage(mux, dp)   // manager-only read-only Online orders list (ADR-0169 §9, ut-docs#4768)
+	registerDeliveryAPI(mux, dp)         // delivery order state-machine JSON API (ADR-0215, ut-docs#6581)
 	registerNoticesPages(mux, dp)        // notices from Universal Till/partners: bell, inbox, toast, critical strip (ADR-0176, ut-docs#5366)
 	registerMyDisplayPage(mux, dp)       // per-operator theme + browsing mode (ut-docs#3440)
 	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)

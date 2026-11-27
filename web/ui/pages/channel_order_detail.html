@@ -27,7 +27,16 @@
     <dt>{{ T "channel_orders.col.placed" }}</dt><dd>{{ datetime $o.PlacedAt }}</dd>
     <dt>{{ T "channel_orders.col.channel" }}</dt><dd><code class="channel-order-key">{{ $o.PluginKey }}</code></dd>
     {{ if $o.CustomerCountry }}<dt>{{ T "channel_orders.detail.country" }}</dt><dd>{{ $o.CustomerCountry }}</dd>{{ end }}
+    {{ if eq $o.Kind "delivery" }}
+    <dt>{{ T "channel_orders.detail.service" }}</dt><dd data-testid="channel-order-service">{{ T (printf "delivery.service.%s" $o.Service) }}</dd>
+    {{ if $o.AcceptBy }}<dt>{{ T "channel_orders.detail.accept_by" }}</dt><dd><span dir="ltr">{{ datetime $o.AcceptBy }}</span></dd>{{ end }}
+    {{ end }}
   </dl>
+  {{ if eq $o.Kind "delivery" }}
+  {{ if $o.LateCancel }}<p class="login-error" role="alert" data-testid="channel-order-late-cancel">{{ T "channel_orders.detail.late_cancel" }}</p>{{ end }}
+  {{ if eq $o.RejectReason "unmapped_line" }}<p class="login-error" role="status" data-testid="channel-order-reject-unmapped">{{ T "channel_orders.detail.reject_unmapped" }}</p>{{ end }} <!-- login-error-role:allow static status note, not an error needing interruption -->
+  {{ if $o.Note }}<div class="delivery-note" data-testid="delivery-note" role="note"><strong>{{ T "delivery.note_label" }}</strong> <bdi dir="auto">{{ $o.Note }}</bdi></div>{{ end }}
+  {{ end }}
   {{ if $o.CurrencyMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}
   {{ if $o.TotalMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.total_mismatch" }}</p>{{ end }}
 </div>
@@ -51,7 +60,9 @@
     <tbody>
       {{ range $o.Lines }}
       <tr data-testid="channel-order-line">
-        <td>{{ .Name }}{{ if .Unmatched }} <span class="channel-order-status" data-status="unmatched">{{ T "channel_orders.detail.unmatched_line" }}</span>{{ end }}</td>
+        <td>{{ .Name }}{{ if .Unmatched }} <span class="channel-order-status" data-status="unmatched">{{ T "channel_orders.detail.unmatched_line" }}</span>{{ end }}
+          {{ range .Modifiers }}<br><span class="muted">+ {{ .Name }}{{ if gt .Qty 1 }} &times; {{ .Qty }}{{ end }}</span>{{ end }}
+          {{ if .Note }}<br><bdi dir="auto" class="muted" data-testid="channel-order-line-note">{{ .Note }}</bdi>{{ end }}</td>
         <td class="muted">{{ .SKU }}</td>
         <td class="channel-orders-num">{{ qty .Qty }}</td>
         <td class="channel-orders-num">{{ moneyIn .UnitPrice $o.Currency }}</td>

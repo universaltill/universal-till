@@ -66,7 +66,8 @@
         "kitchen",
         "kitchendisplay",
         "tracking",
-        "channel_orders"
+        "channel_orders",
+        "delivery"
       ]
     },
     "reports": {
