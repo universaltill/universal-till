@@ -65,6 +65,11 @@ const (
 	// KeyCloudLinkTier is "realtime" — empty otherwise (ADR-0117 §2;
 	// on_demand is a recorded option, not built).
 	KeyCloudLinkMode = "cloud.link_mode"
+	// KeyCloudLinkWantedUntil: RFC 3339 deadline of the cloud's on_demand
+	// wake-up ("link_wanted_for_s" seconds after the last check-in that said
+	// so; ut-docs#7101, ADR-0219). Empty = not wanted. Only read when the mode
+	// is on_demand.
+	KeyCloudLinkWantedUntil = "cloud.link_wanted_until"
 	// KeyCatalogMaster: till | adopting | cloud — who masters the shop's
 	// catalogue (ADR-0162 §1, ut-docs#4463). Cached with the block like the
 	// rest (and per-till like them: "entitlement." in
@@ -342,6 +347,38 @@ func SyncAllowed(ctx context.Context, r Reader) bool {
 	return Allows(Plan(get(KeyPlan)), CapCloudSync)
 }
 
+// MaxLinkWanted bounds how far ahead a "wanted" deadline is believed: a
+// misbehaving cloud (or a skewed clock) cannot hold the socket open longer.
+const MaxLinkWanted = 10 * time.Minute
+
+// LinkWantedUntil turns the cloud's link_wanted_for_s into a deadline on the
+// till's own clock ("" for none), capped at MaxLinkWanted.
+func LinkWantedUntil(now time.Time, secs int64) string {
+	if secs <= 0 {
+		return ""
+	}
+	d := time.Duration(secs) * time.Second
+	if secs > int64(MaxLinkWanted/time.Second) || d > MaxLinkWanted {
+		d = MaxLinkWanted
+	}
+	return now.UTC().Add(d).Format(time.RFC3339)
+}
+
+// LinkWanted reports whether the cloud's on_demand wake-up is still in force
+// (ut-docs#7101): a deadline in the future and not further out than
+// MaxLinkWanted. Anything unreadable is "not wanted" (fail closed).
+func LinkWanted(ctx context.Context, r Reader, now time.Time) bool {
+	v, ok, err := r.Get(ctx, KeyCloudLinkWantedUntil)
+	if err != nil || !ok {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return false
+	}
+	return until.After(now) && until.Sub(now) <= MaxLinkWanted
+}
+
 // CloudLink is ADR-0117 §2's till-side read of the cached cloud_link tier
 // and mode, mirroring EffectivePlan's staleness rule exactly: the cached
 // value is honoured only while last_confirmed_at (the same timestamp
@@ -398,6 +435,9 @@ type Block struct {
 	// periodic, ADR-0117 §2).
 	CloudLink     string `json:"cloud_link"`
 	CloudLinkMode string `json:"cloud_link_mode"`
+	// LinkWantedForS is the on_demand wake-up (ut-docs#7101, ADR-0219): seconds
+	// the cloud wants the link open; absent/0 = not wanted.
+	LinkWantedForS *int64 `json:"link_wanted_for_s"`
 	// CatalogMaster is ADR-0162 §1's catalogue mode (till | adopting |
 	// cloud). Raw: Values normalises it with CatalogMasterMode, so a
 	// missing or unknown value caches "till", never an error. A
@@ -502,6 +542,9 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		// a currency must clear the cache, not keep a stale one.
 		KeyShopCurrency:         b.shopCurrency(),
 		KeyShopCurrencyDecimals: b.shopCurrencyDecimals(),
+	}
+	if b.LinkWantedForS != nil { // present (0 included) = the cloud's current answer; absent = keep the last, it expires by itself
+		m[KeyCloudLinkWantedUntil] = LinkWantedUntil(now, *b.LinkWantedForS)
 	}
 	if v, ok := b.claimed(); ok {
 		m[KeyStoreClaimed] = strconv.FormatBool(v)

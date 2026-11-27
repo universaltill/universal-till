@@ -64,7 +64,12 @@ func TestCloudLinkTargetGate(t *testing.T) {
 		{"backoffice display on the main till", cfg("cred-1"), realtime(map[string]string{"display.mode": "backoffice"}), true},
 		{"backoffice display on a replica", cfg("cred-1"), realtime(map[string]string{"display.mode": "backoffice", "sync.primary_url": "http://192.168.1.5:8080"}), false},
 		{"replica with a cached realtime tier", cfg("cred-1"), realtime(map[string]string{"sync.primary_url": "http://192.168.1.5:8080"}), false},
-		{"on_demand is not built", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand"}), false},
+		// ut-docs#7101, ADR-0219: on_demand dials only while the cloud's wake-up is in force.
+		{"on_demand, not wanted", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand"}), false},
+		{"on_demand, wanted", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand", entitlement.KeyCloudLinkWantedUntil: now.Add(time.Minute).Format(time.RFC3339)}), true},
+		{"on_demand, wake-up lapsed", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand", entitlement.KeyCloudLinkWantedUntil: now.Add(-time.Second).Format(time.RFC3339)}), false},
+		{"on_demand, wanted, periodic tier", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand", entitlement.KeyCloudLinkTier: "periodic", entitlement.KeyCloudLinkWantedUntil: now.Add(time.Minute).Format(time.RFC3339)}), false},
+		{"on_demand, wanted, replica", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkMode: "on_demand", "sync.primary_url": "http://192.168.1.5:8080", entitlement.KeyCloudLinkWantedUntil: now.Add(time.Minute).Format(time.RFC3339)}), false},
 		{"periodic", cfg("cred-1"), realtime(map[string]string{entitlement.KeyCloudLinkTier: "periodic"}), false},
 		{"stale cache", cfg("cred-1"), realtime(map[string]string{entitlement.KeyLastConfirmedAt: now.Add(-entitlement.Grace - time.Hour).Format(time.RFC3339)}), false},
 		{"not enrolled", cfg(""), realtime(nil), false},

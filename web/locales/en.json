@@ -2016,6 +2016,7 @@
   "pos.gift_voucher.error.too_many": "One sale can sell at most %d vouchers.",
   "pos.gift_voucher.error.value": "Enter a value above zero and no more than %s.",
   "pos.gift_voucher.holder": "For (optional)",
+  "pos.gift_voucher.in_store_only": "Works in this shop only, not online.",
   "pos.gift_voucher.number": "Card number",
   "pos.gift_voucher.number_hint": "Scan or type the card's number. Leave empty to create a number.",
   "pos.gift_voucher.title": "Gift voucher",
