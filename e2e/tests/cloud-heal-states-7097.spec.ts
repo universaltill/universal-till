@@ -47,8 +47,8 @@ const STATES: State[] = [
   {
     name: 'moved',
     seed: { state: 'needs_person', reason: 'moved', detail: 'Other Shop' },
-    short: 'Moved to Other Shop',
-    sentence: /This till now belongs to Other Shop\. Its connection to the old shop has ended\./,
+    short: 'Moved to another shop',
+    sentence: /This till now belongs to another shop\. Its connection to the old shop has ended\./,
     button: 'Open Till registration',
     href: /\/settings#registration$/,
   },
