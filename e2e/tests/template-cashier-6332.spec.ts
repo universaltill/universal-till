@@ -10,7 +10,9 @@ import { ensureOperator, markTourDone } from './helpers';
 
 const RUN = Date.now().toString(36).toUpperCase();
 const CASHIER_USERNAME = `cashier6332${RUN}`;
-const CASHIER_PIN = '135792';
+// Not 135792: the seeded kiosk user keeps that PIN (session-kiosk-pin-mode-3136) and a PIN-only
+// login would resolve to the kiosk user (kiosk mode, no session) instead of this cashier.
+const CASHIER_PIN = '580264';
 
 async function createCashier(page: Page): Promise<void> {
   const createResp = await page.request.post('/api/users', {
