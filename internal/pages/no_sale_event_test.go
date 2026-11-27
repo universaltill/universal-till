@@ -146,7 +146,8 @@ func TestNoSale_PublishesOneEventAfterCommit_ExactPayload(t *testing.T) {
 func TestNoSale_ElevatedEventCarriesApprover(t *testing.T) {
 	mux, dp, _ := newNoSaleTestDeps(t, "device")
 	ch := subscribeNoSaleEvents(t, dp, "com.test.signer", true)
-	rec := postNoSale(t, mux, cashier3134, `{"manager_pin":"`+perm3134MgrPIN+`"}`)
+	tok := noSaleToken(t, mux, "")
+	rec := postNoSale(t, mux, cashier3134, `{"manager_pin":"`+perm3134MgrPIN+`","approval":"`+tok+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d %s", rec.Code, rec.Body.String())
 	}
