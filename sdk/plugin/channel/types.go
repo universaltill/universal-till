@@ -23,6 +23,11 @@ type Listing struct {
 	CategoryPath []string  `json:"category_path,omitempty"`
 	Variants     []Variant `json:"variants,omitempty"`
 	Images       []Image   `json:"images,omitempty"`
+	// Kind is "product" (or empty) or "gift_card" (ut-docs#7099, ADR-0220).
+	Kind string `json:"kind,omitempty"`
+	// VariantImageIndex is the 0-based index into Images of the variant's own
+	// image of a single-variant listing (ut-docs#7101); nil = none.
+	VariantImageIndex *int `json:"variant_image_index,omitempty"`
 }
 
 // Variant is one sellable variant of a Listing.
@@ -36,7 +41,10 @@ type Variant struct {
 	Currency       string            `json:"currency"`
 	CompareAtMinor int64             `json:"compare_at_minor,omitempty"`
 	TaxIncluded    bool              `json:"tax_included,omitempty"`
-	Tracked        bool              `json:"tracked,omitempty"`
+	// Taxable is whether the channel taxes the variant (ut-docs#7099). nil =
+	// true (an older adapter). TaxIncluded is the shop's price basis, not this.
+	Taxable *bool `json:"taxable,omitempty"`
+	Tracked bool  `json:"tracked,omitempty"`
 }
 
 // Image is a product image reference.
@@ -44,6 +52,7 @@ type Image struct {
 	ExternalID string `json:"external_id"`
 	URL        string `json:"url"`
 	Position   int    `json:"position,omitempty"`
+	Alt        string `json:"alt,omitempty"`
 }
 
 // Category (record kind "category").

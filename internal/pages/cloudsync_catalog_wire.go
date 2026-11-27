@@ -567,15 +567,25 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		d.NudgeLink(fleetlink.ScopeAdmin)
 	}
 
+	// ut-docs#7101 (ADR-0218): a variant's gallery, or an item's v2 gallery.
+	// A v1 directive (one sha256, no images) keeps the single-image path below.
+	if img.Entity == "item" && (img.VariantID != "" || len(img.Images) > 0) {
+		return cloudSetItemGallery(ctx, d, repo, img, name)
+	}
+
 	if img.Clear {
 		msg := fmt.Sprintf("image removed from %s %s", img.Entity, name)
 		// Nothing shown and no stray photo file: a replay, or never set.
-		if curImage == "" && cloudsync.ServedImageSHA256(target) == "" {
+		if curImage == "" && cloudsync.ServedImageSHA256(target) == "" && !itemHasGallery(ctx, repo, img) {
 			return msg, nil
 		}
 		var err error
 		if img.Entity == "item" {
 			err = catalog.ClearItemPhoto(ctx, repo, img.ID)
+			if err == nil { // the gallery goes with the picture (ADR-0218)
+				err = repo.ReplaceItemGallery(ctx, img.ID, nil)
+				removeGalleryFiles(img.ID, "g-", nil)
+			}
 		} else {
 			err = clearCategoryPicture(ctx, repo, img.ID)
 		}

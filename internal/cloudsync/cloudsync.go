@@ -1363,12 +1363,17 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		if !img.Clear {
-			fetch, sum := hooks.fetchCatalogImage, img.SHA256
-			img.Fetch = func(ctx context.Context) ([]byte, error) {
-				if fetch == nil {
+			fetchOne := func(ctx context.Context, sum string) ([]byte, error) {
+				if hooks.fetchCatalogImage == nil {
 					return nil, errors.New("this till cannot download images right now; save the image again to retry")
 				}
-				return fetch(ctx, sum)
+				return hooks.fetchCatalogImage(ctx, sum)
+			}
+			sum := img.SHA256
+			img.Fetch = func(ctx context.Context) ([]byte, error) { return fetchOne(ctx, sum) }
+			for i := range img.Images {
+				s := img.Images[i].SHA256
+				img.Images[i].Fetch = func(ctx context.Context) ([]byte, error) { return fetchOne(ctx, s) }
 			}
 		}
 		msg, err = hooks.SetCatalogImage(ctx, img)
