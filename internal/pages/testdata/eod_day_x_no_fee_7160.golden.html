@@ -1,0 +1,66 @@
+
+<div class="eod-day-x-result">
+  <div class="eod-day-x-bar">
+    <p><strong>Figures as of</strong> 00/00/0000 00:00<br>
+      <span class="muted">Since the start: this till has no day close yet</span></p>
+    <div class="eod-day-x-actions">
+      <button type="button" id="eod-day-x-print" class="btn secondary"
+              hx-post="/api/reports/eod/x-report/print" hx-target="#eod-day-x-print-msg" hx-swap="innerHTML"
+              hx-indicator="#eod-day-x-print-busy" hx-disabled-elt="this">Print day so far</button>
+      <span id="eod-day-x-print-busy" class="htmx-indicator muted" role="status">Printing…</span>
+      <button type="button" class="btn secondary" data-action="empty:eod-day-x-body focus:eod-day-x-show">Hide day so far</button>
+    </div>
+    <span id="eod-day-x-print-msg" class="x-report-print-msg" aria-live="polite"></span>
+  </div>
+  
+  <pre class="paper-preview" dir="ltr" aria-label="Preview of the printed report">------------------------------------------
+X REPORT - DAY SO FAR
+Not a day close. Nothing is closed.
+Zeitraum bis 0000-00-00T00:00:00Z
+Generated 00/00/0000 00:00
+------------------------------------------
+------------------------------------------
+Sales (0)                          £000.00
+Refunds (0)                         -£0.00
+Tax (net)                           £00.00
+NET                                £000.00
+
+Cash                               £000.00
+Card                                £00.00
+
+                     
+               BY VAT RATE
+               Net        Tax       Gross
+0%           £0.00      £0.00       £0.00
+00%          £0.00      £0.00       £0.00
+                     
+           BY METHOD &amp; VAT RATE
+                  Card:
+               Net        Tax       Gross
+0%           £0.00      £0.00       £0.00
+00%          £0.00      £0.00       £0.00
+                     
+              BY DEPARTMENT
+       Uncategorized        £00.00
+                     
+             BY ARTICLE GROUP
+Uncategorized                       £00.00
+                     
+                BY ARTICLE
+Tea                                  £0.00
+Bun                                  £0.00
+                     
+               BY OPERATOR
+Alex                                £00.00
+                     
+              BY ORDER TYPE
+Dine in                             £00.00
+                     
+STORNOS (voided receipts, not in revenue)
+        Voided (0)           £0.00
+                     
+         Receipts R-0000 - R-0000
+                     
+           Erstellt von: System
+</pre>
+</div>

@@ -97,6 +97,7 @@
   "reports.eod.day_x.since": {"description": "Reports, End of day tab, day so far: line naming the last day close the figures start from.", "review": "standard", "placeholders": ["date and time of the last day close"]},
   "reports.eod.day_x.since_first": {"description": "Reports, End of day tab, day so far: line shown instead of the date when this till has never closed a day.", "review": "standard"},
   "reports.eod.day_x.empty": {"description": "Reports, End of day tab, day so far: line shown when nothing was sold since the last day close.", "review": "standard"},
+  "reports.eod.stripe_fee": {"description": "Reports, End of day tab, day-so-far screen: label of one row showing the card fees the payment provider charged for the day, taken from the cloud settlement data. A cost line next to an amount; the till never computes it.", "review": "standard", "max_length": 40},
   "reports.eod.day_x.paper_label": {"description": "Reports, End of day tab, day so far: accessible name of the preview block that shows the printed report as text.", "review": "standard"},
   "reports.eod.day_x.print": {"description": "Reports, End of day tab, day so far: button that prints the report (figures as of the moment it is pressed) on the receipt printer. Not an end-of-day (Z) report.", "review": "standard", "max_length": 30},
   "reports.eod.day_x.printing": {"description": "Reports, End of day tab, day so far: short status beside the Print button while the print request runs (up to 15 seconds).", "review": "standard", "max_length": 30},
