@@ -32,4 +32,6 @@ go run ./e2e/seed_release_notes
 BIN="$DATA_DIR/.ut-e2e-release-notes-bin"
 go build -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" -o "$BIN" "$ROOT"
 cd "$DATA_DIR"
-exec "$BIN"
+# shellcheck source=e2e/run-till-lib.sh
+source "$ROOT/e2e/run-till-lib.sh"
+ut_e2e_serve "$BIN"
