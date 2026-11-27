@@ -123,7 +123,7 @@ check_release_tests() {
   fi
   code="$(grep -vE '^[[:space:]]*#' <<<"$block" || true)"
   # One segment per line or `&&`-separated command.
-  segs="$(sed 's/&&/\n/g' <<<"$code")"
+  segs="${code//&&/$'\n'}"
   while IFS= read -r seg; do
     case "$seg" in
     *"go test "*) ;;

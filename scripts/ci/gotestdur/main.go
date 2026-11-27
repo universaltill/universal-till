@@ -137,6 +137,10 @@ func run(in io.Reader, out io.Writer, summaryPath string, top int) int {
 			results++
 			pkgs = append(pkgs, timing{short(e.Package), e.Elapsed})
 			dropPkg(e.Package)
+		case "build-output":
+			// Go 1.24+: compiler and vet errors arrive as build-output events
+			// (ImportPath set, Package empty); print them as plain go test does.
+			_, _ = io.WriteString(out, e.Output)
 		case "build-fail":
 			failed = true
 		}

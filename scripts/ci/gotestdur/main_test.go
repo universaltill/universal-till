@@ -106,6 +106,10 @@ func TestBuildFailExits1AndPrintsOutput(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "build failed") || !strings.Contains(out, "go: downloading x") {
 		t.Fatalf("code %d, out:\n%s", code, out)
 	}
+	// The compiler error itself (a build-output event) must reach the log.
+	if !strings.Contains(out, "x.go:1: syntax error") {
+		t.Fatalf("build-output not printed:\n%s", out)
+	}
 }
 
 func TestStepSummaryAppendedNotTruncated(t *testing.T) {
