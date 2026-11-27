@@ -15,7 +15,7 @@
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
     },
     "backups": {
-      "en": "4acc5e14c08b7a33fdef1d4722953c9b1a11aaf9b112a4c388dc8bc07153025e",
+      "en": "d54ca61400244a0de2cb4be10373b8efd2137902ea91ea7634ea150c4471bed9",
       "fa": "e7f97547132b048cf7571ad358e3f858ecfe8aa318034d5f4948454845ac5179",
       "ar": "7cd5ffa7d3e8a2196726e32600cd6d470471171e7faabaa132ae11705305e5e6",
       "tr": "d6db65e698101cd6ba11733efeb0111d3838765c1e224d557fbf81fa80d0536b"
@@ -382,7 +382,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "58b49ef59c6123658c5a89da3c9d6277c5fd0a9be17e76155239b250517361ac"
+      "sha256": "90fa2226a82bbb7cb33ba1bbe851b8e230b7e0c1b90edb22293e960de06a1452"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -532,7 +532,7 @@
       "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
-      "sha256": "74c3b318df3954a5345e46fe289bcee0f305f53b86a344e3a964658ff657bda9"
+      "sha256": "99b300c5e371c11129c9fe2db147c3e0cd9d2ab2cd59fbb914c12fa1735731ce"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -703,7 +703,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "5519ba25c3a220a8f966326429eef39213967971e50fc772e4b422e0158497a0"
+      "sha256": "60564a8604e7e3ca4724a6bcf7a454bb2ff5a7ef3809f182a95dbda391ee50f6"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "83f643a6b362418ba0cd1f1e06fba991a53da87c23eefbda52c6f88ad0de08da"
@@ -727,7 +727,7 @@
       "sha256": "e51ea773adb2cda7afd8b02090230d6906e4a96c5f07b435347f22bd2c10851f"
     },
     "internal/pages/setup_tse.go": {
-      "sha256": "c939a2cb9b204d4757067336341c16956cfb7a6c6033518b2cb5666c9a94ce3e"
+      "sha256": "8c6ef220ae4d9d8f2b5e81e8bf85080bd7ec4cf2722fb8cef588bf788ad28958"
     },
     "internal/pages/setup_update_check.go": {
       "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"
@@ -2233,7 +2233,7 @@
       "sha256": "4d62033dde7378384fd80bb690f9f40fbadaac27e07eff77735841f55659beb7"
     },
     "web/ui/partials/tse_provisioning_block.html": {
-      "sha256": "d0a0196b19a9d178dd3add3ed44e08bda9f6a769d1ed525c76cc35cf84b4851f"
+      "sha256": "b564f057c80bee046d42c7071306cf771935bdab4d0820a1f03b1133db990dea"
     },
     "web/ui/partials/update_incoming_notes.html": {
       "sha256": "07220a13730f05877b72f452599a0d78a1c1dd00c7b352fd8e205938951dc3c2"

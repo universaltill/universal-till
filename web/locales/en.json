@@ -3115,6 +3115,7 @@
   "settings.title": "System Settings",
   "settings.tse.awaiting_ready": "TSE setup is in progress — your signing service is being prepared. This till picks up the result automatically.",
   "settings.tse.credential_failed": "The signing credential could not be fetched yet — this till keeps retrying automatically.",
+  "settings.tse.credential_missing": "Receipt signing (TSE) isn't set up on this till — its signing credential wasn't restored from the backup. Enter your business details below and press Retry.",
   "settings.tse.dismiss_blocked": "This notice can't be dismissed while TSE setup is unresolved — recording real (system-of-record) sales in this shop needs a working TSE. Fix the cause, then use Retry.",
   "settings.tse.dismiss_btn": "Dismiss",
   "settings.tse.kickoff_rejected": "TSE setup could not be started: %s",
