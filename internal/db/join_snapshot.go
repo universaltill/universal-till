@@ -118,6 +118,9 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		// belongs to the main till it was approved on, never to a joining till.
 		for _, q := range []string{
 			`DELETE FROM card_reader_credentials`,
+			// ut-docs#7098: the register<->device links are the main till's
+			// own (ADR-0086); other tills' device ids never cross the LAN.
+			`DELETE FROM register_devices`,
 			`DELETE FROM card_readers WHERE source = 'paired'`,
 		} {
 			if _, execErr = cdb.Exec(q); execErr != nil {
