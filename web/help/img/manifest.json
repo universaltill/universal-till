@@ -420,6 +420,9 @@
     "internal/pages/common/state.go": {
       "sha256": "a389ddf3e7e079ede8ddc3c2049a6aa11e84f8d0f813f06f09ceebe7fe379190"
     },
+    "internal/pages/common/tips.go": {
+      "sha256": "68b8e79f0163badb554acbccda3c036cd661aaa47a50ba808c511b3a7539d52f"
+    },
     "internal/pages/common/window_controller.go": {
       "sha256": "ce568b38a701a29d8a382540530f16ee6bc443b86068d95d58fbd16fd275fe56"
     },
@@ -445,7 +448,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "d3155674d88fd52e6b482ebfc51106717009387fc23186b0a080d4dc55275de8"
+      "sha256": "5ddb2f35c3eb3551587a3bdbc5e676ed3fbb902af9ccf4ab43516d16296f8ea7"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -526,7 +529,7 @@
       "sha256": "d13c44afd30f7548130f13c603e58e9de35a6d17e992226cfa5a801694597092"
     },
     "internal/pages/index_page.go": {
-      "sha256": "1d2b6d0165f98fd4ee61eb55bcadba57bd641c9356cd047359076bd366f13521"
+      "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
       "sha256": "74c3b318df3954a5345e46fe289bcee0f305f53b86a344e3a964658ff657bda9"
@@ -700,10 +703,10 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "48017e32cf865f6c52b6130f2eb007143b42f39a9e231b1617d12df74510a376"
+      "sha256": "5519ba25c3a220a8f966326429eef39213967971e50fc772e4b422e0158497a0"
     },
     "internal/pages/settings_shopwide_lock.go": {
-      "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
+      "sha256": "83f643a6b362418ba0cd1f1e06fba991a53da87c23eefbda52c6f88ad0de08da"
     },
     "internal/pages/settings_sync_proxy.go": {
       "sha256": "b3e07cbee05ef22345f408bd1d0796af60c6e31f4ad623fb91d14d4678595a47"
@@ -838,10 +841,10 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "29b790a521b1646e9f5b25cd7e9fe24b4dc47dbbd9a75bbada44a8678a7d9f9a"
+      "sha256": "6d17742e34ea82ec5043fc08a5c77ca809129770d29fbd7e46e6906a5941628e"
     },
     "web/public/app.js": {
-      "sha256": "aa34895662d3549e0b48bcca5f93be7e51bc3793c22eb04fce09581e9bea822d"
+      "sha256": "775d2348a9d2331ecca27eba175ecadd15d038698fb3d2283c6269332f736371"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1669,7 +1672,7 @@
       "sha256": "ad9c10f72169207128265e55cd24904251319e134f50480aac64661b3ae88a0a"
     },
     "web/ui/pages/index.html": {
-      "sha256": "6feece6d424d03af6ecee55cad2c2bfdcfb3652ce2c5fc0ec79ff0f1ad144ee4"
+      "sha256": "389c7670594586516b344395c393217c6ddd7c5a79638c2e2bf7b82430228692"
     },
     "web/ui/pages/inventory.html": {
       "sha256": "4b7c2442334e0198a66bc6179992a366f78c4da535bc50661571592245284b50"
@@ -1792,7 +1795,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "cdf924b878b816c89dadb4cbafc8ad9389e2279e2e3d265a546475afad0556cb"
+      "sha256": "ba71461fa2f12c16d744c02601b41f2eab035d7fd08600dd094324a847fe0002"
     },
     "web/ui/pages/setup.html": {
       "sha256": "28e9b30748d061eb75d8e395b8c3e4464007a9ac57cd2cb6bb3a577df810702f"
@@ -1858,7 +1861,7 @@
       "sha256": "bc069c826343994194add6d7064f542fb12e745c8e2a8a180012a96897080427"
     },
     "web/ui/partials/card_reader_picker.html": {
-      "sha256": "8646c202524fb3b49cee36beaa66a1459a4d1b838233e7d49e04467826c8ab14"
+      "sha256": "b5eb31ab33b31c560b4ba7aa9c29c93f6a017c578edb3d4c1a8ee69b23004817"
     },
     "web/ui/partials/card_reader_settings_body.html": {
       "sha256": "59b67afa0276bd87eb8387f80049b8f4815d62cf815045b20dfc551c2dad41be"

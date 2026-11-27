@@ -41,6 +41,7 @@ import (
 var shopWideLockRegions = map[string]string{
 	"settings-update-schedule":                keyAutoUpdateEnabled,                       // POST /api/settings/update-schedule (update.auto_enabled + update.auto_time)
 	"settings-payments":                       "payments.default_method",                  // payments-default; payments-fee writes payments.fee.<method>
+	"settings-payments-tips":                  "payments.tips_enabled",                    // POST /api/settings/payments-tips (also payments.tip_presets)
 	"settings-order-no":                       data.SaleDisplayNoSchemeKey,                // POST /api/settings/order-no-scheme
 	"settings-order-type-prompt":              data.OrderTypePromptModeKey,                // POST /api/settings/order-type-prompt
 	"settings-barcode":                        data.BarcodeEnabledSymbologiesKey,          // POST /api/settings/barcode-symbology
