@@ -432,3 +432,27 @@ func TestPromoteReplica_RejectsQueuedPluginRecords_3697(t *testing.T) {
 		t.Fatal("no pending row may survive a promote")
 	}
 }
+
+// Tester gap (mutation OR REPLACE): a re-enqueue with different bytes must
+// keep the first row (payload, seq, status), including after it was rejected.
+func TestRecordsEnqueue_DuplicateKeepsFirstRow_3697(t *testing.T) {
+	r, _ := recordsRepo(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if _, err := r.Enqueue(ctx, "p.a", "entries", "id-1", []byte(`{"v":1}`), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.db.Exec(`UPDATE plugin_record_outbox SET status = 'rejected', reason = 'x'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Enqueue(ctx, "p.a", "entries", "id-1", []byte(`{"v":2}`), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var payload, status string
+	if err := r.db.QueryRow(`SELECT payload, status FROM plugin_record_outbox`).Scan(&payload, &status); err != nil {
+		t.Fatal(err)
+	}
+	if payload != `{"v":1}` || status != "rejected" {
+		t.Fatalf("duplicate must not replace/resurrect the row: %s %s", payload, status)
+	}
+}
