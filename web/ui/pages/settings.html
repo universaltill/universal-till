@@ -464,6 +464,20 @@
     </div>
   </form>
   <script>
+  // ut-docs#7097: "Enter a code" lands on #pair-details, but the panels above
+  // swap in after the browser's own jump (as for #android-update below), so on
+  // a slow start the code field sits just under the fold. Re-apply the jump
+  // once the page has settled, and once more on a timer (never focuses: the
+  // on-screen keyboard stays closed until the person taps the field).
+  (function () {
+    if (location.hash !== '#pair-details') return;
+    var reveal = function () { var f = document.getElementById('pair-code'); if (f && f.offsetParent) f.scrollIntoView({ block: 'center' }); };
+    document.body.addEventListener('htmx:afterSettle', reveal);
+    window.addEventListener('load', reveal);
+    setTimeout(reveal, 1500);
+  })();
+  </script>
+  <script>
   (function () {
     var form = document.getElementById('android-update-form');
     if (!form) return;
