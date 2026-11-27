@@ -452,7 +452,7 @@ func stop() {
 
 // Resume tells the till the app is in the foreground again (iOS scene
 // active, Android Activity resumed). A suspended phone app runs no timers, so
-// the cloud credential self-heal (ADR-0217) would otherwise notice a dead
+// the cloud credential self-heal (ADR-0222) would otherwise notice a dead
 // credential, or run an overdue wake, only at the next tick: Resume makes it
 // ask the cloud once now and heal in the background. It never blocks, never
 // restarts or touches the server (a sale may be open) and is a no-op when the

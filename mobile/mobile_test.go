@@ -1158,7 +1158,7 @@ func TestResume_SafeWhenNotRunning(t *testing.T) {
 	}
 }
 
-// ADR-0217 / ut-docs#7097 T8: when the app comes back to the foreground the
+// ADR-0222 / ut-docs#7097 T8: when the app comes back to the foreground the
 // heal engine inside the running server asks the cloud about the credential
 // at once, instead of waiting for a timer that did not run while the phone was
 // suspended. The probe hook is replaced after Start to count the ask.

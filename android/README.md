@@ -727,7 +727,7 @@ till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
 
-## Cloud credential self-heal on resume (ut-docs#7097, ADR-0217)
+## Cloud credential self-heal on resume (ut-docs#7097, ADR-0222)
 
 The heal itself lives in the Go core (`internal/credheal`); no Kotlin sends the
 till's cloud credential. `MainActivity.onResume` calls `Mobile.resume()` (at

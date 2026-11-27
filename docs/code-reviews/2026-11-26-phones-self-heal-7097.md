@@ -1,4 +1,4 @@
-# Phones: self-heal on resume (ut-docs#7097, ADR-0217 slice T8)
+# Phones: self-heal on resume (ut-docs#7097, ADR-0222 slice T8)
 
 Status: **stub, the Reviewer completes it** (a different-model pass over the
 diff is required; none has run on this code yet).

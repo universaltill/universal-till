@@ -39,7 +39,7 @@ func requestOperatorCheckin(d *common.Deps, window time.Duration) {
 	openOperatorWindow(window)
 	// An operator asking for a check-in is also a reason to look at a dead
 	// credential now: the engine probes first and heals only if the cloud
-	// refuses it (ADR-0217; also the desktop caller of credheal.Resume, which
+	// refuses it (ADR-0222; also the desktop caller of credheal.Resume, which
 	// the phone shells call through mobile.Resume).
 	credheal.Resume()
 	if d == nil || d.CloudSyncNow == nil {

@@ -1,4 +1,4 @@
-# Phones: till self-heal device test matrix (ut-docs#7097, ADR-0217, slice T8)
+# Phones: till self-heal device test matrix (ut-docs#7097, ADR-0222, slice T8)
 
 For the owner to run on the **iPhone** (the main target) and an **Android
 phone**. Everything here needs a real device: the Go engine is tested in
@@ -9,7 +9,7 @@ screenshot. A screen that merely shows something is not evidence.
 
 ## Before you start
 
-- Cloud has `TILL_SELF_HEAL_ENABLED` on for your test shop (ADR-0217 rollout
+- Cloud has `TILL_SELF_HEAL_ENABLED` on for your test shop (ADR-0222 rollout
   step 5). With the flag off every heal row below must show the OLD behaviour
   (row 0).
 - A phone build that contains this change AND the till engine (PR #2760).

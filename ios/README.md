@@ -121,7 +121,7 @@ ut-docs#3052). It never submits for App Store review.
 | Camera (barcode viewfinder; item photos use the system camera via the file input, ut-docs#4096) granted to the till's own page only | `requestMediaCapturePermissionFor` |
 | A failed page load shows an error bar with **Back to till** | `ContentView` |
 | On return from the background, probe `/healthz`; restart the server only if iOS reclaimed its socket (Apple TN2277) — a healthy server is never restarted | `TillController.resume` |
-| On return from the background, once the server answers, ask the till's cloud-credential self-heal to check now (a suspended app ran no timers), at most every 30 s; never restarts or touches the server (ut-docs#7097, ADR-0217) | `TillController.resume`, `TillServer.notifyForeground`, `ForegroundThrottle` |
+| On return from the background, once the server answers, ask the till's cloud-credential self-heal to check now (a suspended app ran no timers), at most every 30 s; never restarts or touches the server (ut-docs#7097, ADR-0222) | `TillController.resume`, `TillServer.notifyForeground`, `ForegroundThrottle` |
 | A WebView process killed in the background is reloaded | `webViewWebContentProcessDidTerminate` |
 | All orientations on iPhone and iPad | `project.yml` |
 

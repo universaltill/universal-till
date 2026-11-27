@@ -2170,7 +2170,7 @@ class MainActivity : SelfUpdateActivity() {
         // Sideload only: resumes the update watch, permission-screen return and
         // installer-closed reporting. A no-op in the play flavor.
         selfUpdateOnResume()
-        // ut-docs#7097 (ADR-0217): ask the till's cloud-credential self-heal to
+        // ut-docs#7097 (ADR-0222): ask the till's cloud-credential self-heal to
         // check now, so a credential the cloud rejected while the app was away
         // is renewed in the background. Non-blocking, a no-op until the server
         // is up, never touches the running server or an open sale.
