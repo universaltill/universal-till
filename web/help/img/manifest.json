@@ -342,6 +342,9 @@
     "internal/pages/cloud_channel_order.go": {
       "sha256": "dc1e643730d9adbe17c4d61ce6e8006a1c38d97062ccb74e50d05d8ab7b6ec9a"
     },
+    "internal/pages/cloud_heal_chip.go": {
+      "sha256": "04848feedf4612364a4c7c48b5ec14abc38c04ae0af97273c3355050a374e831"
+    },
     "internal/pages/cloud_import_customers.go": {
       "sha256": "e6e73a234e74a2b28f59965a3e4f6a5aaeed6f2c7f5e06d323ae03357432f505"
     },
@@ -422,6 +425,9 @@
     },
     "internal/pages/country_settings_page.go": {
       "sha256": "1d1e8bd815e3a7800f3a3208bf0bf12a120bd7fe0f8ea1761edc1c855127eaee"
+    },
+    "internal/pages/credheal_wire.go": {
+      "sha256": "c10d388909d3708836b2d84e9688f1d3cca45a3d47add31066d3a3b60942a915"
     },
     "internal/pages/csv_export.go": {
       "sha256": "ac4f93f25da410a0fc70c201782200ca1973a68b3fc617a15c4f36cd651fb37b"
@@ -520,7 +526,7 @@
       "sha256": "1d2b6d0165f98fd4ee61eb55bcadba57bd641c9356cd047359076bd366f13521"
     },
     "internal/pages/init.go": {
-      "sha256": "01ebcd93ebd7cc367afb354dcfbe19b8f2e981d92357744a7204e6fbac93887b"
+      "sha256": "74c3b318df3954a5345e46fe289bcee0f305f53b86a344e3a964658ff657bda9"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -1870,7 +1876,7 @@
       "sha256": "1368c81af793162a852e2fb9afda8b333e6c8498bafb837b1d5686a8b76107d7"
     },
     "web/ui/partials/cloud_auth_chip.html": {
-      "sha256": "f4e3c24aff5985636f7589d30b7fe46d75661702d8e5d27a3ee497721ea6a54f"
+      "sha256": "9af869bb41bd6cbeb09d7e322c2c6a6fedffcd8a82a5ce258036bfbb9eea1637"
     },
     "web/ui/partials/cloud_key_show.html": {
       "sha256": "78441495e562ca86d8609bb163402b59a50f7a6cc729945a0c94402c86ce6a02"
