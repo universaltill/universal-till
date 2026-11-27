@@ -131,9 +131,14 @@ func TestSettings_HealNoticeAndTheCodeFieldOpenFromTheButton(t *testing.T) {
 	if !strings.Contains(plain, `data-testid="heal-notice"`) || !strings.Contains(plain, "because it can&#39;t prove who it is.") {
 		t.Fatalf("no heal notice in Till registration: %s", plain)
 	}
-	if strings.Contains(plain, `<details class="set-divider" id="pair-details" open`) {
-		t.Fatalf("the code field opens only from the button (?reconnect=1)")
+	if !strings.Contains(plain, `id="pair-details" open`) {
+		t.Fatalf("a state that says 'type the code here' must open the code field itself")
 	}
+	pinHealStatus(t, needsPerson(credheal.ReasonReplaced))
+	if strings.Contains(renderSettingsAs(t, mux, mgrUser, false), `id="pair-details" open`) {
+		t.Fatalf("replaced says join, not a code: the code field stays folded")
+	}
+	pinHealStatus(t, needsPerson(credheal.ReasonCannotProve))
 	rec := getAs(mux, "/settings?reconnect=1", &mgrUser)
 	if !strings.Contains(rec.Body.String(), `id="pair-details" open`) {
 		t.Fatalf("?reconnect=1 must render the code field open: %s", rec.Body.String())

@@ -130,6 +130,19 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ADR-0217: the till is reconnecting by itself, or says in plain words
+		// why it cannot. From the first refused call, not the third. Checked
+		// before the register-refusal variants so the old "different key" text
+		// never shows beside the heal notice (review 2026-11-27).
+		locale := httpx.ResolveLocale(w, r)
+		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":   cloudAuthHeal,
+				"canManage": canPerform(d, r, "settings"),
+				"heal":      hv,
+			})(w, r)
+			return
+		}
 		// ut-docs#5145: a refused re-register (409 device_live) beats the 401
 		// variants: a till with no credential has no 401 streak, and must not be
 		// told to "Register as a new store" while the cloud refuses to. A local
@@ -161,17 +174,6 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				"variant":     cloudAuthBlocked,
 				"canManage":   canManage,
 				"blockedHint": hint,
-			})(w, r)
-			return
-		}
-		// ADR-0217: the till is reconnecting by itself, or says in plain words
-		// why it cannot. From the first refused call, not the third.
-		locale := httpx.ResolveLocale(w, r)
-		if hv, show := healChip(locale, healChipStatus(), storeHasOwner(r.Context(), d.Settings)); show {
-			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
-				"variant":   cloudAuthHeal,
-				"canManage": canPerform(d, r, "settings"),
-				"heal":      hv,
 			})(w, r)
 			return
 		}

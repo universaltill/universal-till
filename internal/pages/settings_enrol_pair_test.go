@@ -350,6 +350,20 @@ func TestClaimCode_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
 	}
 }
 
+// A dead credential answers 401: the message must say so, not "check the
+// internet connection" (ADR-0217 AC12; the chip shows the way back).
+func TestClaimCode_DeadCredentialDoesNotBlameTheInternet(t *testing.T) {
+	mux, _, _ := claimCodeDeps(t, http.StatusUnauthorized, `{"data":null,"error":{"code":"unauthorized","message":"Unauthorized"}}`)
+	rec := postForm(mux, "/api/enrol/claim-code", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if strings.Contains(body, "internet connection") {
+		t.Fatalf("a 401 blames the internet: %s", body)
+	}
+	if !strings.Contains(body, "not connected to its shop right now") {
+		t.Fatalf("missing the not-connected message: %s", body)
+	}
+}
+
 func TestClaimCode_UnregisteredTillSaysNotRegistered(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	enroll.Init(t.Context(), &config.Config{}, newMemKV(), &sync.WaitGroup{})

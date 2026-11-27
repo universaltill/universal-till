@@ -107,3 +107,17 @@ func healNoticeView(r *http.Request, d *common.Deps, locale string) map[string]a
 	}
 	return out
 }
+
+// healNeedsCode says the state's sentence tells the person to type a code on
+// Settings > Till registration, so that page opens the code field itself
+// (a manager arriving by the menu must not hunt for a folded section).
+func healNeedsCode(st credheal.Status) bool {
+	if !st.ShowsChip() || st.State == credheal.StateHealing || st.State == credheal.StateWaiting {
+		return false
+	}
+	switch st.Reason {
+	case credheal.ReasonReplaced, credheal.ReasonRoleConflict, credheal.ReasonStoreDeleted:
+		return false
+	}
+	return true
+}
