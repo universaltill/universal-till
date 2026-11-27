@@ -26,19 +26,20 @@ import (
 // that have no registry entry yet. Shrink-only; each states why it is not a
 // registry key (a registry entry is a key the cloud may read or write).
 var settingsHandlerKeysWithoutRegistryEntry = map[string]string{
-	"payments.fee.":              "prefix family: per-method fee JSON (money); tier never until it has a typed rule",
-	"store.currency_confirmed":   "internal flag set with store.currency (tier never: not a choice, derived from the currency save)",
-	"store.locale_generation":    "internal counter set with store.locale (tier never: replica ordering, not a choice)",
-	"menu.restored_keys":         "UI state of hidden Menu tiles (JSON); not cloud material, tier never",
-	"reports.business_day_start": "slice 3: the End-of-day card (HH:MM); a typed text rule and its my. wording come with the EOD region",
-	"update.auto_time":           "slice 3: update schedule time, same card as update.auto_enabled (sensitive: changes when code runs)",
-	"update.fleet_follow":        "slice 3: fleet update policy next_idle|nightly, same card; sensitive",
-	"receipt.show_sku":           "slice 3: receipt layout toggle (normal tier bool); designer region keys come with it",
-	"receipt.show_tax":           "slice 3: receipt layout toggle (normal tier bool)",
-	"receipt.show_barcode":       "slice 3: receipt layout toggle (normal tier bool)",
-	"receipt.show_logo":          "slice 3: receipt layout toggle (normal tier bool)",
-	"receipt.show_tracking_qr":   "slice 3: receipt layout toggle (normal tier bool)",
-	"receipt.voucher_slip_text":  "slice 3: gift voucher slip text (sensitive: free text printed for customers)",
+	"payments.fee.":                         "prefix family: per-method fee JSON (money); tier never until it has a typed rule",
+	"store.currency_confirmed":              "internal flag set with store.currency (tier never: not a choice, derived from the currency save)",
+	"store.locale_generation":               "internal counter set with store.locale (tier never: replica ordering, not a choice)",
+	"menu.restored_keys":                    "UI state of hidden Menu tiles (JSON); not cloud material, tier never",
+	"reports.business_day_start":            "slice 3: the End-of-day card (HH:MM); a typed text rule and its my. wording come with the EOD region",
+	"update.auto_time":                      "slice 3: update schedule time, same card as update.auto_enabled (sensitive: changes when code runs)",
+	"update.fleet_follow":                   "slice 3: fleet update policy next_idle|nightly, same card; sensitive",
+	"receipt.show_sku":                      "slice 3: receipt layout toggle (normal tier bool); designer region keys come with it",
+	"receipt.show_tax":                      "slice 3: receipt layout toggle (normal tier bool)",
+	"receipt.show_barcode":                  "slice 3: receipt layout toggle (normal tier bool)",
+	"receipt.show_logo":                     "slice 3: receipt layout toggle (normal tier bool)",
+	"receipt.show_tracking_qr":              "slice 3: receipt layout toggle (normal tier bool)",
+	"fiscal.signing_device_credential_held": "ut-docs#7050: restore-detection bookkeeping row on the main till, never remote (cloudsync_wire.go), not a choice; tier never",
+	"receipt.voucher_slip_text":             "slice 3: gift voucher slip text (sensitive: free text printed for customers)",
 }
 
 // dynamicSettingsHandlerWrites: handler files that call saveShopSettings with a
