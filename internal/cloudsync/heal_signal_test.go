@@ -76,6 +76,14 @@ func serve401(body string) *httptest.Server {
 	}))
 }
 
+// resetRefusalLog clears the once-per-change refusal log between tests. It lives
+// here, not in heal.go, because only tests call it (the deadcode baseline guard).
+func resetRefusalLog() {
+	refusalLog.Lock()
+	refusalLog.last = nil
+	refusalLog.Unlock()
+}
+
 // The revoke signal carries reason and the recover hint on every route.
 func TestRevokeSignalCarriesReasonAndRecoverHint(t *testing.T) {
 	body := `{"data":{"reason":"pair_abandoned","recover":true},"error":{"code":"device_revoked"}}`
@@ -346,12 +354,4 @@ func TestCatalogPullAndStockUploadReportA401(t *testing.T) {
 		}
 		waitFor(t, "the stock 401 to be probed", func() bool { return r.probes.Load() == 1 })
 	})
-}
-
-// resetRefusalLog clears the once-per-change refusal log between tests. It lives
-// here, not in heal.go, because only tests call it (the deadcode baseline guard).
-func resetRefusalLog() {
-	refusalLog.Lock()
-	refusalLog.last = nil
-	refusalLog.Unlock()
 }
