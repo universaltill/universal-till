@@ -136,6 +136,22 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		card(w, r, "")
 	})
 
+	// ut-docs#7171: the card's key forms swap outerHTML into #backup-cloud-card.
+	// A PIN prompt whose hint landed there REPLACED the card, so the dialog's
+	// retry (hx-target #backup-cloud-card) found no element and htmx never sent
+	// it: "Confirm does nothing". The prompt (and its hint) goes into the
+	// card's own message span, and only the finished answer replaces the card.
+	keyPrompt := func(w http.ResponseWriter, r *http.Request, action, summary string, hidden []elevationHiddenField, elev elevationCheck) {
+		w.Header().Set("HX-Retarget", "#backup-cloud-msg")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		renderElevationPrompt(w, r, action, "#backup-cloud-msg", summary, hidden, elev)
+	}
+	answer := func(w http.ResponseWriter, r *http.Request, msg string) {
+		w.Header().Set("HX-Retarget", "#backup-cloud-card")
+		w.Header().Set("HX-Reswap", "outerHTML")
+		card(w, r, msg)
+	}
+
 	// The owner's choice about a wrapped copy of the backup key in the cloud
 	// (design section 15, E2). Manager/admin with the PIN; a cashier is refused.
 	mux.HandleFunc("POST /api/offsite/key/choice", func(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +167,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
-			renderElevationPrompt(w, r, "/api/offsite/key/choice", "#backup-cloud-card",
+			keyPrompt(w, r, "/api/offsite/key/choice",
 				httpx.T(locale, "elevation.summary.backup_cloud_key_choice_"+choice),
 				[]elevationHiddenField{{Name: "choice", Value: choice}}, elev)
 			return
@@ -168,7 +184,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		if err := s.Uploader.ApplyKeyChoice(ctx); err != nil {
 			msg = httpx.T(locale, "backup.cloud.key.apply_failed")
 		}
-		card(w, r, msg)
+		answer(w, r, msg)
 	})
 
 	// Start a new key: the way out for a shop whose key is held by neither
@@ -180,7 +196,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
-			renderElevationPrompt(w, r, "/api/offsite/key/new", "#backup-cloud-card",
+			keyPrompt(w, r, "/api/offsite/key/new",
 				httpx.T(locale, "elevation.summary.backup_cloud_key_new"), nil, elev)
 			return
 		}
@@ -199,7 +215,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		default:
 			msg = offsiteErrText(locale, offsiteErrCode(err))
 		}
-		card(w, r, msg)
+		answer(w, r, msg)
 	})
 
 	// Enter the saved key (UTK1-...) to link this till: always available while
@@ -217,7 +233,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
-			renderElevationPrompt(w, r, "/api/offsite/key/enter", "#backup-cloud-card",
+			keyPrompt(w, r, "/api/offsite/key/enter",
 				httpx.T(locale, "elevation.summary.backup_cloud_key_enter"),
 				[]elevationHiddenField{{Name: "saved_key", Value: text}}, elev)
 			return
@@ -238,7 +254,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		default:
 			msg = offsiteErrText(locale, offsiteErrCode(err))
 		}
-		card(w, r, msg)
+		answer(w, r, msg)
 	})
 
 	// While a restore or key link waits for the saved key (E5): the text or the

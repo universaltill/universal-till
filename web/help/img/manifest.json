@@ -586,7 +586,7 @@
       "sha256": "b9f6d7e0f2bb622c122705d4e58a975e6115d959ccd68e135e2c9c6196602a0c"
     },
     "internal/pages/offsite_backup_api.go": {
-      "sha256": "3b2914d6a25924ecbbd8b22fb46ee8d91e87a23b513733fa09024691aa24ba66"
+      "sha256": "a697c06ff11e3d667d92035890221571f23cec42c46a60d09762375089fe1405"
     },
     "internal/pages/open_orders_counter.go": {
       "sha256": "df4d1e06e12d370d6ba2b9e40ac1a1c7a76d2dc47f1f42341d0212a0eb6d115b"
