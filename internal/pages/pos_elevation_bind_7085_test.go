@@ -352,14 +352,14 @@ func TestElevationBind7085_ExpiredApprovalRefused(t *testing.T) {
 func TestElevationBind7085_StoreBoundedAndSingleUse(t *testing.T) {
 	s := &approvalStore{m: map[string]approvalEntry{}, now: time.Now}
 	for i := 0; i < approvalCap+44; i++ {
-		if s.mint(fmt.Sprintf("b%d", i)) == "" {
+		if s.mint(fmt.Sprintf("actor%d", i), fmt.Sprintf("b%d", i)) == "" {
 			t.Fatal("mint failed")
 		}
 	}
 	if len(s.m) > approvalCap {
 		t.Fatalf("store holds %d, cap %d", len(s.m), approvalCap)
 	}
-	tok := s.mint("x")
+	tok := s.mint("actorX", "x")
 	var wg sync.WaitGroup
 	wins := make(chan bool, 8)
 	for i := 0; i < 8; i++ {

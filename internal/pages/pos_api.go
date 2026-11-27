@@ -3855,7 +3855,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// Which moves are allowed from the sale's current status is
 	// pos.UpdateSaleStatus's rule (ut-docs#3368: a completed sale can only be
 	// voided; never reopened, marked refunded or completed here — 409).
-	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
 		type In struct {
 			SaleID      string `json:"saleId"`
 			Status      string `json:"status"` // open|parked|voided (refunded/completed are refused)
@@ -3864,7 +3864,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Approval    string `json:"approval,omitempty"` // single-use token from the refusal's error.approval (ut-docs#7140)
 		}
 		var in In
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		// 4 KiB: the body is a few short strings; an oversize one is refused
+		// before any lookup, PIN check or token mint (ut-docs#7152).
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
