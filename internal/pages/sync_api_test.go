@@ -649,6 +649,12 @@ func newSyncDepsWithPath(t *testing.T, name string) (*common.Deps, string) {
 	// openPagesTestDB uses — same physical on-disk file at path either way,
 	// so db.Snapshot's VACUUM INTO and the staged restore/identity files
 	// still work against it unchanged.
+	// ut-docs#7091: start from the package's migrated template (as
+	// openPagesTestDB does) so Open only verifies the ledger instead of
+	// replaying every migration (~0.45 s a call, 95 call sites).
+	if err := os.WriteFile(path, realDBTemplate(t), 0o600); err != nil {
+		t.Fatalf("clone template db: %v", err)
+	}
 	migrated, err := appdb.Open(path)
 	if err != nil {
 		t.Fatalf("open+migrate sqlite: %v", err)

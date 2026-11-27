@@ -26,8 +26,11 @@
 #     not prerelease), or a package URL that is not the versioned, non-redirecting
 #     publish-installer blob URL (INSTALLER_BASE/windows/vX.Y.Z/..., never the
 #     redirecting GitHub URL, never /latest/, never another account or container);
-#   - on ANY non-2xx API answer (the token is never echoed, the body is not
-#     printed beyond the status).
+#   - on ANY non-2xx API answer. It prints the HTTP code, a sanitised, length-capped
+#     view of the error body (only the JSON error code/message/correlation id
+#     fields, never a header) and the token's NON-secret claims (aud, iss, tid,
+#     appid/azp, oid, roles/scp, exp) decoded locally; the token itself is never
+#     echoed.
 set -euo pipefail
 
 tag_in=${1:?usage: msstore-submit.sh <tag> [package-url]}
@@ -96,12 +99,62 @@ trap cleanup EXIT
 # The token reaches curl through a header file, never an argument.
 ( umask 077; printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' <"$tokfile")" >"$tmp/hdr" )
 
+# One printable line, capped, no workflow-command prefix; the token, its signature
+# segment, any Bearer value and any JWT-shaped text are scrubbed first.
+clean() {
+  local t sig in
+  in="$(cat)"
+  t="$(tr -d '\r\n' <"$tokfile")"; sig="${t##*.}"
+  [ -n "$t" ] && in="${in//"$t"/[token-scrubbed]}"
+  [ "${#sig}" -ge 8 ] && in="${in//"$sig"/[token-scrubbed]}"
+  printf '%s' "$in" | LC_ALL=C tr -c '[:print:]' ' ' | sed -E 's/eyJ[A-Za-z0-9._-]+/[jwt-scrubbed]/g; s/[Bb]earer +[A-Za-z0-9._~+\/=-]+/Bearer [scrubbed]/g; s/::/: /g' | cut -c1-"${1:-300}"
+}
+
+# Non-secret claims of the access token, decoded locally (never the token itself).
+token_claims() {
+  local payload b64 pad json
+  payload="$(tr -d '\r\n' <"$tokfile" | cut -d. -f2)"
+  b64="$(printf '%s' "$payload" | tr '_-' '/+')"
+  pad=$(( (4 - ${#b64} % 4) % 4 ))
+  [ "$pad" -gt 0 ] && b64="${b64}$(printf '=%.0s' $(seq 1 "$pad"))"
+  json="$(printf '%s' "$b64" | base64 -d 2>/dev/null)" || json=""
+  if [ -n "$json" ] && printf '%s' "$json" | jq -e 'type=="object"' >/dev/null 2>&1; then
+    printf '%s' "$json" | jq -r '"aud=\(.aud // "-") iss=\(.iss // "-") tid=\(.tid // "-") appid=\(.appid // .azp // "-") oid=\(.oid // "-") idtyp=\(.idtyp // "-") roles=\((.roles // []) | tostring) scp=\(.scp // "-") exp=\(.exp // "-")\(if (.exp|type)=="number" and .exp > 0 and .exp < 4000000000 then " (" + (.exp | strftime("%Y-%m-%dT%H:%M:%SZ")) + ")" else "" end)"' 2>/dev/null | clean 600
+  else
+    echo "(token is not a decodable JWT; nothing printed)"
+  fi
+}
+
+# Whitelisted error fields of a JSON body (code, message, correlation/trace id); else a scrubbed prefix.
+sanitised_body() {
+  local f=$1 out
+  if [ ! -s "$f" ]; then echo "(empty body)"; return; fi
+  if jq -e 'type=="object"' "$f" >/dev/null 2>&1; then
+    out="$(jq -r '
+      def s: if type=="string" then . else empty end;
+      def one: if type=="object" then ([.code, .errorCode, .message, .description, .correlationId, .traceId, .requestId, .target] | map(s) | map(select(length>0)) | join(" | ")) else s end;
+      [ (.code|s), (.errorCode|s), (.message|s), (.error_description|s), (.correlationId|s), (.traceId|s), (.requestId|s),
+        (.error | one), (.innererror? | one),
+        ((.errors? // [])[]? | one), ((.responseData?.errors? // [])[]? | one) ]
+      | map(select(. != null and length>0)) | join(" ; ")' "$f" 2>/dev/null | clean 500)" || out=""
+    if [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then echo "$out"; else echo "(JSON body without a known error field)"; fi
+  else
+    echo "(body is not JSON, $(wc -c <"$f" | tr -d ' ') bytes) $(clean 200 <"$f")"
+  fi
+}
+
 # api <METHOD> <path> [json-body-file] -> response body in $tmp/resp
 api() {
   local code args=(-sS --proto '=https' --proto-redir '=https' -H "@$tmp/hdr" -H "X-Seller-Account-Id: ${seller}" -H 'Accept: application/json' -X "$1" -o "$tmp/resp" -w '%{http_code}')
   [ -n "${3:-}" ] && args+=(-H 'Content-Type: application/json' --data-binary "@$3")
+  : >"$tmp/resp"
   code="$(curl "${args[@]}" "${base}$2")" || fail "$1 $2: request failed"
-  [[ "$code" =~ ^2[0-9][0-9]$ ]] || fail "$1 $2 answered HTTP ${code}"
+  if ! [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    echo "Store API body: $(sanitised_body "$tmp/resp")" >&2
+    echo "token claims: $(token_claims)" >&2
+    echo "seller header X-Seller-Account-Id=${seller}, product=${app}" >&2
+    fail "$1 $2 answered HTTP ${code}"
+  fi
 }
 path() { local p; p="$(ep "$1")"; printf '%s' "${p//\{id\}/$app}"; }
 

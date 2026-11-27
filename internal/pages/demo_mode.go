@@ -575,7 +575,7 @@ var demoAllowedRoutes = map[string]bool{
 	"/api/pos/order-type":             true,
 	"/api/pos/remove":                 true,
 	"/api/pos/reset":                  true,
-	"/api/pos/sale/status":            true,
+	"POST /api/pos/sale/status":       true,
 	"/api/pos/scan":                   true,
 	"/api/pos/table":                  true,
 	"/api/pos/tender":                 true,

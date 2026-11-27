@@ -3855,15 +3855,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// Which moves are allowed from the sale's current status is
 	// pos.UpdateSaleStatus's rule (ut-docs#3368: a completed sale can only be
 	// voided; never reopened, marked refunded or completed here — 409).
-	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
 		type In struct {
 			SaleID      string `json:"saleId"`
 			Status      string `json:"status"` // open|parked|voided (refunded/completed are refused)
 			Reason      string `json:"reason,omitempty"`
 			OverridePIN string `json:"override_pin,omitempty"`
+			Approval    string `json:"approval,omitempty"` // single-use token from the refusal's error.approval (ut-docs#7140)
 		}
 		var in In
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		// 4 KiB: the body is a few short strings; an oversize one is refused
+		// before any lookup, PIN check or token mint (ut-docs#7152).
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
@@ -3872,25 +3880,41 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		// Voiding is a cancellation the reports count, so it
-		// needs the refund permission or a manager's PIN (ut-docs#3368) —
-		// the same action the refund page gates on. API-only route (no UI
-		// calls it), so a refusal is a plain 403, not a PIN dialog.
-		actorID, blockedActorID := getSessionUserID(r), ""
+		// needs the refund permission or a manager's approval (ut-docs#3368).
+		// The approval is bound, single-use and request-specific (ut-docs#7140):
+		// endpoint, session user, sale, status, reason and the sale's current
+		// status. API-only route (no UI calls it), so a refusal is the JSON
+		// envelope with the token in error.approval; the caller re-sends the
+		// same body plus "approval" and the manager PIN.
+		actorID, blockedActorID, expectedFrom := getSessionUserID(r), "", ""
 		if in.Status == "voided" {
-			elev := checkOrElevate(d, r, "refund", in.OverridePIN)
-			if elev.Outcome == needsElevation {
-				key := elevationErrorKey(elev.Err)
-				if key == "" {
-					key = "common.error.manager_or_admin_required"
+			from, err := data.NewPOSRepo(d.Db).SaleStatus(r.Context(), nil, in.SaleID)
+			if err != nil {
+				if errors.Is(err, data.ErrSaleNotFound) {
+					common.LogAndLocalizedError(w, r, http.StatusNotFound, "pos.error.sale_not_found", "pos-api", err)
+					return
 				}
-				common.LocalizedError(w, r, http.StatusForbidden, key)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)
+				return
+			}
+			// An impossible move (already voided/refunded, unknown status)
+			// answers 409 before any prompt, PIN check or token spend.
+			if !pos.SaleStatusTransitionAllowed(from, in.Status) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.sale_status_transition", "pos-api", pos.ErrSaleStatusTransition)
+				return
+			}
+			binding := approvalBinding("/api/pos/sale/status", getSessionUserID(r), []string{"refund"},
+				[]elevationHiddenField{{"saleId", in.SaleID}, {"status", in.Status}, {"reason", in.Reason}}, from)
+			elev, tok := checkOrElevateApproval(d, r, binding, in.OverridePIN, in.Approval, "refund")
+			if elev.Outcome == needsElevation {
+				writeElevationRefusalJSON(w, r, elev, tok, http.StatusForbidden)
 				return
 			}
 			if elev.Outcome == elevated {
-				actorID, blockedActorID = elev.ApproverID, elev.ActorID
+				actorID, blockedActorID, expectedFrom = elev.ApproverID, elev.ActorID, from
 			}
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
+		if err := pos.UpdateSaleStatusFrom(r.Context(), d.Db, in.SaleID, expectedFrom, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own

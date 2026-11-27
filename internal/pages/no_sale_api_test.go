@@ -167,8 +167,9 @@ func TestNoSale_CashierWithoutGrantNeedsPIN403RecordsNothing(t *testing.T) {
 	}
 	assertNothingRecorded(t, dp)
 
-	// A wrong PIN is refused the same way.
-	rec = postNoSale(t, mux, cashier3134, `{"manager_pin":"000000"}`)
+	// A wrong PIN (with the token from the refusal) is refused the same way.
+	tok := decodeNoSaleRefusal(t, rec).Error.Approval
+	rec = postNoSale(t, mux, cashier3134, `{"manager_pin":"000000","approval":"`+tok+`"}`)
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("wrong PIN: want 403/429, got %d %q", rec.Code, rec.Body.String())
 	}
@@ -178,7 +179,8 @@ func TestNoSale_CashierWithoutGrantNeedsPIN403RecordsNothing(t *testing.T) {
 func TestNoSale_CashierWithManagerPINElevatesAndRecordsBoth(t *testing.T) {
 	mux, dp, _ := newNoSaleTestDeps(t, "device")
 
-	rec := postNoSale(t, mux, cashier3134, `{"manager_pin":"`+perm3134MgrPIN+`"}`)
+	tok := noSaleToken(t, mux, "")
+	rec := postNoSale(t, mux, cashier3134, `{"manager_pin":"`+perm3134MgrPIN+`","approval":"`+tok+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200 with a manager PIN, got %d %q", rec.Code, rec.Body.String())
 	}

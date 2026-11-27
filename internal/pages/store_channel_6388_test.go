@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/manual"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/updates"
 	"github.com/universaltill/universal-till/web"
 )
 
@@ -89,6 +91,9 @@ func TestStoreChannel_UpdateRoutesAndCard(t *testing.T) {
 	for _, c := range allChannels {
 		t.Run(string(c), func(t *testing.T) {
 			withChannel(t, c)
+			// ut-docs#7091: never reach the real release API from a unit test;
+			// "up to date" still answers 200, so the 404-iff-closed check holds.
+			stubUpdateChecks(t)
 			open := wantOpen[c]
 			if got := c.InAppUpdateAllowed(); got != open {
 				t.Fatalf("%s: InAppUpdateAllowed = %v, want %v", c, got, open)
@@ -466,4 +471,14 @@ func TestStoreChannel_NoticesNavRowHidden(t *testing.T) {
 			t.Errorf("%s: settings-notices nav row present=%v, want %v", c, has, want)
 		}
 	}
+}
+
+// stubUpdateChecks makes the three manual update endpoints' freshness checks
+// answer "up to date" without the network (ut-docs#7091).
+func stubUpdateChecks(t *testing.T) {
+	t.Helper()
+	none := func(context.Context) updates.Status { return updates.Status{} }
+	pu, pa, pi := updateCheckNow, updateApplyCheckNow, androidInstallCheckNow
+	updateCheckNow, updateApplyCheckNow, androidInstallCheckNow = none, none, none
+	t.Cleanup(func() { updateCheckNow, updateApplyCheckNow, androidInstallCheckNow = pu, pa, pi })
 }

@@ -25,10 +25,18 @@ import (
 
 const (
 	approvalTTL = 5 * time.Minute // a manager walks over; well under a shift
-	approvalCap = 256             // bounded even if a cashier spams prompts
+	approvalCap = 256             // global backstop, bounded even if many sessions spam prompts
+
+	// approvalPerActorCap: one session cannot evict another's live prompt
+	// token (ut-docs#7152). A cashier has one live prompt at a time (a wrong
+	// PIN reuses its token); a few tabs/devices on one login fit in 8. With
+	// 256 global slots it takes 32 actors at their cap before the global
+	// eviction can touch anyone else, far beyond a shop's concurrent staff.
+	approvalPerActorCap = 8
 )
 
 type approvalEntry struct {
+	actor   string // session user id that was prompted ("" with auth off)
 	binding string
 	expires time.Time
 }
@@ -43,9 +51,11 @@ var elevationApprovals = &approvalStore{m: map[string]approvalEntry{}, now: time
 
 var errApprovalStale = errors.New("elevation: approval missing, used, expired or for other values")
 
-// mint stores binding under a fresh random token and returns it. On a
-// crypto/rand failure it returns "", which never validates (fail closed).
-func (s *approvalStore) mint(binding string) string {
+// mint stores binding under a fresh random token and returns it. An actor
+// already holding approvalPerActorCap live tokens loses its own earliest-
+// expiring one; only then does the global cap evict. On a crypto/rand failure
+// it returns "", which never validates (fail closed).
+func (s *approvalStore) mint(actorID, binding string) string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return ""
@@ -59,17 +69,25 @@ func (s *approvalStore) mint(binding string) string {
 			delete(s.m, k)
 		}
 	}
-	if len(s.m) >= approvalCap {
-		oldest, first := "", true
-		var oldestAt time.Time
-		for k, e := range s.m {
-			if first || e.expires.Before(oldestAt) {
-				oldest, oldestAt, first = k, e.expires, false
+	own, ownOldest, ownAt := 0, "", time.Time{}
+	oldest, oldestAt := "", time.Time{}
+	for k, e := range s.m {
+		if oldest == "" || e.expires.Before(oldestAt) {
+			oldest, oldestAt = k, e.expires
+		}
+		if e.actor == actorID {
+			own++
+			if ownOldest == "" || e.expires.Before(ownAt) {
+				ownOldest, ownAt = k, e.expires
 			}
 		}
+	}
+	if own >= approvalPerActorCap {
+		delete(s.m, ownOldest)
+	} else if len(s.m) >= approvalCap {
 		delete(s.m, oldest)
 	}
-	s.m[tok] = approvalEntry{binding: binding, expires: now.Add(approvalTTL)}
+	s.m[tok] = approvalEntry{actor: actorID, binding: binding, expires: now.Add(approvalTTL)}
 	return tok
 }
 
