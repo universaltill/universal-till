@@ -49,6 +49,7 @@ var networkServices = []string{
 	"TSE provisioning retry",
 	"order-status stream bridge",
 	"signer backend probe refresh",
+	"cloud credential self-heal", // ut-docs#7097, ADR-0217: the till's credential recover loop
 }
 
 type serviceLog struct {
