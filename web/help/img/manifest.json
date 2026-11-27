@@ -448,16 +448,16 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "5ddb2f35c3eb3551587a3bdbc5e676ed3fbb902af9ccf4ab43516d16296f8ea7"
+      "sha256": "7cdeb4cf4db471b3ee752423c7ea19a6e345eb6ad5d961951ebaf6e81f6dc0b7"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
     },
     "internal/pages/elevation.go": {
-      "sha256": "377ab088ead5913c5b890b2fd6b87f8f504d51164921d22e38936a519d375a6c"
+      "sha256": "e40d813747b4f27c960c00ec1696554c31424da10fd146fae08204dcdd7b3b0c"
     },
     "internal/pages/elevation_approval.go": {
-      "sha256": "0bc3a7c9d1ca07df2af8389e35e13e957c29e1ec27f45f6ed382183610867cc9"
+      "sha256": "cbb04e39cd793c8cd5be0a567ff93d31076506272c0a5f8de3c940b6b1b8966a"
     },
     "internal/pages/engine_config.go": {
       "sha256": "d7f79a1aecccc2d0146c102ffe28fcb84708d14077ddfdd55d42882f8b87339f"
