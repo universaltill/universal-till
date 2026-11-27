@@ -989,6 +989,19 @@
       <span id="pay-default-msg" aria-live="polite"></span>
     </label>
   </form>
+  <fieldset class="set-lock" data-lock-region="settings-payments-tips"{{ if index $.lockedRegions "settings-payments-tips" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-payments-tips" }}{{ template "set-lock-note" }}{{ end }}
+  <form id="settings-payments-tips" hx-post="/api/settings/payments-tips" hx-target="#pay-tips-msg" hx-swap="innerHTML" data-testid="settings-payments-tips">
+    <p class="muted">{{ T "settings.payments.tips_help" }}</p>
+    <label class="set-row"><input type="checkbox" name="enabled" value="on" {{ if .tipsEnabled }}checked{{ end }}> {{ T "settings.payments.tips_enabled" }}</label>
+    <label class="set-row">{{ T "settings.payments.tip_presets" }}
+      <input type="text" name="presets" value="{{ .tipPresetsValue }}" inputmode="decimal" maxlength="40" aria-describedby="tip-presets-help" autocomplete="off">
+    </label>
+    <p id="tip-presets-help" class="muted">{{ T "settings.payments.tip_presets_help" }}</p>
+    <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+    <span id="pay-tips-msg" aria-live="polite"></span>
+  </form>
+  </fieldset>
   <!-- ut-docs#6566: the per-till card reader list (manager page; the route
        answers a cashier with 403, this link is not the gate). -->
   <p id="settings-card-readers" class="set-row"><a class="btn secondary" data-testid="card-readers-link" href="/settings/card-readers">{{ T "card_reader.settings.title" }}</a></p>

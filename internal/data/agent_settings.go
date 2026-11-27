@@ -121,6 +121,17 @@ var AgentSettings = []AgentSetting{
 	{Key: "payments.default_method", Region: "settings-payments",
 		LabelKey: "settings.payments.title", HintKey: "settings.payments.default_help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeText, Tier: SettingTierSensitive},
+	// Cashier tip entry at checkout. Unset = on for a service shop, off for
+	// every other (common.TipsEnabled), so no registry default is stated.
+	// Explain-only: a payments setting, a human click.
+	{Key: "payments.tips_enabled", Region: "settings-payments-tips",
+		LabelKey: "settings.payments.tips_enabled", HintKey: "settings.payments.tips_help", Kind: AgentSettingBool,
+		On: "1", Off: "0",
+		Type: SettingTypeBool, Tier: SettingTierSensitive},
+	{Key: "payments.tip_presets", Region: "settings-payments-tips",
+		LabelKey: "settings.payments.tip_presets", HintKey: "settings.payments.tip_presets_help", Kind: AgentSettingText,
+		Default: "10,15,20",
+		Type:    SettingTypeText, Tier: SettingTierSensitive},
 	{Key: SaleDisplayNoSchemeKey, Region: "settings-order-no",
 		LabelKey: "settings.order_no.title", HintKey: "settings.order_no.help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeEnum, Tier: SettingTierNormal, RemoteWritable: true,

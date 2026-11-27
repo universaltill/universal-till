@@ -3151,6 +3151,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				ReaderRowID: strings.TrimSpace(p.Reader),
 			})
 		}
+		// Cashier tip entry (form-encoded quick-pay legs only; a split leg
+		// carries its own JSON `tip`). tip_bp is a percent of the payable
+		// total in basis points, tip an amount in minor units; an amount wins.
+		// Applied after the total is known, below.
+		var formTipBP, formTipMinor int64
+		formTipLeg := -1
 		// Fallback for form-encoded tender buttons (hx-vals)
 		if len(payments) == 0 {
 			if err := r.ParseForm(); err == nil {
@@ -3199,6 +3205,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						return
 					}
 				}
+				if method != "" && method != "voucher" && formVoucherID == "" && common.TipsEnabled(r.Context(), d.Settings) {
+					var tipOK bool
+					formTipBP, formTipMinor, tipOK = parseFormTip(r.Form.Get("tip_bp"), r.Form.Get("tip"))
+					if !tipOK {
+						http.Error(w, "invalid tip amount", http.StatusBadRequest)
+						return
+					}
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -3208,6 +3222,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 						return
 					}
+					formTipLeg = len(payments)
 					payments = append(payments, pos.PaymentInput{
 						MethodID:  method,
 						Amount:    money.FromMinor(amount),
@@ -3294,6 +3309,24 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for i := range payments {
 			if !payments[i].Amount.IsPositive() {
 				payments[i].Amount = total
+			}
+		}
+		// The tip rides on the leg it was entered for: Amount includes it
+		// (core's one convention, #2571) and TipAmount is the breakdown. A
+		// percent is of the payable total, integer half-up; a tip above 100%
+		// of the total is refused as a slip (nothing recorded yet).
+		if formTipLeg >= 0 && (formTipBP > 0 || formTipMinor > 0) {
+			tip := formTipMinor
+			if tip == 0 {
+				tip = pos.TipForPercentBP(total, formTipBP).Minor()
+			}
+			if tip > total.Minor() {
+				http.Error(w, "invalid tip amount", http.StatusBadRequest)
+				return
+			}
+			if tip > 0 {
+				payments[formTipLeg].Amount = payments[formTipLeg].Amount.Add(money.FromMinor(tip))
+				payments[formTipLeg].TipAmount = money.FromMinor(tip)
 			}
 		}
 
@@ -4650,4 +4683,32 @@ func maskTxnRef(ref string) string {
 		return "…"
 	}
 	return "…" + ref[len(ref)-4:]
+}
+
+// parseFormTip reads the tip fields of a form-encoded quick-pay leg: tip_bp (a
+// percent in basis points, 0..10000) and tip (minor units, >= 0). Empty fields
+// mean no tip. ok is false for a malformed or out-of-range value. When both are
+// set the typed amount wins and the percent is dropped.
+func parseFormTip(bpRaw, minorRaw string) (bp, minor int64, ok bool) {
+	parse := func(raw string, max int64) (int64, bool) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return 0, true
+		}
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 || v > max {
+			return 0, false
+		}
+		return v, true
+	}
+	var okBP, okMinor bool
+	bp, okBP = parse(bpRaw, 10000)
+	minor, okMinor = parse(minorRaw, math.MaxInt64/4)
+	if !okBP || !okMinor {
+		return 0, 0, false
+	}
+	if minor > 0 {
+		bp = 0
+	}
+	return bp, minor, true
 }
