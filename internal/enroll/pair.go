@@ -219,7 +219,7 @@ func storeLeft(oldStore, newStore string) {
 // holds the attempt slot.
 func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) (oldStore string) {
 	log := logging.L()
-	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID}
+	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID, keyRegisterRearms, keyInUseElsewhere}
 	if !replica {
 		wipe = append(wipe, keyStoreID, keyMerchantID)
 		// The caller reports the left shop (storeLeft) only once the new

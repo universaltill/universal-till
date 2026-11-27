@@ -15,7 +15,7 @@
       "tr": "8b1c7b141bb7811391263816e9683e227d69022f9c877b5a2b36328bb7ffc517"
     },
     "backups": {
-      "en": "4acc5e14c08b7a33fdef1d4722953c9b1a11aaf9b112a4c388dc8bc07153025e",
+      "en": "761a61328da11da87944ba3dfc72997755d6b7bcecefb7ec519451efe6de936d",
       "fa": "e7f97547132b048cf7571ad358e3f858ecfe8aa318034d5f4948454845ac5179",
       "ar": "7cd5ffa7d3e8a2196726e32600cd6d470471171e7faabaa132ae11705305e5e6",
       "tr": "d6db65e698101cd6ba11733efeb0111d3838765c1e224d557fbf81fa80d0536b"
@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "5c743b3191749f168a08a3cb685aeeafbe49f1119bb1e977744adc2c693066ce",
+      "en": "84693e1c8b519c528ea27d6de56bed7992843fcb538a83a9bc1be8685a5a1a09",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -123,7 +123,7 @@
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
     },
     "multitill": {
-      "en": "91099bf15e6f49c66dfd0f0aca9ec05842becdf8084ec2d0e3a4e908ea6d7433",
+      "en": "891976cb491017a88b248a02d1366ecd001eba91fd0432cfc09cd8a34550b39c",
       "fa": "268fe26a9cef33ac32276707b3a7b8cc848dedb14e945162d0da7d59c43047a8",
       "ar": "57c2dc97d3fb535c17c0f23900f5a398ba10b0f54b9dc66c7a2f8a9dafa6689c",
       "tr": "b6c50a109b42607b1afd80944976ba0ad0f1898b3403d38d31313113983ec51c"
@@ -147,7 +147,7 @@
       "tr": "05e5b4c15dba67f406110cdb8c7ba15054b4820a4ab2ba5d281ca02905f020e3"
     },
     "open-orders": {
-      "en": "329e1a7393597bb233d8ec0689272cde4be2a04ef0056711a0de93df824c2ada",
+      "en": "03773ec2d59793ae10d3646e720ca4c33b121f70b03d43bb21eec85a65e36bcf",
       "fa": "bd1f5bb558ca2822779b2dabcf52eec17c289c16f72a254444d3e1b374a3b6ad",
       "ar": "af2396f2c4da3c1cd85cf3cb4649c4e7147764cbba9af9910396aebdf48a2e4f",
       "tr": "29610d46ea93ef9f2bffa67e9dbb13e76d4d8cf21a7ab984acab04ed57b4aac5"
@@ -165,7 +165,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "09ff3a9bc5de15a668ca1ae48ab1900cac1dedb3f957139f1231f3b34071fb68",
+      "en": "78815be77e6e65b4a2ba6ac5793a213e4c8cccaee4d045b7fba8c687337d747c",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -343,7 +343,7 @@
       "sha256": "dc1e643730d9adbe17c4d61ce6e8006a1c38d97062ccb74e50d05d8ab7b6ec9a"
     },
     "internal/pages/cloud_heal_chip.go": {
-      "sha256": "775a55e5c8bab822c760c595327be1941922f8e3aafc03592479b8bbc427e4e5"
+      "sha256": "04848feedf4612364a4c7c48b5ec14abc38c04ae0af97273c3355050a374e831"
     },
     "internal/pages/cloud_import_customers.go": {
       "sha256": "e6e73a234e74a2b28f59965a3e4f6a5aaeed6f2c7f5e06d323ae03357432f505"
@@ -580,7 +580,7 @@
       "sha256": "b9f6d7e0f2bb622c122705d4e58a975e6115d959ccd68e135e2c9c6196602a0c"
     },
     "internal/pages/offsite_backup_api.go": {
-      "sha256": "3b2914d6a25924ecbbd8b22fb46ee8d91e87a23b513733fa09024691aa24ba66"
+      "sha256": "9c4a8aadb1e6dca2bbe47b42286ce833356ece28955241193bf4a49911dd597c"
     },
     "internal/pages/open_orders_counter.go": {
       "sha256": "df4d1e06e12d370d6ba2b9e40ac1a1c7a76d2dc47f1f42341d0212a0eb6d115b"
@@ -667,7 +667,7 @@
       "sha256": "bb0aea14621ecc0c7651e203d793cde9c1a7f132df41324ad8b493ab23a0494a"
     },
     "internal/pages/register_blocked.go": {
-      "sha256": "9914bf4ace63b360106df64412394b696dabb45c9e18e5b06bed9b77fed2f806"
+      "sha256": "59f70ae4063cd9e7f068d2f82b2bd4f0c4e3d9735e1db1949c620bb61fade2a8"
     },
     "internal/pages/register_follows_till.go": {
       "sha256": "5331fc90ae4979fb09002afa5819d8a58e13c04680b647378c689f077a09a495"
@@ -694,7 +694,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "48017e32cf865f6c52b6130f2eb007143b42f39a9e231b1617d12df74510a376"
+      "sha256": "74193a04baff1192a3bfa95d9230e527496de5fff1b1e0c5a3206ab76072f349"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -736,7 +736,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "f37f0c9e4efd37e714a79cd87d552c37e5d07f1832fa590c8d47dfbc0d021682"
+      "sha256": "c0c18180adbbfd6496a3e39bcbec0d7d2f5218354cc2e9f12d80cd8028370cc9"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -832,7 +832,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "29b790a521b1646e9f5b25cd7e9fe24b4dc47dbbd9a75bbada44a8678a7d9f9a"
+      "sha256": "be12bc352bb6f6316620096a7be85c4beef7562fcd613c6065c4a376116e252c"
     },
     "web/public/app.js": {
       "sha256": "aa34895662d3549e0b48bcca5f93be7e51bc3793c22eb04fce09581e9bea822d"
@@ -1495,7 +1495,7 @@
       "sha256": "5db33f344f2eb86646a1ac20a8c897366c7d1d372c12e11ab405cfdfa256fe71"
     },
     "web/public/pairing-stream.js": {
-      "sha256": "e52176c5b6d045326558ea34b412535889caf67ef9a10bf2b72dcdd0db7dd269"
+      "sha256": "7e1341a9b4dd001e92e62bf2a8230b734e4ead9474242bc1e695ca4cf126cb9e"
     },
     "web/public/photo-cutout-worker.js": {
       "sha256": "9583f3b6af0d92b83aef6bc0c5bc03b8ddaa376aeccb5033faef54e199e51f82"
@@ -1541,6 +1541,9 @@
     },
     "web/public/till-confirm.js": {
       "sha256": "d424d67894d2bfdcd3b8b2b8db373793574641f787309ac76e263cd0eb76f973"
+    },
+    "web/public/tills-live.js": {
+      "sha256": "02c956614d2be4e648a0f026f38e445569b12f8991ae569b076f804e7263f1b3"
     },
     "web/public/tour.js": {
       "sha256": "374d570a8168ba362e519b819edb2c3d4569282f1c7610fe7aeafe07fbe04433"
@@ -1783,7 +1786,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "cdf924b878b816c89dadb4cbafc8ad9389e2279e2e3d265a546475afad0556cb"
+      "sha256": "0937fad7953ed274dc5d8aa0e38fac8945184f96822b9fada46359a28153db12"
     },
     "web/ui/pages/setup.html": {
       "sha256": "28e9b30748d061eb75d8e395b8c3e4464007a9ac57cd2cb6bb3a577df810702f"
@@ -1804,7 +1807,7 @@
       "sha256": "2c985cecab1e13486cb1dd1897d2dacac7e0bb1618cbe0d49b9c2e8c677ae26a"
     },
     "web/ui/pages/tills.html": {
-      "sha256": "e66c58a031aa77d14214c5c67116169ac542c6297fad21f89654370d47bbeed1"
+      "sha256": "d68666dcc4cb6a926f748bcadea55b44e09a9f385350ddf2ccf01669a760b4d2"
     },
     "web/ui/pages/translations.html": {
       "sha256": "669732ceb602e1b75cb8d829b7c8bb10c998da311be19b93319fd6efec319d79"
@@ -1876,7 +1879,7 @@
       "sha256": "1368c81af793162a852e2fb9afda8b333e6c8498bafb837b1d5686a8b76107d7"
     },
     "web/ui/partials/cloud_auth_chip.html": {
-      "sha256": "ad57fa21171b74a1d015d395ad52a305eca01f6b3e8ebea0d1dc2b612938421b"
+      "sha256": "9af869bb41bd6cbeb09d7e322c2c6a6fedffcd8a82a5ce258036bfbb9eea1637"
     },
     "web/ui/partials/cloud_key_show.html": {
       "sha256": "78441495e562ca86d8609bb163402b59a50f7a6cc729945a0c94402c86ce6a02"
@@ -1933,7 +1936,7 @@
       "sha256": "e5b71e6e4ba5a91dd22773b88199c431140df88cc922730bc052637c3e86cba3"
     },
     "web/ui/partials/join_replace_slot.html": {
-      "sha256": "7b7b3b7727931933932af7ae4ec40d9800bb1e600b96ad323b380694dea229c9"
+      "sha256": "f9346088e68f3ad9e2b7ca10a98c3cb9c43518afbec81f667874b8b1f6d2e531"
     },
     "web/ui/partials/journal.html": {
       "sha256": "dcadaa12e0442c93c000439b05903b16450899ae0bf90fd997b5c0a6cf26e053"
@@ -2185,7 +2188,7 @@
       "sha256": "501789ea6cf1a885d5653a5be1bf25a483fea0a64380e2d006acd3a4c65d6368"
     },
     "web/ui/partials/tills_roster.html": {
-      "sha256": "3c33b2ac12c736e7ed655232fb39c6e93ed96fcc6e9f7bff99ccf3d31bc08088"
+      "sha256": "ee3f2b8a09d56e9e46f79edee85fb34c507fcf89bd19f1c8477c006f032d5d7f"
     },
     "web/ui/partials/tills_sales_mirror.html": {
       "sha256": "d157c79e5ddf66d7c8c0b7171c0914f6b358df390dca7a7d8628538d99655101"
@@ -2200,7 +2203,7 @@
       "sha256": "5be5e325e580d52d5d22faf4ca4b98a5eaf30293b7b64c84168fd9579e419827"
     },
     "web/ui/partials/tills_tab_others.html": {
-      "sha256": "b493401a6176e89e49f4b25c9ca12e9bfc1fe32f7e425c2e458e058cabe8ddf8"
+      "sha256": "2d10cd8fafacb0e74aa304200787a9be922fac4ac7e6a31a556b3e8109941c44"
     },
     "web/ui/partials/tills_tab_readers.html": {
       "sha256": "8ff87a6be5ac20ca265173fc1a4070407193f3af6f760d9b4256fad61cc20b64"
@@ -2209,7 +2212,7 @@
       "sha256": "ff532926e036f2c5598fbf9a92e7bab0b44f454fcb85d87fe666ef3da5583f55"
     },
     "web/ui/partials/tills_tab_this.html": {
-      "sha256": "8424881796c54a9a67fd15a59856cc1a4c9eff29dd04c74e72863c5208580c0f"
+      "sha256": "ae53ec0fa9de50b185771aa847265636934d5591c3c6c79332321d229522e897"
     },
     "web/ui/partials/tour.html": {
       "sha256": "2841be557675d2df794489d381b4fbaecc40dc0ea1f99a28426fc796fc82bd6c"

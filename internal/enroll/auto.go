@@ -81,6 +81,7 @@ const (
 	ReasonHeld       = "held"
 	ReasonBlocked    = "blocked"
 	ReasonRegistered = "registered"
+	ReasonRestored   = "restored"
 )
 
 var releaseVersionRe = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -193,9 +194,15 @@ func AutoRegisterAllowed(ctx context.Context, cfg *config.Config, kv Settings) (
 	if ok, why := ReportingAllowed(ctx, cfg, kv); !ok {
 		return false, why
 	}
+	// ut-docs#7097 (AC9): a restored till's old shop still exists in the cloud;
+	// registering now would split it from that shop. Only Pair, Join or an
+	// explicit "Register as a new shop" clears the state.
+	if RestoredState(ctx, kv) {
+		return false, ReasonRestored
+	}
 	// A cloud pairing is held (my.-first wizard, ADR-0166, ut-docs#5127), or the
 	// cloud said this device was recently live / refused its key (ut-docs#5145).
-	if RegistrationHeld() || !RegisterBlockedUntil(ctx, kv).IsZero() || !KeyRefusedAt(ctx, kv).IsZero() {
+	if RegistrationHeld() || !RegisterBlockedUntil(ctx, kv).IsZero() || keyRefusedHolds(ctx, kv) || InUseElsewhere(ctx, kv) {
 		return false, ReasonHeld
 	}
 	return true, ""

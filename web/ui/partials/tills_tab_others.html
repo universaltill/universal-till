@@ -49,6 +49,8 @@
     <td>
       {{ if eq .State "local_only" }}<span class="tag warn">{{ T "tills.list.state.local_only" }}</span>
         <br><small class="muted">{{ if .LongUnseen }}{{ T "tills.list.state.local_only.hint_old" }}{{ else }}{{ T "tills.list.state.local_only.hint_recent" }}{{ end }}</small>
+      {{ else if eq .State "old_entry" }}<span class="tag warn" data-testid="till-old-entry">{{ T "tills.list.state.old_entry" }}</span>
+        <br><small class="muted">{{ T "tills.list.state.old_entry.hint" }}</small>
       {{ else if eq .State "cloud_only" }}<span class="tag">{{ T "tills.list.state.cloud_only" }}</span>
         <br><small class="muted">{{ printf (T "tills.list.state.cloud_only.hint") .Name }} <a href="https://my.universaltill.com" rel="noopener" hx-boost="false">{{ T "tills.list.open_my" }}</a></small>
       {{ else if eq .State "role_mismatch" }}<span class="tag warn">{{ T "tills.list.state.role_mismatch" }}</span>
@@ -61,7 +63,7 @@
     <td>{{ if and .InLocal .InCloud }}{{ T "tills.list.source.both" }}{{ else if .InCloud }}{{ T "tills.list.source.account" }}{{ else }}{{ T "tills.list.source.network" }}{{ end }}</td>
     <td>{{ if .LastSeen }}{{ datetime .LastSeen }}{{ else }}—{{ end }}</td>
     <td>
-      {{ if and (not $.SyncPrimary) (eq .State "local_only") }}
+      {{ if and (not $.SyncPrimary) (or (eq .State "local_only") (eq .State "old_entry")) }}
       <div x-data="{ ask: false }" data-testid="till-remove-{{ .ID }}">
         <button type="button" class="btn danger" x-show="!ask" @click="ask = true">{{ T "tills.list.remove" }}</button>
         <span x-show="ask" x-cloak role="group">

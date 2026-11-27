@@ -128,7 +128,7 @@ func tillsOthersView(ctx context.Context, d *common.Deps, m map[string]any, refr
 			continue
 		}
 		switch r.State {
-		case tills.StateLocalOnly:
+		case tills.StateLocalOnly, tills.StateOldEntry:
 			out.Stale = append(out.Stale, r)
 			if r.LongUnseen {
 				out.StaleLong = append(out.StaleLong, r)
