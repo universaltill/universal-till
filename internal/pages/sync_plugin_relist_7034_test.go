@@ -3,6 +3,8 @@ package pages
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -177,6 +179,12 @@ func TestSyncPullTick_7034_RelistVersionMismatchRollsBackKeepingSettings(t *test
 	if !replica.hasPluginFiles("com.test.p") {
 		t.Fatal("plugin files were removed")
 	}
+	if _, err := os.Stat(filepath.Join(replica.dataDir, "plugins", "com.test.p", "versions", "1.1.0")); !os.IsNotExist(err) {
+		t.Fatalf("versions/1.1.0 exists after the mismatch (err=%v)", err)
+	}
+	if r1, found, err := plugins.NewInstallStatusStore(replica.dp.Db).Get(t.Context(), "L1"); err != nil || !found || r1.State != plugins.InstallStateActive {
+		t.Fatalf("L1 record = %+v,%v,%v, want kept Active", r1, found, err)
+	}
 	// Settings survival is asserted in the stub-based tests: the fake
 	// marketplace manifest declares no settings, so a real in-place upgrade
 	// attempt reconciles an undeclared key away (pre-existing, same listing too).
@@ -217,5 +225,112 @@ func TestSyncPullTick_7034_RelistPlainFailureNoHeartbeatInstallFailed(t *testing
 		if msg, _ := p["msg"].(string); strings.Contains(msg, "plugin install failed") {
 			t.Fatalf("heartbeat reports %q", msg)
 		}
+	}
+}
+
+func failSaveFor7034(t *testing.T, dp *common.Deps, listing string) {
+	t.Helper()
+	if _, err := dp.Db.Exec(`CREATE TRIGGER fail_save_7034 BEFORE INSERT ON plugin_install_status
+		WHEN NEW.listing_id = '` + listing + `' BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// M1: an installer that leaves another plugin's Active record under L2 must
+// not make the sync drop P's L1 record.
+func TestConvergePluginSet_7034_InstallLeavingOtherPluginUnderL2KeepsL1(t *testing.T) {
+	dp, _, _ := relistSetup7034(t, "7034-m1.db")
+	orig := pluginSyncInstall
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool, adopt []string) (string, error) {
+		return "installed", plugins.NewInstallStatusStore(d.Db).Save(ctx, plugins.InstallStatusRecord{
+			ListingID: listing, PluginID: "com.t.q", PluginName: "q", CurrentVersion: version, State: plugins.InstallStateActive,
+		})
+	}
+	t.Cleanup(func() { pluginSyncInstall = orig })
+	l2 := row6930("L2", "com.t.p", boolp6666(true))
+	l2.Version = "1.1.0"
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{l2})
+	if _, ok, _ := plugins.NewInstallStatusStore(dp.Db).Get(t.Context(), "L1"); !ok {
+		t.Fatal("L1 record dropped although L2 is not P's")
+	}
+}
+
+// M2: an Active record of another plugin under L2 is never overwritten.
+func TestConvergePluginSet_7034_OtherPluginsL2RecordNotOverwritten(t *testing.T) {
+	dp, calls, _ := relistSetup7034(t, "7034-m2.db")
+	store := plugins.NewInstallStatusStore(dp.Db)
+	if err := store.Save(t.Context(), plugins.InstallStatusRecord{ListingID: "L2", PluginID: "com.t.q", PluginName: "q", CurrentVersion: "3.0.0", State: plugins.InstallStateActive}); err != nil {
+		t.Fatal(err)
+	}
+	_ = calls
+	orig := pluginSyncInstall
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool, adopt []string) (string, error) {
+		return "", errors.New("down")
+	}
+	t.Cleanup(func() { pluginSyncInstall = orig })
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row6930("L2", "com.t.p", boolp6666(true))})
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{func() data.PluginSyncRow {
+		r := row6930("L2", "com.t.p", boolp6666(true))
+		r.Version = "1.1.0"
+		return r
+	}()})
+	rec, ok, _ := store.Get(t.Context(), "L2")
+	if !ok || rec.PluginID != "com.t.q" || rec.CurrentVersion != "3.0.0" {
+		t.Fatalf("L2 = %+v, want Q untouched", rec)
+	}
+	if _, ok, _ := store.Get(t.Context(), "L1"); !ok {
+		t.Fatal("L1 dropped")
+	}
+}
+
+// Rekey Save failure keeps L1.
+func TestConvergePluginSet_7034_RekeySaveFailureKeepsL1(t *testing.T) {
+	dp, _, _ := relistSetup7034(t, "7034-rk.db")
+	failSaveFor7034(t, dp, "L2")
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row6930("L2", "com.t.p", boolp6666(true))})
+	store := plugins.NewInstallStatusStore(dp.Db)
+	if _, ok, _ := store.Get(t.Context(), "L1"); !ok {
+		t.Fatal("L1 dropped although the re-key save failed")
+	}
+	if _, ok, _ := store.Get(t.Context(), "L2"); ok {
+		t.Fatal("L2 exists despite the failed save")
+	}
+}
+
+// L4: a failed pre-adopt save skips the install this tick.
+func TestConvergePluginSet_7034_PreAdoptFailureSkipsInstall(t *testing.T) {
+	dp, calls, _ := relistSetup7034(t, "7034-l4.db")
+	failSaveFor7034(t, dp, "L2")
+	before := len(*calls)
+	l2 := row6930("L2", "com.t.p", boolp6666(true))
+	l2.Version = "1.1.0"
+	if convergePluginSet(t.Context(), dp, []data.PluginSyncRow{l2}) {
+		t.Fatal("converged")
+	}
+	if len(*calls) != before {
+		t.Fatalf("install attempted despite the failed pre-adopt")
+	}
+	if _, ok, _ := plugins.NewInstallStatusStore(dp.Db).Get(t.Context(), "L1"); !ok {
+		t.Fatal("L1 dropped")
+	}
+}
+
+// L2: a cloud-hosted refusal removes this tick's pre-adopted copy.
+func TestConvergePluginSet_7034_CloudHostedRemovesPreAdopted(t *testing.T) {
+	dp, _, _ := relistSetup7034(t, "7034-l2.db")
+	orig := pluginSyncInstall
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool, adopt []string) (string, error) {
+		return "", plugins.ErrCloudHostedPlugin
+	}
+	t.Cleanup(func() { pluginSyncInstall = orig })
+	l2 := row6930("L2", "com.t.p", boolp6666(true))
+	l2.Version = "1.1.0"
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{l2})
+	store := plugins.NewInstallStatusStore(dp.Db)
+	if _, ok, _ := store.Get(t.Context(), "L2"); ok {
+		t.Fatal("pre-adopted L2 copy left behind")
+	}
+	if _, ok, _ := store.Get(t.Context(), "L1"); !ok {
+		t.Fatal("L1 dropped")
 	}
 }

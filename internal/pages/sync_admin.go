@@ -1101,6 +1101,13 @@ func relistSource(records map[string]plugins.InstallStatusRecord, inPrimary map[
 	return best, found
 }
 
+// listingHeldByOther reports an Active record under row's listing id that
+// belongs to a different plugin: it must never be overwritten (ut-docs#7034).
+func listingHeldByOther(records map[string]plugins.InstallStatusRecord, row data.PluginSyncRow) bool {
+	cur, ok := records[row.ListingID]
+	return ok && cur.State == plugins.InstallStateActive && cur.PluginID != row.PluginID
+}
+
 // dropRelistedRecord deletes the stale record by listing id (ut-docs#7034).
 func dropRelistedRecord(ctx context.Context, store *plugins.InstallStatusStore, d *common.Deps, src plugins.InstallStatusRecord, pluginID string) {
 	if err := store.DeleteListing(ctx, src.ListingID, pluginID); err != nil {
@@ -1261,7 +1268,7 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		if installed && version == row.Version && installState != data.PluginStateBroken {
 			clearBrokenRefetch(d, row.ListingID)
 			resolvePluginSyncListing(row.ListingID)
-			if src, ok := relistSource(records, inPrimary, row); ok {
+			if src, ok := relistSource(records, inPrimary, row); ok && !listingHeldByOther(records, row) {
 				rekeyRelisted(ctx, statusStore, d, row, src, version)
 			}
 			continue
@@ -1296,17 +1303,27 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		// L2 as a copy of the stale record first: the install then sees a prior
 		// good version and rolls back, and P always has an Active record.
 		src, relisted := relistSource(records, inPrimary, row)
+		if relisted && listingHeldByOther(records, row) {
+			relisted = false // L2 belongs to another plugin: never overwrite or drop for it
+		}
+		preAdopted := false
 		if cur, ok := records[row.ListingID]; relisted && !(ok && cur.State == plugins.InstallStateActive && cur.PluginID == row.PluginID) {
 			adopted := src
 			adopted.ListingID, adopted.UpdatedAt = row.ListingID, ""
+			if installed {
+				adopted.CurrentVersion = version
+			}
 			if adopted.PluginName == "" {
 				adopted.PluginName = row.PluginName
 			}
 			adopted.TargetVersion, adopted.MessageKey, adopted.Retryable = "", "", false
 			adopted.State = plugins.InstallStateActive
 			if err := statusStore.Save(ctx, adopted); err != nil {
-				logging.L().Warnf("plugin sync: adopt %s record for relisted %s: %v", row.ListingID, row.PluginID, err)
+				logging.L().Warnf("plugin sync: adopt %s record for relisted %s (skipping install this tick): %v", row.ListingID, row.PluginID, err)
+				converged = false
+				continue
 			}
+			preAdopted = true
 		}
 		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version, inactive, adopt); err != nil {
 			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
@@ -1314,6 +1331,11 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			// not a failure to retry every tick.
 			if errors.Is(err, plugins.ErrCloudHostedPlugin) {
 				logging.L().Infof("plugin sync: %s (%s) runs in the cloud, not on a till — nothing to follow", row.PluginName, row.ListingID)
+				if preAdopted {
+					if derr := statusStore.DeleteListing(ctx, row.ListingID, row.PluginID); derr != nil {
+						logging.L().Warnf("plugin sync: drop pre-adopted record %s: %v", row.ListingID, derr)
+					}
+				}
 				continue
 			}
 			warnPluginSyncOnce(pluginSyncInstallKeyPrefix+row.ListingID, "plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
@@ -1324,7 +1346,12 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
 			row.PluginName, row.ListingID, row.Version)
 		if relisted {
-			dropRelistedRecord(ctx, statusStore, d, src, row.PluginID)
+			// Only when the install left L2 Active for this plugin (a stub or
+			// odd installer could leave another plugin's record there).
+			if l2, ok, gerr := statusStore.Get(ctx, row.ListingID); gerr == nil && ok &&
+				l2.State == plugins.InstallStateActive && l2.PluginID == src.PluginID {
+				dropRelistedRecord(ctx, statusStore, d, src, row.PluginID)
+			}
 		}
 		resolvePluginSyncListing(row.ListingID)
 		changed = true
