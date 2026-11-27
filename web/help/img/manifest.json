@@ -343,7 +343,7 @@
       "sha256": "dc1e643730d9adbe17c4d61ce6e8006a1c38d97062ccb74e50d05d8ab7b6ec9a"
     },
     "internal/pages/cloud_heal_chip.go": {
-      "sha256": "775a55e5c8bab822c760c595327be1941922f8e3aafc03592479b8bbc427e4e5"
+      "sha256": "a80b640d102abd211df21e5161a627a797b9e746c2478bee64e8e6724ad54ea4"
     },
     "internal/pages/cloud_import_customers.go": {
       "sha256": "e6e73a234e74a2b28f59965a3e4f6a5aaeed6f2c7f5e06d323ae03357432f505"

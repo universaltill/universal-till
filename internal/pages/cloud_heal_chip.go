@@ -64,14 +64,14 @@ func healChip(locale string, st credheal.Status, hasOwner bool) (healView, bool)
 	case credheal.ReasonReplaced:
 		v := healView{Reason: st.Reason, Short: t("replaced_unnamed_short"), Sentence: t("replaced_unnamed"), Button: t("btn_join"), Href: healHrefJoin}
 		if st.Detail != "" {
-			v.Short, v.Sentence = fmt.Sprintf(t("replaced_short"), st.Detail), fmt.Sprintf(t("replaced"), st.Detail)
+			v.Short, v.Sentence = fmt.Sprintf(t("replaced_short"), st.Detail), fmt.Sprintf(t("replaced_full"), st.Detail)
 		}
 		return v, true
 	case credheal.ReasonMoved:
 		// The cloud names the target by its store id, never a display name:
 		// never rendered, the till says "another shop" (review 2026-11-27).
 		name := t("unnamed_shop")
-		return healView{Reason: st.Reason, Short: fmt.Sprintf(t("moved_short"), name), Sentence: fmt.Sprintf(t("moved"), name), Button: t("btn_open"), Href: healHrefRegister}, true
+		return healView{Reason: st.Reason, Short: fmt.Sprintf(t("moved_short"), name), Sentence: fmt.Sprintf(t("moved_full"), name), Button: t("btn_open"), Href: healHrefRegister}, true
 	case credheal.ReasonStoreDeleted:
 		// ux-notes 3.6 asks for a "Check again" button; it needs a new engine
 		// route that this slice may not add (internal/credheal is T1's), so
