@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ADR-0217 §2.2: the recover message is pinned byte for byte by a vector
+// ADR-0222 §2.2: the recover message is pinned byte for byte by a vector
 // file that ut-cloud's internal/approvalkey carries identically.
 func TestRecoverMessageMatchesGoldenVector(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "recover_vector.json"))

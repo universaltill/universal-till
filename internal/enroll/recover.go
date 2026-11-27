@@ -1,6 +1,6 @@
 package enroll
 
-// Self-heal recover (ADR-0217, design §4.3): a till whose cloud credential is
+// Self-heal recover (ADR-0222, design §4.3): a till whose cloud credential is
 // dead proves its pinned approval key and gets a NEW credential for the SAME
 // store and device, with no human. Two calls, neither authenticated with the
 // dead token: a challenge (a single-use server nonce), then the signed

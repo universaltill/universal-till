@@ -757,13 +757,13 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Code == "device_revoked" && finalRevokeReasons[ae.Reason] {
 		// ADR-0199 D2: this till left the shop for good; its key file goes.
-		// Only a reason that says so (ADR-0217 T3): a device_revoked with no
+		// Only a reason that says so (ADR-0222 T3): a device_revoked with no
 		// reason, or a healable one (store_deleted, pair_abandoned), may still
 		// come back, and a till that heals needs its shop key.
 		u.Keys.DeleteForStore(u.storeID())
 	}
 	if errors.As(err, &ae) {
-		// ADR-0217: a 401 with an envelope code is evidence for the heal
+		// ADR-0222: a 401 with an envelope code is evidence for the heal
 		// engine (it probes before it acts).
 		if ae.Status == 401 {
 			credheal.Report(credheal.Signal{Source: "backup", Code: ae.Code, Reason: ae.Reason})

@@ -1,4 +1,4 @@
-# Till self-heal engine (ut-docs#7097, ADR-0217 slices T1 and T3)
+# Till self-heal engine (ut-docs#7097, ADR-0222 slices T1 and T3)
 
 Status: **stub, the Reviewer completes it** (a different-model pass over the
 diff is required by the pipeline; none has run on this code yet).
@@ -31,7 +31,7 @@ Independent security pass by a different-model subagent (Fable) plus the Reviewe
 Findings and outcome:
 
 1. MED, fixed. The round slept its 0-60 s jitter and then called Recover without looking again: a till paired or healthy meanwhile could have a healthy credential rotated (and an owner notice, one of three daily recovers). A generation counter (bumped by `reset` and `working`) and a second `CanRecover` now follow the pause. Test `TestRoundDoesNotRecoverACredentialThatBecameHealthyDuringTheJitter` (red when the check is removed).
-2. MED, fixed (tester item B). A credential dead at boot with no cloud plan was not noticed for 15 minutes: the first approval-key 401 fired before the engine existed. `enroll` now keeps the first early dead-credential answer and replays it once when the engine installs its hook (5 minute freshness, cleared when the hook is removed). The engine still probes with a real check-in first, so nothing is rotated on a stray 401; this stays inside ADR-0148 as amended by ADR-0217. Tests `heal_hooks_early_test.go`.
+2. MED, fixed (tester item B). A credential dead at boot with no cloud plan was not noticed for 15 minutes: the first approval-key 401 fired before the engine existed. `enroll` now keeps the first early dead-credential answer and replays it once when the engine installs its hook (5 minute freshness, cleared when the hook is removed). The engine still probes with a real check-in first, so nothing is rotated on a stray 401; this stays inside ADR-0148 as amended by ADR-0222. Tests `heal_hooks_early_test.go`.
 3. MED, fixed. The cloud's `moved_to` is the target shop's id, not a name: it is no longer kept as the heal detail.
 4. LOW, fixed. Server `code` and `reason` words are clamped (40 chars, no control characters) before logging or saving; state is saved with the state key last; a 5xx on `/recover` gets the 30 s lost-answer floor (M8).
 5. Tester item D, fixed. `recover_vector.json` is now byte-identical to the cloud's (kid added), independently verified.

@@ -10,7 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// StartCredHeal wires and starts the till's self-heal engine (ADR-0217): when
+// StartCredHeal wires and starts the till's self-heal engine (ADR-0222): when
 // the cloud stops accepting this till's credential it proves its approval key
 // and gets a new one by itself, in the background. Headless: no request
 // goroutine, no sale-path read. Joined by wg like the other loops.

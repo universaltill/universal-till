@@ -691,7 +691,7 @@ func TestRevokedKicksOneCheckIn(t *testing.T) {
 	}
 }
 
-// ADR-0217 T3: a refused cloud link is evidence for the heal engine (which
+// ADR-0222 T3: a refused cloud link is evidence for the heal engine (which
 // probes with a check-in before it rotates anything).
 func TestRevokedReportsToTheHealEngine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

@@ -183,7 +183,7 @@ func TestKickReportsOncePerIdentityAndRetriesSlowly(t *testing.T) {
 	}
 }
 
-// ADR-0217 T3 (dead-end row 21): the report never gives up. After the listed
+// ADR-0222 T3 (dead-end row 21): the report never gives up. After the listed
 // waits it goes on at a long fixed interval, so a till that could not pin its
 // key (a dead credential, a long outage) still does once it can.
 func TestKickRetryNeverGivesUp(t *testing.T) {

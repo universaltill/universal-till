@@ -1,4 +1,4 @@
-// Package credheal is the till's self-heal engine (ADR-0217, design §4): when
+// Package credheal is the till's self-heal engine (ADR-0222, design §4): when
 // the cloud stops accepting this till's credential, it proves its approval key
 // and gets a new credential for the same store and device, in the background,
 // with no human. A human is asked only when the till cannot prove who it is,
@@ -125,7 +125,7 @@ type Deps struct {
 	Now        func() time.Time
 	Jitter     func() float64 // in [0,1)
 	// Pause waits d or until ctx ends (tests replace it). It carries the
-	// 0-60 s jitter before a first attempt (ADR-0217 review M6).
+	// 0-60 s jitter before a first attempt (ADR-0222 review M6).
 	Pause func(ctx context.Context, d time.Duration)
 }
 

@@ -2478,7 +2478,7 @@ type statusError struct {
 	Replaced *ReplacedSignal
 	// Reason, Recover and Detail are a 401 device_revoked's data.reason,
 	// data.recover and the display text of replaced_by / moved_to
-	// (ADR-0217 §2.3); empty for any other answer.
+	// (ADR-0222 §2.3); empty for any other answer.
 	Reason, Detail string
 	Recover        bool
 }

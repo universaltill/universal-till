@@ -8,7 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 )
 
-// ADR-0217 §4.7: the heal engine's states as plain words in the status bar.
+// ADR-0222 §4.7: the heal engine's states as plain words in the status bar.
 // "Reconnecting" shows from the first refused call (credheal.Report sets it
 // before the engine's goroutine runs); a state that needs a person carries
 // exactly one link. Never a modal; selling is never touched.
