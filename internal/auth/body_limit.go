@@ -30,6 +30,7 @@ var exemptBodyOverrides = map[string]int64{
 	"/api/sync/settings/apply":    256 << 10, // = pages.maxSyncSettingsBody
 	"/api/sync/no-sales":          256 << 10, // <=100 rows
 	"/api/sync/cleared-baskets":   256 << 10, // <=100 rows
+	"/api/sync/plugin-records":    3 << 19,   // 1.5 MiB = pages.pluginRecordsMaxBody: <=20 records of <=64 KiB
 }
 
 // ExemptBodyLimit is the body cap Middleware applies to an exempt path.

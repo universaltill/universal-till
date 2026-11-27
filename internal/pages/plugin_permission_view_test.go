@@ -23,6 +23,8 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 		"schedule":               "plugins.permissions.desc.schedule",
 		"cloud:directive":        "plugins.permissions.desc.cloud_directive",
 		"secret:write":           "plugins.permissions.desc.secret_write",
+		// ut-docs#3697: share records between the shop's tills.
+		"records:sync": "plugins.permissions.desc.records_sync",
 		// ADR-0140 (ut-docs#3862).
 		"device-info": "plugins.permissions.desc.device_info",
 		// ADR-0149 §6 (ut-docs#3976): the staff list gets its own consent

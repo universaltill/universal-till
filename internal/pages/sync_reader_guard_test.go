@@ -123,6 +123,7 @@ func TestReaderBearerRefusedOnEverySyncRoute(t *testing.T) {
 	registerSyncVouchers(g.mux, g.d)
 	registerSyncHeldSales(g.mux, g.d)
 	registerSyncUsers(g.mux, g.d)
+	registerSyncPluginRecords(g.mux, g.d) // ut-docs#3697
 	registerSyncSettings(g.mux, g.d, nil)
 	registerSyncCatalog(g.mux, g.d)
 	registerSyncAdmin(g.mux, g.d)
