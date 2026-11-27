@@ -903,6 +903,7 @@
   "settings.move.refused_paid_licence": {"description": "Move refused: the till's shop has a paid/granted plan.", "review": "standard"},
   "settings.move.refused_target_unavailable": {"description": "Move refused: the target shop already has a main till, is merging, or is unavailable.", "review": "standard"},
   "settings.move.refused_source_unavailable": {"description": "Move refused: the till's current shop is unavailable (deleted or merging).", "review": "standard"},
+  "settings.tse.credential_missing": {"description": "Settings → Receipt signing (TSE) notice on a main till whose signing credential is missing (restored backup); the manager re-enters business details and presses Retry. No compliance claims.", "review": "standard"},
   "settings.move.refused_pending": {"description": "Move refused: another move is already pending for this till.", "review": "standard"},
   "settings.move.refused_declined_recently": {"description": "Move refused: a recent decline blocks this requester for a day.", "review": "standard"},
   "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"},

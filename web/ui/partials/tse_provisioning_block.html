@@ -18,7 +18,10 @@
      hint saying why instead.
      ut-docs#3039: on a till that follows a main till (tseFollowsMain) the
      record is the main till's synced one and both actions answer 409, so
-     neither button renders — only a hint to act on the main till. -->
+     neither button renders — only a hint to act on the main till.
+     ut-docs#7050: a retryable state with no stored identity (credential_missing
+     after a restore) shows the four business-identity fields inline instead of
+     the one-click Retry; the form posts tse_identity_form=1. -->
 {{ if .tseProvisioning }}
 <div class="tse-provisioning-block" data-testid="tse-provisioning" style="margin:.3rem 0">
   {{ if .tseProvisioning.ReasonKey }}
@@ -30,10 +33,34 @@
   <p class="muted" data-testid="tse-provisioning-main-till-only">{{ T "settings.error.change_on_main_till" }}</p>
   {{ else }}
   {{ if .tseRetryable }}
+  {{ if .tseNeedsIdentity }}
+  <form class="tse-identity-form" data-testid="tse-identity-form" style="display:grid;gap:.6rem;margin-block:.5rem"
+        hx-post="/api/settings/retry-tse-provisioning"
+        hx-target="closest .tse-provisioning-block" hx-swap="outerHTML"
+        hx-disabled-elt="find button[type=submit]" hx-indicator="this">
+    <input type="hidden" name="tse_identity_form" value="1">
+    {{ if .tseIdentityErr }}<p class="notice-block-warn" id="tse-identity-error" role="alert" tabindex="-1" autofocus data-testid="tse-identity-error">{{ T .tseIdentityErr }}</p>{{ end }}
+    <label style="display:grid;gap:.25rem">{{ T "setup.tse.legal_name" }}
+      <input type="text" name="tse_legal_name" maxlength="200" required enterkeyhint="next" autocomplete="organization"{{ if gt (len .tseIdentity.LegalName) 200 }} aria-invalid="true"{{ end }} value="{{ .tseIdentity.LegalName }}" style="inline-size:100%;min-height:44px;padding-inline:.6rem;box-sizing:border-box">
+    </label>
+    <label style="display:grid;gap:.25rem">{{ T "setup.tse.owner_name" }}
+      <input type="text" name="tse_owner_name" maxlength="200" required enterkeyhint="next" autocomplete="name"{{ if gt (len .tseIdentity.OwnerName) 200 }} aria-invalid="true"{{ end }} value="{{ .tseIdentity.OwnerName }}" style="inline-size:100%;min-height:44px;padding-inline:.6rem;box-sizing:border-box">
+    </label>
+    <label style="display:grid;gap:.25rem">{{ T "setup.tse.tax_number" }}
+      <input type="text" name="tse_tax_number" maxlength="200" required enterkeyhint="next" dir="ltr" aria-describedby="tse-id-hint-tax"{{ if or (eq .tseIdentityErr "setup.error.tse_tax_number") (gt (len .tseIdentity.TaxNumber) 200) }} aria-invalid="true"{{ end }} value="{{ .tseIdentity.TaxNumber }}" style="inline-size:100%;min-height:44px;padding-inline:.6rem;box-sizing:border-box">
+      <span class="muted" id="tse-id-hint-tax">{{ T "setup.tse.tax_number_hint" }}</span>
+    </label>
+    <label style="display:grid;gap:.25rem">{{ T "setup.tse.address" }}
+      <input type="text" name="tse_address" maxlength="200" required enterkeyhint="done" autocomplete="street-address"{{ if gt (len .tseIdentity.Address) 200 }} aria-invalid="true"{{ end }} value="{{ .tseIdentity.Address }}" style="inline-size:100%;min-height:44px;padding-inline:.6rem;box-sizing:border-box">
+    </label>
+    <button type="submit" class="btn secondary" data-testid="tse-provisioning-retry" style="min-height:44px;inline-size:100%">{{ T "settings.tse.retry_btn" }}</button>
+  </form>
+  {{ else }}
   <button class="btn secondary" data-testid="tse-provisioning-retry"
           hx-post="/api/settings/retry-tse-provisioning"
           hx-target="closest .tse-provisioning-block" hx-swap="outerHTML"
           hx-disabled-elt="this">{{ T "settings.tse.retry_btn" }}</button>
+  {{ end }}
   {{ end }}
   {{ if .tseCanDismiss }}
   <button class="btn secondary" data-testid="tse-provisioning-dismiss"

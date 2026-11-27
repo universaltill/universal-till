@@ -80,6 +80,9 @@ func refuseShopWideDirectiveOnAdditionalTill(ctx context.Context, d *common.Deps
 
 func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 	logicalKey, _ := resolveFiscalPostureKey(d, key)
+	if logicalKey == tseCredentialHeldKey { // ut-docs#7050: restore-detection bookkeeping, never remote
+		return fmt.Errorf("%s is bookkeeping and cannot be set via a remote directive", logicalKey)
+	}
 	if logicalKey == wireKeySigningDeviceConfigured || logicalKey == wireKeySigningDeviceFailingSince {
 		return fmt.Errorf("fiscal posture (%s) is owner-only and cannot be set via a remote directive", logicalKey)
 	}
