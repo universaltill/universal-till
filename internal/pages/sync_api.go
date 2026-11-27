@@ -809,7 +809,28 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		replaceID := ""
-		if sameName && !strings.EqualFold(name, primaryName) && !existing.SeenWithin(time.Now(), replaceLiveWindow) {
+		// ut-docs#7098: a manager who approved this join as "same device as
+		// that old entry" chose the row to replace; it beats the device-id and
+		// name rules and is checked again now (the till may have come back
+		// since the approval). The choice rides on the approval token only.
+		approvedReplace := false
+		if chosen, ok, cerr := pairingRepo.ReplaceTillForToken(r.Context(), presented); cerr != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", cerr)
+			return
+		} else if ok && chosen != "" {
+			wantRole := role
+			if ar, aok, _ := pairingRepo.RoleForToken(r.Context(), presented); aok {
+				wantRole = ar
+			}
+			if status, key := validateReplaceChoice(r.Context(), d, chosen, name, wantRole); key != "" {
+				common.LocalizedError(w, r, status, key)
+				return
+			}
+			if byID, found := tillRowByID(r.Context(), repo, chosen); found {
+				replaceID, existing, sameName, approvedReplace = byID.ID, byID, false, true
+			}
+		}
+		if replaceID == "" && sameName && !strings.EqualFold(name, primaryName) && !existing.SeenWithin(time.Now(), replaceLiveWindow) {
 			// Only a manager's approval of THIS name unlocks a replace: a typed
 			// code, or a token approved for another device name, never does.
 			approvedName, approved, aerr := pairingRepo.NameForToken(r.Context(), presented)
@@ -901,7 +922,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		if in.DeviceID != "" && validRequesterDeviceID(in.DeviceID) {
-			if err := repo.SetDeviceID(r.Context(), tillID, in.DeviceID); err != nil {
+			if approvedReplace {
+				// The manager said this device IS that entry: the row's device
+				// id moves to it (the register link keeps the old id as
+				// superseded_by, see enrolRegister).
+				if _, err := repo.ReplaceEnrolmentDevice(r.Context(), tillID, in.DeviceID); err != nil {
+					logging.L().Warnf("sync: move device id to replaced till %s: %v", tillID, err)
+				}
+			} else if err := repo.SetDeviceID(r.Context(), tillID, in.DeviceID); err != nil {
 				logging.L().Warnf("sync: remember device id of enrolled till %s: %v", tillID, err)
 			}
 		}
@@ -1086,8 +1114,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 
 	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "sync_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		// A manager session, or a manager PIN typed on the spot (ut-docs#7098).
+		actor, ok := authorizeTillRemoval(w, r, d)
+		if !ok {
 			return
 		}
 		// ut-docs#405: the shop's till roster now syncs to every replica
@@ -1105,7 +1134,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		id := r.PathValue("id")
 		// ut-docs#7098: removing a till retires the register it owned.
-		if err := revokeTillAndRetireRegister(r.Context(), repo, posRepo, id, data.RetiredRevoked, getSessionUserID(r)); err != nil {
+		if err := revokeTillAndRetireRegister(r.Context(), repo, posRepo, id, data.RetiredRevoked, actor); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
@@ -1114,7 +1143,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if d.Link != nil {
 			d.Link.Disconnect(id)
 		}
-		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_revoked",
+		_ = posRepo.InsertAudit(r.Context(), nil, actor, "till", id, "till_revoked",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		// No HX-Refresh (ut-docs#2904): the Revoke button refreshes only
 		// #tills-roster (tills_roster.html, "ok refresh-region");
@@ -1811,4 +1840,18 @@ func joinedReceiptPrefix(granted string, tillNo int) string {
 		return granted
 	}
 	return fmt.Sprintf("T%d-", tillNo)
+}
+
+// tillRowByID finds an enrolled till by id.
+func tillRowByID(ctx context.Context, repo *data.TillsRepo, id string) (data.TillRow, bool) {
+	list, err := repo.ListTills(ctx)
+	if err != nil {
+		return data.TillRow{}, false
+	}
+	for _, t := range list {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return data.TillRow{}, false
 }

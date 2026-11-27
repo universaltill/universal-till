@@ -45,8 +45,15 @@ var fleetCache struct {
 	mu      sync.Mutex
 	at      time.Time
 	devices []enroll.Device
+	removed []enroll.RemovedTill // the cloud's removed_tills (ut-docs#7098); nil from an older cloud
 	ok      bool
 }
+
+// noteRemovedFromFetch is how a fleet fetch hands over the removed list it
+// read in the same call; accountFleet files it with the devices.
+var fetchRemoved []enroll.RemovedTill
+
+func noteRemovedFromFetch(r []enroll.RemovedTill) { fetchRemoved = r }
 
 const (
 	fleetCacheTTL     = time.Minute
@@ -55,7 +62,9 @@ const (
 
 // tillsFleetFetch is a var so tests can stand in for the marketplace.
 var tillsFleetFetch = func(ctx context.Context, d *common.Deps) ([]enroll.Device, error) {
-	return enroll.Fleet(ctx, d.Cfg)
+	devs, removed, err := enroll.FleetWithRemoved(ctx, d.Cfg)
+	noteRemovedFromFetch(removed)
+	return devs, err
 }
 
 // accountFleet returns the account's till list and whether it could be read.
@@ -72,10 +81,12 @@ func accountFleet(ctx context.Context, d *common.Deps, refresh bool) ([]enroll.D
 	}
 	cctx, cancel := context.WithTimeout(ctx, fleetFetchTimeout)
 	defer cancel()
+	fetchRemoved = nil
 	devs, err := tillsFleetFetch(cctx, d)
-	fleetCache.at, fleetCache.devices, fleetCache.ok = time.Now(), devs, err == nil
+	fleetCache.at, fleetCache.devices, fleetCache.removed, fleetCache.ok = time.Now(), devs, fetchRemoved, err == nil
+	fetchRemoved = nil
 	if err != nil {
-		fleetCache.devices = nil
+		fleetCache.devices, fleetCache.removed = nil, nil
 	}
 	return fleetCache.devices, fleetCache.ok
 }
@@ -87,17 +98,31 @@ func cachedAccountFleet() ([]enroll.Device, bool) {
 	return fleetCache.devices, fleetCache.ok && !fleetCache.at.IsZero()
 }
 
+// cachedRemovedTills is the cloud's removed_tills from the last read.
+func cachedRemovedTills() []enroll.RemovedTill {
+	fleetCache.mu.Lock()
+	defer fleetCache.mu.Unlock()
+	return fleetCache.removed
+}
+
 // tillsOthersRows is the merged "Other tills" list and the counts the page
 // needs from it.
 type tillsOthers struct {
-	Rows         []tills.Row
-	CloudOK      bool
-	Disagree     int // rows whose state is not ok (excluding this till)
-	Stale        []tills.Row
-	StaleLong    []tills.Row // stale AND unseen past the window: the only ones the bulk remove offers
-	CloudOnly    []tills.Row
-	CanRemove    bool
-	FirstStaleID string
+	Rows     []tills.Row
+	CloudOK  bool
+	Disagree int // rows whose state is not ok (excluding this till)
+	// Actionable counts only what a manager can fix on the spot (ut-docs#7098):
+	// old entries, long-unseen network-only rows and live account-only rows
+	// that carry a Remove. It alone raises the banner and the tab badge; a
+	// just-joined till or a role difference never does.
+	Actionable    int
+	OldEntries    []tills.Row // what "Remove all old entries" offers: stale AND unseen past the window
+	CloudRemoveOK bool
+	Stale         []tills.Row
+	StaleLong     []tills.Row // stale AND unseen past the window: the only ones the bulk remove offers
+	CloudOnly     []tills.Row
+	CanRemove     bool
+	FirstStaleID  string
 }
 
 func tillsOthersView(ctx context.Context, d *common.Deps, m map[string]any, refresh, fetch bool) (tillsOthers, error) {
@@ -118,11 +143,21 @@ func tillsOthersView(ctx context.Context, d *common.Deps, m map[string]any, refr
 	if sp, _ := m["SyncPrimary"].(string); sp != "" {
 		self.Role = ownTillRole(ctx, d)
 	}
-	src = tills.Source{Cloud: devs, CloudOK: out.CloudOK, Local: list, Self: self}
+	out.CloudRemoveOK = out.CloudOK && cloudRemoveEnabled(ctx, d)
+	src = tills.Source{Cloud: devs, CloudOK: out.CloudOK, Local: list, Self: self, CloudRemoveOK: out.CloudRemoveOK}
+	for _, rt := range cachedRemovedTills() {
+		if rt.TillID != "" {
+			if src.RemovedTillIDs == nil {
+				src.RemovedTillIDs = map[string]bool{}
+			}
+			src.RemovedTillIDs[rt.TillID] = true
+		}
+	}
 	if rep, ok := m["Replaced"].(*enroll.Replaced); ok {
 		src.Replaced = rep
 	}
 	out.Rows = tills.Merge(src, time.Now(), tillsStaleAfter)
+	tills.MarkSameDevice(out.Rows, registerSupersedes(ctx, d))
 	for _, r := range out.Rows {
 		if r.IsSelf {
 			continue
@@ -134,15 +169,22 @@ func tillsOthersView(ctx context.Context, d *common.Deps, m map[string]any, refr
 				out.StaleLong = append(out.StaleLong, r)
 			}
 			out.Disagree++
+			if r.LongUnseen {
+				out.OldEntries = append(out.OldEntries, r)
+				out.Actionable++
+			}
 		case tills.StateCloudOnly:
 			out.CloudOnly = append(out.CloudOnly, r)
 			out.Disagree++
+			if len(r.Actions) > 0 {
+				out.Actionable++
+			}
 		case tills.StateRoleMismatch:
 			out.Disagree++
 		}
 	}
-	if len(out.Stale) > 0 {
-		out.FirstStaleID = out.Stale[0].ID
+	if len(out.OldEntries) > 0 {
+		out.FirstStaleID = out.OldEntries[0].ID
 	}
 	return out, nil
 }
@@ -183,6 +225,7 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 		m["LastReconnected"] = fmt.Sprintf(httpx.T(locale, "tills.this.last_reconnected"), httpx.FormatDateTime(hst.LastHealedAt.Local(), locale))
 	}
 	m["Tab"] = tab
+	m["CanManageTills"] = canPerform(d, r, "sync_management")
 	m["TabIDs"] = tillsTabIDs
 	m["IsMain"] = asString(m["SyncPrimary"]) == ""
 	m["ShopName"] = shopNameOrEmpty(ctx, d)
@@ -210,7 +253,7 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 			return nil, oerr
 		}
 		m["Others"] = o
-		m["OthersCount"] = o.Disagree
+		m["OthersCount"] = o.Actionable
 		if d.SyncPrimaryURL(ctx) == "" { // ut-docs#7098: optional, default off, throttled
 			maybeAutoRetireRegisters(ctx, d, o.Rows, o.CloudOK)
 		}
@@ -221,7 +264,7 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 	}
 	if tab != "others" {
 		if o, oerr := tillsOthersView(ctx, d, m, false, false); oerr == nil && o.CloudOK {
-			m["OthersCount"] = o.Disagree
+			m["OthersCount"] = o.Actionable
 		}
 	}
 	return m, nil
@@ -337,6 +380,7 @@ func registerTillsTabs(mux *http.ServeMux, d *common.Deps) {
 		httpx.RenderBlock("ui/pages/tills.html", "tills_fragment", m)(w, r)
 	})
 	registerTillsRevokeStale(mux, d)
+	registerTillsCloudRemove(mux, d)
 }
 
 // tillsTabFromRequest reads ?tab= (also the #fragment-style ids the old

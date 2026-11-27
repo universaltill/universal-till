@@ -1,0 +1,103 @@
+{{/* The merged Other tills list and its banner (ut-docs#7098). Plain words,
+     one button on the spot per row, and no link out: a banner exists only
+     while a manager can fix something right now (.Actionable). Kept in its
+     own partial so the page layout can move without touching this copy.
+     Every Remove asks a second time on the row, and a session that is not a
+     manager types a manager PIN into the one box below. */}}
+{{ with .Others }}
+<div id="tills-others" data-ut-refresh="#tills-others" data-testid="tills-others">
+{{ if not .CloudOK }}
+<div class="card" data-testid="tills-account-unavailable" role="status">
+  <p>{{ T "tills.list.account_unavailable" }}</p>
+  <a class="btn secondary" href="/tills?tab=others&amp;refresh=1" hx-get="/ui/tills/tab/others?refresh=1" hx-target="#tills-tab" hx-swap="innerHTML">{{ T "tills.list.try_again" }}</a>
+</div>
+{{ else if .Actionable }}
+<div class="sync-banner" role="status" data-testid="tills-disagree">
+  <strong>{{ T "tills.list.fix_title" }}</strong>
+  {{ if eq .Actionable 1 }}{{ T "tills.list.fix_body_one" }}{{ else }}{{ printf (T "tills.list.fix_body_other") .Actionable }}{{ end }}
+  {{ if .FirstStaleID }}<a href="#till-row-{{ .FirstStaleID }}">{{ T "tills.list.show_it" }}</a>{{ end }}
+</div>
+{{ end }}
+
+{{ if and .CloudOK (not $.SyncPrimary) (not $.CanManageTills) (or .OldEntries .CloudRemoveOK) }}
+<p class="tills-remove-pin"><label for="tills-remove-pin">{{ T "tills.list.pin_label" }}</label>
+  <input id="tills-remove-pin" name="manager_pin" type="password" inputmode="numeric" autocomplete="off" data-testid="tills-remove-pin"></p>
+{{ end }}
+
+{{ if and (not $.SyncPrimary) .OldEntries }}
+<form hx-post="/api/sync/tills/revoke-stale" hx-swap="none" hx-include="#tills-remove-pin" x-data="{ ask: false }" class="tills-bulk" data-testid="tills-remove-stale-all"
+      data-after-request="ok refresh-region:tills-others; fail save-error:tills-others-error">
+  <button type="button" class="btn secondary" x-show="!ask" @click="ask = true">{{ printf (T "tills.list.fix_all") (len .OldEntries) }}</button>
+  <span x-show="ask" x-cloak role="group">
+    <span>{{ T "tills.list.fix_all_confirm" }}{{ range .OldEntries }} <strong>{{ .Name }}</strong><input type="hidden" name="id" value="{{ .ID }}">{{ end }}</span>
+    <button type="submit" class="btn danger">{{ T "tills.list.confirm_yes" }}</button>
+    <button type="button" class="btn secondary" @click="ask = false">{{ T "tills.list.confirm_keep" }}</button>
+  </span>
+</form>
+<p id="tills-others-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{ else if and $.SyncPrimary .OldEntries }}
+<p class="muted">{{ T "tills.list.ask_manager" }}</p>
+{{ end }}
+
+{{ if gt (len .Rows) 1 }}
+<table class="table tills-merged" data-testid="tills-merged">
+  <thead><tr>
+    <th>{{ T "tills.col_name" }}</th><th>{{ T "tills.col_role" }}</th><th>{{ T "tills.list.col_status" }}</th>
+    <th>{{ T "tills.col_seen" }}</th><th></th>
+  </tr></thead>
+  <tbody>
+  {{ range .Rows }}
+  <tr id="till-row-{{ .ID }}" data-till-id="{{ .ID }}" data-state="{{ .State }}"{{ if .IsSelf }} data-self="1"{{ end }}>
+    <td>{{ .Name }}{{ if .IsSelf }} <span class="tag">{{ T "settings.tills.role_label" }}</span>{{ end }}</td>
+    <td>{{ if eq .Role "main" }}{{ T "tills.role.main" }}{{ else if eq .Role "satellite" }}{{ T "tills.role.satellite" }}{{ else if .Role }}{{ T "tills.role.replica" }}{{ else }}—{{ end }}</td>
+    <td>
+      {{ if eq .State "local_only" }}
+        {{ if .LongUnseen }}<span class="tag warn">{{ T "tills.list.state.local_only_old" }}</span>
+        <br><small class="muted">{{ T "tills.list.state.local_only.hint_old" }}</small>
+        {{ else }}<span class="tag">{{ T "tills.list.state.local_only" }}</span>
+        <br><small class="muted">{{ T "tills.list.state.local_only.hint_recent" }}</small>{{ end }}
+      {{ else if eq .State "old_entry" }}
+        {{ if .SameDeviceAs }}<span class="tag warn" data-testid="till-old-entry">{{ printf (T "tills.list.state.same_device") .SameDeviceAs }}</span>
+        <br><small class="muted">{{ printf (T "tills.list.state.same_device.hint") .SameDeviceAs }}</small>
+        {{ else }}<span class="tag warn" data-testid="till-old-entry">{{ T "tills.list.state.old_entry" }}</span>
+        <br><small class="muted">{{ T "tills.list.state.old_entry.hint" }}</small>{{ end }}
+      {{ else if eq .State "cloud_only" }}
+        {{ if .SameDeviceAs }}<span class="tag warn">{{ printf (T "tills.list.state.same_device") .SameDeviceAs }}</span>
+        <br><small class="muted">{{ printf (T "tills.list.state.same_device.hint") .SameDeviceAs }}</small>
+        {{ else }}<span class="tag">{{ T "tills.list.state.cloud_only" }}</span>
+        <br><small class="muted">{{ printf (T "tills.list.state.cloud_only.hint") .Name }}</small>{{ end }}
+        {{ if not .Actions }}<br><small class="muted">{{ T "tills.list.cloud_only.wait" }}</small>{{ end }}
+      {{ else if eq .State "role_mismatch" }}<span class="tag warn">{{ T "tills.list.state.role_mismatch" }}</span>
+        <br><small class="muted">{{ $cr := T "tills.role.replica" }}{{ if eq .CloudRole "main" }}{{ $cr = T "tills.role.main" }}{{ else if eq .CloudRole "satellite" }}{{ $cr = T "tills.role.satellite" }}{{ end }}{{ $lr := T "tills.role.replica" }}{{ if eq .Role "main" }}{{ $lr = T "tills.role.main" }}{{ else if eq .Role "satellite" }}{{ $lr = T "tills.role.satellite" }}{{ end }}{{ printf (T "tills.list.state.role_mismatch.hint") $cr $lr }} {{ T "tills.list.role_mismatch.nothing" }}</small>
+      {{ else if eq .State "replaced" }}<span class="tag warn">{{ T "tills.list.state.replaced" }}</span>
+        {{ if .ReplacedBy }}<br><small class="muted">{{ printf (T "tills.list.state.replaced.hint") .ReplacedBy }}</small>{{ end }}
+      {{ else }}<span class="tag ok">{{ T "tills.list.state.ok" }}</span>{{ end }}
+      {{ if .SameNameOtherID }}<br><small class="muted">{{ printf (T "tills.list.same_name_hint") .Name }}</small>{{ end }}
+    </td>
+    <td>{{ if .LastSeen }}{{ datetime .LastSeen }}{{ else }}—{{ end }}</td>
+    <td>
+      {{ if and (not $.SyncPrimary) .Actions (not .IsSelf) }}
+      {{ $cloud := eq .State "cloud_only" }}
+      <div x-data="{ ask: false }" data-testid="till-remove-{{ .ID }}">
+        <button type="button" class="btn danger" x-show="!ask" @click="ask = true"{{ if $cloud }} aria-label="{{ printf (T "tills.list.remove_cloud_aria") .Name }}"{{ else }} aria-label="{{ printf (T "tills.list.remove_old_aria") .Name }}"{{ end }}>{{ if $cloud }}{{ T "tills.list.remove_cloud" }}{{ else }}{{ T "tills.list.remove_old" }}{{ end }}</button>
+        <span x-show="ask" x-cloak role="group">
+          <span>{{ if $cloud }}{{ printf (T "tills.list.remove_cloud_confirm") .Name }}{{ else }}{{ printf (T "tills.list.remove_confirm_old") .Name }}{{ end }}</span>
+          {{ if $cloud }}<button class="btn danger" hx-post="/api/sync/tills/cloud-remove" hx-vals='{{ jsonVals "device_id" .CloudDeviceID }}' hx-include="#tills-remove-pin" hx-swap="none" data-after-request="ok refresh-region:tills-others; fail save-error:tills-others-error">{{ T "tills.list.confirm_yes" }}</button>
+          {{ else }}<button class="btn danger" hx-post="/api/sync/tills/{{ .ID }}/revoke" hx-include="#tills-remove-pin" hx-swap="none" data-after-request="ok refresh-region:tills-others; fail save-error:tills-others-error">{{ T "tills.list.confirm_yes" }}</button>{{ end }}
+          <button type="button" class="btn secondary" @click="ask = false">{{ T "tills.list.confirm_keep" }}</button>
+        </span>
+      </div>
+      {{ end }}
+    </td>
+  </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<div class="card empty" data-testid="tills-only-one">
+  <p>{{ T "tills.list.only_one" }}</p>
+  <a class="btn" href="/tills?tab=add" hx-get="/ui/tills/tab/add" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add">{{ T "tills.tab.add" }}</a>
+</div>
+{{ end }}
+</div>
+{{ end }}
