@@ -569,7 +569,7 @@
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
     "internal/pages/leg_reconcile.go": {
-      "sha256": "168b729ed67ad1bc1a30f89c6933b35100f6500fdf9b2574a07b717e3c0b169f"
+      "sha256": "a217f72028688f460781a65b2b8cc0d697fffe1b6ff4dd3646ca39ff9e4187d0"
     },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"

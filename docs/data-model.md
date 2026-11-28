@@ -118,7 +118,9 @@ read it stays `captured` and the next boot decides), and warns
 `asked`/`unknown` tap leg whose `payment_attempts` row is already decided
 (`resolved_not_charged`, `cancelled`, `declined`, or `approved` with reason
 `charged_no_sale`): that leg gets `warned` and `resolved` (reason `attempt_settled`) in
-one transaction and is not listed (ut-docs#7027). Chains
+one transaction and is not listed (ut-docs#7027). A leg whose request id a
+live check or settle holds at that moment (`tapLegInFlight`) is skipped untouched
+and decided at the next boot (ut-docs#7039). Chains
 whose newest state is `settled|reversed|declined|resolved` are deleted after 90
 days; `warned` and `reverse_failed` never are. Never in sync or the cloud
 roster.

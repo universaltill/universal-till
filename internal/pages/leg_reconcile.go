@@ -50,6 +50,11 @@ type LegReconcileResult struct {
 //     a refund and never a re-send here: money may never have moved, or the
 //     provider may already have paid it out.
 //
+// Each unknown/asked/reversing leg is decided under tapLegInFlight (its request
+// id); one a live check or settle holds is skipped untouched and the next boot
+// decides it (ut-docs#7039). Captured legs are not guarded (no attempt-state
+// read, provider call).
+//
 // Rows already warned, reverse_failed or terminal are not touched, so a second
 // boot does nothing. Errors are logged, never returned to boot or checkout.
 func ReconcilePaymentLegs(ctx context.Context, d *common.Deps, startedAt time.Time) LegReconcileResult {
@@ -66,17 +71,36 @@ func ReconcilePaymentLegs(ctx context.Context, d *common.Deps, startedAt time.Ti
 		}
 		switch row.State {
 		case data.LegCaptured:
+			// Unguarded on purpose: it never decides on the attempt's state
+			// (only its existence) and may call the provider, which a guard
+			// must never span (ut-docs#7039).
 			reconcileCaptured(ctx, d, row, &res)
-		case data.LegUnknown, data.LegAsked:
-			reconcileDoubtfulLeg(ctx, d, repo, row, &res)
-		default:
-			warnLeg(ctx, repo, row, &res)
+		default: // unknown, asked, reversing
+			reconcileGuarded(ctx, d, repo, row, &res)
 		}
 	}
 	if res != (LegReconcileResult{}) {
 		logging.L().Infof("payment legs: boot reconciliation: %d returned, %d could not be returned, %d need a human at the provider, %d charged tap payment(s) with no sale listed for a manager, %d tap payment(s) left captured, %d tap payment(s) already decided, closed, %d refund(s) sent back with no return recorded listed for a manager (ut-docs#6653, ut-docs#7028, ut-docs#7027, ut-docs#7041)", res.Reversed, res.ReverseFailed, res.Warned, res.TapChargedNoSale, res.TapLeftToManager, res.Closed, res.RefundNoReturn)
 	}
 	return res
+}
+
+// reconcileGuarded decides one unknown/asked/reversing leg under the live
+// settle's guard (tapLegInFlight, the authorize request id; ut-docs#7039): the
+// attempt read and the journal append are one decision, as in the resolve
+// handlers. A key held by a check or settle right now is skipped untouched;
+// the next boot decides it.
+func reconcileGuarded(ctx context.Context, d *common.Deps, repo *data.PaymentLegJournalRepo, row data.LegEntry, res *LegReconcileResult) {
+	if !tapLegInFlight.acquire(row.RequestID) {
+		logging.L().Infof("payment legs: authorize_request_id %s is being checked or settled right now; left %s, the next start decides (ut-docs#7039)", row.RequestID, row.State)
+		return
+	}
+	defer tapLegInFlight.release(row.RequestID)
+	if row.State == data.LegReversing {
+		warnLeg(ctx, repo, row, res)
+		return
+	}
+	reconcileDoubtfulLeg(ctx, d, repo, row, res)
 }
 
 // attemptDecided: the tap attempt under the leg's request id is settled and
@@ -96,6 +120,7 @@ func attemptDecided(a data.PaymentAttempt) bool {
 // any doubt, is warned as before (ut-docs#7027). An attempt row under the
 // leg's request id marks a tap/phone leg (ADR-0136 9.5): only CollectTap
 // writes payment_attempts today; a new attempt writer must revisit this.
+// Caller holds tapLegInFlight(row.RequestID).
 func reconcileDoubtfulLeg(ctx context.Context, d *common.Deps, repo *data.PaymentLegJournalRepo, row data.LegEntry, res *LegReconcileResult) {
 	a, found, err := data.NewPaymentAttemptRepo(d.Db).Get(ctx, row.RequestID)
 	if err != nil {
