@@ -451,7 +451,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "6ab8e1e82cbe7b36cf92e40aaa7af1c3c3ceab0e2eeded1f69fb8890c99cc0cf"
+      "sha256": "0d8d0ffda7fbc6ca1f4be53a77684617ac50c54d9202b93e37e638047d40a440"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -535,7 +535,7 @@
       "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
-      "sha256": "ecc9d534fa078257861bccbf80e10c26c23c8fd7395ffaeebdc7b6fe541344c7"
+      "sha256": "8ffa0ea45308e049a1d1dd66fde7f032cbcf803f86ea4b6e0f77c13bb17b8f24"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -634,7 +634,7 @@
       "sha256": "5e563423980a16cda2d6a27fe18568d2095f4bb961839a99f1e5ece0952f32b1"
     },
     "internal/pages/plugin_permission_view.go": {
-      "sha256": "6445883138ae2d9089b121a80477877d2b67064696df73de93c5200a4cdd8b79"
+      "sha256": "1ea27fb1e79966556b326bb11d79e29fd82c13811c19d16535cbe141f68b235c"
     },
     "internal/pages/plugin_settings_fields.go": {
       "sha256": "b50b1bee1248f67d8674f0cdd9b4f6e9d3f5d95a928d4ef08fb6bd77fc168bb3"
