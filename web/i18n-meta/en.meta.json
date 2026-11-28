@@ -1880,5 +1880,9 @@
   "tender.tip.too_large": {"description": "Payment panel, tip row: shown when the typed tip is more than the whole bill. Nothing is charged until it is corrected.", "review": "standard"},
   "tender.tip.pill": {"description": "Split tab: note on a pending payment line showing the part of it that is a tip.", "review": "standard", "placeholders": ["tip amount, formatted as money"], "max_length": 30},
   "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"},
+  "plugins.data.delete_now.confirm": {"description": "Confirmation shown before an admin deletes a removed plugin's saved data immediately; irreversible.", "review": "standard"},
+  "plugins.data.delete_now.none": {"description": "Message when no removed data is kept for the plugin, so there is nothing to delete.", "review": "standard"},
+  "plugins.data.delete_now.removed_kept_days": {"description": "Explains that a removed plugin's data is kept for a recovery period for reinstall, then deleted automatically.", "review": "standard"},
+  "plugins.data.delete_now.retained": {"description": "Refusal shown when the plugin's data is under a legal retention period and cannot be deleted yet.", "review": "standard"},
   "plugins.permissions.desc.records_sync": {"description": "Consent line on the plugin install and permissions screen for the records:sync permission: the plugin may copy its own records from a till to the main till of this shop, and publish small values (such as a staff list) that the shop's other tills read. Shown as a short sentence next to the permission name.", "review": "standard", "max_length": 80}
 }

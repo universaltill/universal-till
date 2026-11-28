@@ -248,6 +248,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/store/delete-download":         true,
 	"POST /api/plugins/store/download":                true,
 	"POST /api/plugins/store/install":                 true,
+	"GET /api/plugins/{id}/data/status":               true, // ut-docs#3157: removed-data info; a demo till has none
+	"POST /api/plugins/{id}/data/delete":              true, // ut-docs#3157: hard delete of removed plugin data
 	"POST /api/plugins/{id}/disable":                  true,
 	"POST /api/plugins/{id}/enable":                   true,
 	"POST /api/plugins/{id}/rollback":                 true,
