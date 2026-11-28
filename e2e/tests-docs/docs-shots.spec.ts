@@ -275,6 +275,22 @@ async function openKioskModal(page: Page, opener: string) {
 
 const KIOSK_STAGE = async (page: Page) => { await setKioskPaymentMode(page, 'kiosk'); await stageKioskBasket(page); };
 
+// Shop-type recipes (ADR-0190). Both go through the till's own endpoints.
+async function applyShopType(page: Page, to: string) {
+  const res = await page.request.post('/api/settings/shop-type', { form: { to } });
+  expect(res.status(), `applying shop type ${to} failed`).toBeLessThan(300);
+}
+// Restores "no shop type": undo a live change if the strip is offered, then clear.
+async function ensureNoShopType(page: Page) {
+  await page.request.post('/api/settings/shop-type/undo');
+  const res = await page.request.post('/api/settings/shop-type', { form: { to: '' } });
+  expect(res.status(), 'clearing the shop type failed').toBeLessThan(300);
+}
+async function settleAndBlur(page: Page) {
+  await page.waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, { timeout: 10_000 }).catch(() => {});
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+}
+
 const extraShots: Record<string, ExtraShot> = {
   // Settings cards (ut-docs#337). The topics (backups, updates, data-management,
   // telemetry) are route-less: the card lives on /settings, which display owns.
@@ -334,6 +350,67 @@ const extraShots: Record<string, ExtraShot> = {
       await expect(p).toBeVisible();
       await expect(p.locator('.payment-picker-methods')).toHaveCount(0);
       expect(await p.locator('form[hx-post="/api/self-order/checkout"] button[type=submit]').count()).toBe(1);
+    },
+  },
+  // ADR-0190 / ut-docs#6332: shop-type surfaces, all on /settings (display's
+  // route). The setup wizard's own tiles step cannot be captured here (the
+  // default till is already set up, /setup redirects), so the tiles shot is the
+  // Settings pick step, which renders the SAME shop_type_tiles.html partial.
+  'choose-shop-type-tiles': {
+    route: '/settings',
+    setup: ensureNoShopType,
+    interact: async (page) => {
+      await page.evaluate(() => { location.hash = 'settings-shop-type'; });
+      await page.locator('#shop-type-change').click();
+      await expect(page.locator('#shop-type-panel .shop-type-tile').first()).toBeVisible();
+      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await settleAndBlur(page);
+    },
+    ready: async (page) => {
+      expect(await page.locator('#shop-type-panel .shop-type-tile').count()).toBeGreaterThanOrEqual(6);
+    },
+  },
+  'choose-shop-type-card': {
+    ...settingsCardShot('settings-shop-type'),
+    setup: ensureNoShopType,
+  },
+  'choose-shop-type-preview': {
+    route: '/settings',
+    setup: ensureNoShopType,
+    interact: async (page) => {
+      await page.evaluate(() => { location.hash = 'settings-shop-type'; });
+      await page.locator('#shop-type-change').click();
+      await page.locator('#shop-type-panel .shop-type-tile[data-value="service"]').click();
+      await page.locator('#shop-type-panel button.primary').click();
+      await expect(page.locator('[data-testid="shop-type-preview"]')).toBeVisible();
+      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await settleAndBlur(page);
+    },
+    ready: async (page) => {
+      await expect(page.locator('[data-testid="shop-type-preview"] #shop-type-confirm')).toBeVisible();
+    },
+  },
+  // Applies a shop type through the till's own endpoint (no PIN under
+  // UT_AUTH=off), shows the 7-day Undo strip, then undoes it in teardown.
+  'choose-shop-type-undo': {
+    route: '/menu',
+    setup: async (page) => { await ensureNoShopType(page); await applyShopType(page, 'service'); },
+    teardown: ensureNoShopType,
+    ready: async (page) => {
+      await expect(page.locator('[data-testid="shop-type-undo"]')).toBeVisible();
+    },
+  },
+  'choose-shop-type-home': {
+    route: '/settings',
+    setup: async (page) => { await ensureNoShopType(page); await applyShopType(page, 'retail'); },
+    teardown: ensureNoShopType,
+    interact: async (page) => {
+      await expect(page.locator('#settings-home')).toBeVisible();
+      await settleAndBlur(page);
+    },
+    ready: async (page) => {
+      expect(await page.locator('#settings-home .settings-cat-tile').count()).toBeGreaterThanOrEqual(2);
+      await expect(page.locator('#settings-home .settings-cat-tile[data-cat="advanced"]')).toHaveCount(1);
     },
   },
   'sell-browse-tiles': browseShot('category_tabs', assertTilesLayout),
