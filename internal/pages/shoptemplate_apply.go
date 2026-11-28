@@ -94,7 +94,15 @@ func seedJoinedTillTemplate(ctx context.Context, d *common.Deps) {
 	// ApplyPerTill directly, not applyShopTemplate: a promotion clearing the
 	// primary URL between the check above and a second tillFollowsMain check
 	// would otherwise run the full main-till Apply (ledger + shop-wide keys).
+	before, _, _ := d.Settings.Get(ctx, common.KeyTheme)
 	if err := shoptemplate.ApplyPerTill(ctx, templateSettingsStore{d}, r); err != nil {
 		logging.L().Warnf("join: seed per-till theme for shop_type %q: %v", shopType, err)
+		return
+	}
+	// A seeded theme is effective now, not at the next restart: republish it to
+	// the live state and the cached error-page theme (as the settings save does).
+	if after, _, err := d.Settings.Get(ctx, common.KeyTheme); err == nil && after != "" && after != before {
+		d.UpdateState(func(s *common.RuntimeState) { s.Theme = after })
+		httpx.InitTheme(after)
 	}
 }

@@ -44,3 +44,12 @@ Approve the commits for merge (no regression; fixes applied; dormant feature). *
 ## Deferred
 - Card A (Architect/owner decision): joined till must not inherit `theme` / `template.theme_seeded` from the snapshot (`ApplyReplicaIdentity`); wizard writes theme before the template applies; applied seed must update live state; tests from a snapshot-shaped DB asserting `CurrentState().Theme`.
 - Card B (owner): widen the never-rarely list to `invoice.`, `marketplace.`, `kiosk.payment_mode`? Decide whether the till's idle-lock card demotion should follow my.
+
+## Addendum (2026-11-28): findings 1 and 2 closed
+Decision (owner): the theme is per till and never synced (ut-docs#2783, reference/settings-templates-by-shop-type.md 1.3), so a joined till must not inherit the main till's theme or `template.theme_seeded`.
+- **Finding 1, fixed at the root:** `db.DeletePerTillLook` (exact keys `db.PerTillLookKeys` = `theme`, `template.theme_seeded`) now runs in `ApplyReplicaIdentity` (sink, covers every join/re-join that stages an identity with the snapshot) and in `RedactedJoinSnapshot` (source copy). A plain backup restore (no identity staged) keeps its own theme on purpose: it is this till's own data. `TestPerTillLookKeysMatchShopTemplate` pins the marker name (db cannot import it for the code).
+- **Wizard ordering:** not on the join path. A joined till restores a finished setup, so the first-run wizard's `SaveState` never runs on it; a fresh main till's wizard sets its own theme and applies a template with its own full `Apply`. No change.
+- **Finding 2, fixed:** `seedJoinedTillTemplate` republishes a newly seeded theme to `CurrentState().Theme` and `httpx.InitTheme`, so it is effective without a restart (boot and 30 s tick).
+- **Tests (TDD, fail-before shown):** `TestApplyReplicaIdentityDropsMainTillTheme`, `TestRedactedJoinSnapshotDropsTheme` (theme/marker stayed `amber`); `TestInitBootJoinedTillFromMainSnapshotEndsWithTemplateTheme` starts from main's DB (theme=amber + marker) restored via `ApplyReplicaIdentity` and failed with stored theme "amber" with the sink fix off, and `CurrentState().Theme` "default" with the live update off; the tick test now also asserts `CurrentState().Theme`.
+- **Gate:** gofmt, vet, golangci-lint (0 issues), `go test` for `internal/db`, `internal/pages`, `internal/shoptemplate`, `internal/settings` all pass.
+- docs-shots: no screen changed; nothing regenerated. Finding 3 (no shipped template seeds a theme) is unchanged.

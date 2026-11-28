@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -123,6 +124,9 @@ func TestTemplateStateReconcileTickSeedsJoinedTillTheme(t *testing.T) {
 	if got := getSetting(t, d, "theme"); got != "dark" {
 		t.Fatalf("theme after reconcile tick = %q, want dark", got)
 	}
+	if got := d.CurrentState().Theme; got != "dark" {
+		t.Fatalf("CurrentState().Theme after reconcile tick = %q, want dark", got)
+	}
 }
 
 // The real boot path (ut-docs#6347): app.Run's LoadRuntimeConfig/
@@ -171,5 +175,56 @@ func TestInitBootSeedsJoinedTillTheme(t *testing.T) {
 				t.Fatalf("theme after boot = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A real join (ut-docs#6347): the till's DB is the main till's snapshot, so it
+// arrives with the main till's theme (amber) and seeded marker, the shop type
+// and the config-default theme. ApplyReplicaIdentity must give it an unset
+// theme, so the boot seed lands the template theme in the DB AND in the live
+// state, without a restart.
+func TestInitBootJoinedTillFromMainSnapshotEndsWithTemplateTheme(t *testing.T) {
+	useThemeTemplate(t)
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+	dbPath := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	store := settings.NewStore(d.DB)
+	// What the main till's DB held when the snapshot was taken.
+	for k, v := range map[string]string{"theme": "amber", shoptemplate.ThemeSeededKey: "amber", common.KeyShopType: "retail"} {
+		if err := store.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.StageReplicaIdentity(dbPath, db.ReplicaIdentity{PrimaryURL: "http://primary.example", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-"}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := db.ApplyReplicaIdentity(d.DB, dbPath); err != nil || !applied {
+		t.Fatalf("apply identity: %v %v", applied, err)
+	}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
+	store.LoadRuntimeConfig(ctx, cfg)
+	if err := store.SaveRuntimeConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	pm, err := plugins.Init(ctx, cfg, d.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	_, deps := Init(ctx, ctx, cfg, pm, d.DB, nil, &wg)
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) })
+	if got, _, _ := store.Get(ctx, "theme"); got != "dark" {
+		t.Fatalf("stored theme after join boot = %q, want dark", got)
+	}
+	if got := deps.CurrentState().Theme; got != "dark" {
+		t.Fatalf("CurrentState().Theme = %q, want dark (live, no restart)", got)
 	}
 }
