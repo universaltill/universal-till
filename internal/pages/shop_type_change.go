@@ -279,7 +279,7 @@ func shopTypePreviewData(locale, from, to string, p shoptemplate.Preview) map[st
 		kept = append(kept, seedKeyLabel(locale, k))
 	}
 	titleKey := "settings.template.preview.title"
-	if from == to {
+	if from == to || from == "" {
 		titleKey = "settings.template.preview.title_apply" // a shop that predates templates accepting its own type
 	}
 	title := strings.NewReplacer("{from}", orDash(shopTypeLabel(locale, from)), "{to}", orDash(shopTypeLabel(locale, to))).Replace(httpx.T(locale, titleKey))

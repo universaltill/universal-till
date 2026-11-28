@@ -425,3 +425,16 @@ func TestShopTypePreview_LegacySameTypeTitleAndSettingsGroupedApart(t *testing.T
 		}
 	}
 }
+
+// ut-docs#7191: a shop with no type yet (from == "") gets the "set up" title,
+// never "Change shop type: — to X".
+func TestShopTypePreviewData_NoCurrentTypeUsesSetUpTitle(t *testing.T) {
+	got := shopTypePreviewData("en", "", "cafe", shoptemplate.Preview{})["Title"]
+	want := "Set up your menu and settings for: " + shopTypeLabel("en", "cafe")
+	if got != want {
+		t.Fatalf("title = %q, want %q", got, want)
+	}
+	if !strings.Contains(want, "Cafe") {
+		t.Fatalf("test premise: label for cafe = %q", want)
+	}
+}

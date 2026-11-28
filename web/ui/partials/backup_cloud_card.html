@@ -15,8 +15,8 @@
   </p>
   {{ if .reason }}<p class="muted" data-testid="backup-cloud-reason">{{ .reasonText }}</p>{{ end }}
   {{ if .reasonLink }}<div class="set-row set-below"><a class="btn secondary" href="{{ .reasonLink }}" data-testid="backup-cloud-reason-link">{{ T "backup.cloud.err.open_registration" }}</a></div>{{ end }}
-  {{ if .msg }}<p role="status" data-testid="backup-cloud-notice">{{ .msg }}</p>{{ end }}
   <p class="muted">{{ T "backup.cloud.privacy" }}</p>
+  {{ if .msg }}<p role="status" data-testid="backup-cloud-notice">{{ .msg }}</p>{{ end }}
   {{ if .entitled }}
   {{ if and .hasKey (eq .choice "") }}
   <div class="cloud-key-ask" data-testid="cloud-key-ask">
@@ -29,7 +29,7 @@
     </div>
   </div>
   {{ else if .choice }}
-  <p class="muted" data-testid="cloud-key-status">{{ if eq .choice "on" }}{{ T "backup.cloud.key.status_on" }}{{ else }}{{ T "backup.cloud.key.status_off" }}{{ end }}{{ if .blocked }} {{ T "backup.cloud.key.blocked" }}{{ end }}</p>
+  <p class="muted" data-testid="cloud-key-status">{{ if .blocked }}{{ T "backup.cloud.key.blocked" }}{{ else if eq .choice "on" }}{{ T "backup.cloud.key.status_on" }}{{ else }}{{ T "backup.cloud.key.status_off" }}{{ end }}</p>
   {{ end }}
   {{ if .hasKey }}
   <div class="set-row set-below">
