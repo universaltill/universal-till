@@ -170,6 +170,15 @@ var demoDeniedRoutes = map[string]bool{
 	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
 	// demo visitor needs.
 	"POST /csp-report": true,
+	// Delivery-platform orders and availability (ut-docs#6988): a demo till
+	// has no platform connection; deny, GET included.
+	"GET /api/delivery/orders":               true,
+	"GET /api/delivery/summary":              true,
+	"POST /api/delivery/orders/{id}/actions": true,
+	"GET /api/delivery/service":              true,
+	"POST /api/delivery/service":             true,
+	"GET /api/delivery/availability":         true,
+	"POST /api/delivery/availability":        true,
 	// Card readers (ut-docs#6566): the manager's per-till reader list holds
 	// device ids of a real payment provider; a demo till has no readers to
 	// manage and a public visitor must not add one.
@@ -750,6 +759,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /api/audit/export":      true,
 	"GET /api/invoices/export":   true,
 	"GET /api/reports/worker-allocations/export":            true,
+	"GET /api/reports/tips-suggestions":                     true,
 	"GET /invoice/{display_no}":                             true,
 	"GET /invoices":                                         true,
 	"GET /refund/{receipt}":                                 true,

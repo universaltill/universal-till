@@ -95,7 +95,8 @@ func (m *Manager) Open(ctx context.Context, id string, o Options) (*Store, error
 	m.mu.Lock()
 	s := m.open[id]
 	m.mu.Unlock()
-	if s != nil && o.NoMigrate && s.quota.Load() == effectiveQuota(o.QuotaBytes) && !s.closed() {
+	if s != nil && o.NoMigrate && s.quota.Load() == effectiveQuota(o.QuotaBytes) &&
+		(o.KeepYears <= 0 || s.full.Load()) && !s.closed() {
 		s.touch() // about to be used: keep CloseIdle away from it
 		if o.BusyWait > 0 {
 			s.busyWait.Store(int64(o.BusyWait))
@@ -114,6 +115,11 @@ func (m *Manager) Open(ctx context.Context, id string, o Options) (*Store, error
 	if s != nil && !s.closed() {
 		if o.BusyWait > 0 {
 			s.busyWait.Store(int64(o.BusyWait))
+		}
+		if o.KeepYears > 0 && !s.full.Load() {
+			if err := s.raiseSync(ctx); err != nil {
+				return nil, err
+			}
 		}
 		if s.quota.Load() != effectiveQuota(o.QuotaBytes) {
 			if err := s.requota(ctx, o.QuotaBytes); err != nil {

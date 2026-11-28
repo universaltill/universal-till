@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -56,8 +57,11 @@ func TestDecodeChannelOrder_Fixture(t *testing.T) {
 	if in.DirectiveID != "dir-co-1" {
 		t.Fatalf("identity must be the envelope id, got %q", in.DirectiveID)
 	}
-	if len(in.Lines) != 2 || in.Lines[0] != (data.ChannelOrderLineInput{LineID: "l-1", CloudItemID: "itm1", SKU: "LS-M-BLU",
-		Name: "Linen shirt, blue, M", Qty: 2, UnitPrice: money.FromMinor(3500), TaxBP: 2000, TaxIncluded: true}) {
+	l0 := in.Lines[0]
+	l0.Modifiers = nil // a slice field: compared below as absent
+	if len(in.Lines) != 2 || in.Lines[0].Modifiers != nil || l0.Note != "" || in.Delivery != nil || in.Note != "" ||
+		!reflect.DeepEqual(l0, data.ChannelOrderLineInput{LineID: "l-1", CloudItemID: "itm1", SKU: "LS-M-BLU",
+			Name: "Linen shirt, blue, M", Qty: 2, UnitPrice: money.FromMinor(3500), TaxBP: 2000, TaxIncluded: true}) {
 		t.Fatalf("lines = %+v", in.Lines)
 	}
 	if in.Lines[1].SKU != "" || in.Lines[1].CloudItemID != "" {

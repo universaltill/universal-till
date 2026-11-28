@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
@@ -51,6 +53,51 @@ var (
 var channelOrderStatuses = map[string]bool{
 	"new": true, "accepted": true, "picked": true, "packed": true, "shipped": true,
 	"cancelled": true, "refunded": true, "partially_refunded": true,
+	// delivery only (ADR-0215): checked against the delivery object below
+	"rejected": true, "preparing": true, "ready": true, "collected": true,
+}
+
+// webshopOnlyStatuses and deliveryOnlyStatuses are the chain steps that exist
+// on one kind of order only.
+var (
+	webshopOnlyStatuses   = map[string]bool{"picked": true, "packed": true, "shipped": true}
+	deliveryOnlyStatuses  = map[string]bool{"rejected": true, "preparing": true, "ready": true, "collected": true}
+	channelDeliveryFields = map[string]bool{
+		"service": true, "accept_by": true, "scheduled_start_at": true, "confirm_at": true, "prep_minutes": true,
+		"courier_ref": true, "pickup_code": true, "tip_minor": true, "fees": true,
+	}
+	channelFeeFields      = map[string]bool{"kind": true, "amount_minor": true}
+	channelModifierFields = map[string]bool{"external_id": true, "name": true, "qty": true, "price_delta_minor": true}
+)
+
+const (
+	maxChannelNoteBytes   = 500
+	maxChannelPrepMinutes = 1440
+	maxChannelFees        = 20
+	maxChannelModifiers   = 50
+)
+
+// channelNoteText reports whether s is a bounded, printable customer note:
+// valid UTF-8, at most 500 bytes, no control character other than newline and
+// tab, no bidi override or zero-width format character (so a note can neither
+// scramble the screen nor hide text). The note is only shown and printed,
+// never logged.
+func channelNoteText(s string) bool {
+	if len(s) == 0 || len(s) > maxChannelNoteBytes || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+		case r <= 0x1f, r >= 0x7f && r <= 0x9f, r == 0xad:
+			return false
+		case r >= 0x200b && r <= 0x200f, r >= 0x2028 && r <= 0x202e, r >= 0x2060 && r <= 0x2069, r == 0xfeff:
+			return false
+		case unicode.Is(unicode.Cf, r):
+			return false
+		}
+	}
+	return true
 }
 
 var channelPaymentStates = map[string]bool{
@@ -63,12 +110,14 @@ var channelOrderFields = map[string]bool{
 	"lines": true, "shipping_minor": true, "shipping_tax_bp": true, "shipping_tax_included": true,
 	"order_discount_minor": true, "tax_added_minor": true, "refund_total_minor": true, "total_minor": true,
 	"customer_country": true,
+	"delivery":         true, "note": true,
 }
 
 var channelLineFields = map[string]bool{
 	"external_id": true, "cloud_item_id": true, "cloud_variant_id": true, "sku": true, "name": true, "qty": true,
 	"unit_price_minor": true, "tax_bp": true, "tax_included": true, "discount_line_minor": true,
 	"refunded_quantity": true, "restocked_quantity": true,
+	"modifiers": true, "note": true,
 }
 
 // decodeChannelOrder reads the payload. A non-empty msg is the failure text;
@@ -129,6 +178,9 @@ func decodeChannelOrder(d directive) (ChannelOrderDirective, string) {
 	if in.RefundTotal > in.Total {
 		return out, "refund_total_minor exceeds total_minor"
 	}
+	if msg := decodeChannelDelivery(d.Payload, in); msg != "" {
+		return out, msg
+	}
 
 	rawLines, ok := d.Payload["lines"].([]any)
 	if !ok || len(rawLines) == 0 {
@@ -187,6 +239,15 @@ func decodeChannelOrder(d directive) (ChannelOrderDirective, string) {
 			return out, "line: " + lr.err
 		}
 		sum = sum.Add(l.UnitPrice.Scale(l.Qty)).Sub(l.Discount)
+		if in.Delivery != nil {
+			if msg := decodeChannelLineDelivery(lm, &l); msg != "" {
+				return out, "line: " + msg
+			}
+		} else if _, present := lm["modifiers"]; present {
+			return out, "line: modifiers need a delivery order"
+		} else if _, present := lm["note"]; present {
+			return out, "line: note needs a delivery order"
+		}
 		in.Lines = append(in.Lines, l)
 	}
 	want := sum.Add(in.Shipping).Sub(in.OrderDiscount).Add(in.TaxAdded)
@@ -286,4 +347,135 @@ func (r *channelReader) minor(k string, min int64) int64 {
 		return 0
 	}
 	return int64(f)
+}
+
+// decodeChannelDelivery reads the optional `delivery` object and `note`
+// (ADR-0215 decision 9). The object is closed (unknown keys refused), so no
+// customer name, phone, address or e-mail can ride in; the order `note` is
+// only valid on a delivery order. It also checks the status against the
+// order's kind. A non-empty result is the refusal text (never a value).
+func decodeChannelDelivery(p map[string]any, in *data.ChannelOrderInput) string {
+	raw, present := p["delivery"]
+	if !present {
+		if _, hasNote := p["note"]; hasNote {
+			return "note needs a delivery order"
+		}
+		if deliveryOnlyStatuses[in.Status] {
+			return "status needs a delivery order"
+		}
+		return ""
+	}
+	dm, ok := raw.(map[string]any)
+	if !ok {
+		return "delivery: not an object"
+	}
+	if k := unknownKey(dm, channelDeliveryFields); k != "" {
+		return "delivery has an unknown field: " + k
+	}
+	if webshopOnlyStatuses[in.Status] {
+		return "status is not valid on a delivery order"
+	}
+	r := channelReader{p: dm}
+	d := &data.ChannelDeliveryInput{}
+	d.Service = r.str("service", 1, 16)
+	if r.err == "" && d.Service != "delivery" && d.Service != "collection" {
+		r.err = "service: invalid"
+	}
+	for _, f := range []struct {
+		k   string
+		dst *string
+	}{{"accept_by", &d.AcceptBy}, {"scheduled_start_at", &d.ScheduledStartAt}, {"confirm_at", &d.ConfirmAt}} {
+		if _, has := dm[f.k]; !has {
+			continue
+		}
+		v := r.str(f.k, 1, 64)
+		if r.err == "" {
+			if _, err := time.Parse(time.RFC3339, v); err != nil || !channelPlacedAtRe.MatchString(v) {
+				r.fail(f.k, "invalid time")
+			}
+		}
+		*f.dst = v
+	}
+	if _, has := dm["prep_minutes"]; has {
+		d.PrepMinutes = r.minor("prep_minutes", 0)
+		if r.err == "" && d.PrepMinutes > maxChannelPrepMinutes {
+			r.fail("prep_minutes", "too large")
+		}
+	}
+	d.CourierRef = r.optStr("courier_ref", 64)
+	d.PickupCode = r.optStr("pickup_code", 32)
+	if _, has := dm["tip_minor"]; has {
+		d.Tip = money.FromMinor(r.minor("tip_minor", 0))
+	}
+	if r.err != "" {
+		return "delivery: " + r.err
+	}
+	if rawFees, has := dm["fees"]; has {
+		fees, ok := rawFees.([]any)
+		if !ok || len(fees) > maxChannelFees {
+			return "delivery: fees invalid"
+		}
+		for _, rf := range fees {
+			fm, ok := rf.(map[string]any)
+			if !ok {
+				return "delivery: fee invalid"
+			}
+			if k := unknownKey(fm, channelFeeFields); k != "" {
+				return "delivery fee has an unknown field: " + k
+			}
+			fr := channelReader{p: fm}
+			fee := data.ChannelDeliveryFee{Kind: fr.str("kind", 1, 64), Amount: money.FromMinor(fr.minor("amount_minor", 0))}
+			if fr.err != "" {
+				return "delivery fee: " + fr.err
+			}
+			d.Fees = append(d.Fees, fee)
+		}
+	}
+	if rawNote, has := p["note"]; has {
+		s, ok := rawNote.(string)
+		if !ok || !channelNoteText(s) {
+			return "note: invalid"
+		}
+		in.Note = s
+	}
+	in.Delivery = d
+	return ""
+}
+
+// decodeChannelLineDelivery reads a delivery line's `note` and `modifiers`.
+func decodeChannelLineDelivery(lm map[string]any, l *data.ChannelOrderLineInput) string {
+	if rawNote, has := lm["note"]; has {
+		s, ok := rawNote.(string)
+		if !ok || !channelNoteText(s) {
+			return "note: invalid"
+		}
+		l.Note = s
+	}
+	rawMods, has := lm["modifiers"]
+	if !has {
+		return ""
+	}
+	mods, ok := rawMods.([]any)
+	if !ok || len(mods) > maxChannelModifiers {
+		return "modifiers invalid"
+	}
+	for _, rm := range mods {
+		mm, ok := rm.(map[string]any)
+		if !ok {
+			return "modifier invalid"
+		}
+		if k := unknownKey(mm, channelModifierFields); k != "" {
+			return "modifier has an unknown field: " + k
+		}
+		mr := channelReader{p: mm}
+		m := data.ChannelLineModifier{
+			ExternalID: mr.str("external_id", 1, 200), Name: mr.str("name", 1, 256),
+			Qty: mr.minor("qty", 1), PriceDelta: money.FromMinor(mr.minor("price_delta_minor", -maxChannelMinor)),
+		}
+		if mr.err != "" {
+			return "modifier: " + mr.err
+		}
+		l.Modifiers = append(l.Modifiers, m)
+	}
+	return ""
 }

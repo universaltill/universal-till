@@ -47,6 +47,7 @@ type dbEvent struct {
 	once     sync.Once
 	declared bool
 	quota    int64
+	keep     int // manifest retention.keep_years: > 0 opens synchronous=FULL
 	// used: the event touched the live store, so handleEvent checkpoints.
 	used bool
 	// lastErr is db_error's text.
@@ -78,6 +79,9 @@ func dbCall(ctx context.Context) (*hostState, int32) {
 		}
 		s.dbev.declared = true
 		s.dbev.quota = int64(m.EffectiveLimits(goruntime.GOOS).StorageMB) << 20
+		if m.Retention != nil {
+			s.dbev.keep = m.Retention.KeepYears
+		}
 	})
 	if !s.dbev.declared {
 		s.dbev.lastErr = "plugin manifest declares no db block"
@@ -133,7 +137,7 @@ func (e *dbEvent) fail(err error) int32 {
 
 // openStore opens the calling plugin's own store (id from the host only).
 func (s *hostState) openDBStore(ctx context.Context) (*plugindb.Store, error) {
-	return DataManager().Open(ctx, s.pluginID, plugindb.Options{QuotaBytes: s.dbev.quota, NoMigrate: true})
+	return DataManager().Open(ctx, s.pluginID, plugindb.Options{QuotaBytes: s.dbev.quota, NoMigrate: true, KeepYears: s.dbev.keep})
 }
 
 // withDBStore runs fn on the caller's store. A store handed out a moment
@@ -279,7 +283,7 @@ func (e *dbEvent) finish(pluginID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if st, err := DataManager().Open(ctx, pluginID, plugindb.Options{QuotaBytes: e.quota, NoMigrate: true}); err == nil {
+	if st, err := DataManager().Open(ctx, pluginID, plugindb.Options{QuotaBytes: e.quota, NoMigrate: true, KeepYears: e.keep}); err == nil {
 		_ = st.Checkpoint(ctx)
 	}
 }

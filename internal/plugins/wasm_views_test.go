@@ -433,8 +433,18 @@ func TestViewQueryShopContextV2(t *testing.T) {
 	t.Cleanup(func() { data.SetCoreViewShopContext(prev) })
 
 	d := viewDB(t, pluginID, "view:shop", "view:inventory")
+	// business_date is the real clock's day (ut-docs#7231): read it on both
+	// sides of the call so a run that crosses midnight accepts either day.
+	shopRow := func(day string) string {
+		return `[{"store_name":"Kissa","till_name":"Bar","currency_code":"JPY","currency_decimals":0,"locale":"ja","country":"","business_date":"` + day + `"}]`
+	}
+	dayBefore := time.Now().Format("2006-01-02")
 	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "shop.context.v2"})
-	want := `[{"store_name":"Kissa","till_name":"Bar","currency_code":"JPY","currency_decimals":0,"locale":"ja"}]`
+	dayAfter := time.Now().Format("2006-01-02")
+	want := shopRow(dayBefore)
+	if res["result"] != want && dayAfter != dayBefore {
+		want = shopRow(dayAfter)
+	}
 	if code := viewCode(t, res); code != len(want) || res["result"] != want {
 		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
 	}
