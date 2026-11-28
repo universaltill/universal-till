@@ -25,6 +25,10 @@ The setup wizard asks once, with one large tile per kind of business: retail sho
 
 ![The shop type tiles](img/choose-shop-type-tiles.png)
 
+### An optional suggestion
+
+When the plugin store is reachable and has a plugin made for the shop type you pick, a "Suggested for your shop" box appears under the tiles with its name and description. It is never ticked for you: tick **Install this when setup finishes** if you want it, leave it alone if you do not. Skipping leaves nothing behind, and you can always add the plugin later from the plugin store. If the till is offline, no suggestion is shown.
+
 ## Change it later
 
 1. Open **Settings → Shop type** and press **Change shop type** (or **Change** under the tile grid on the Settings home).
