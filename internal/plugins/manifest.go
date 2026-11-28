@@ -107,6 +107,15 @@ type Manifest struct {
 	// verify. ut-cloud's internal/signing.CanonicalManifest must mirror it
 	// (same position, same tags), and the nested type too.
 	RecordsForward *ManifestRecordsForward `json:"records_forward,omitempty"`
+
+	// ShopTypes (ut-docs#7246, ADR-0149 item 5, ADR-0121 §2): the ADR-0026
+	// shop types the plugin is built for. A hint for the setup suggestion and
+	// the marketplace listing; never gates an install. Signed, omitempty, so a
+	// manifest without it marshals byte-identically to before. ut-cloud's
+	// internal/signing.CanonicalManifest must mirror it (last field, same
+	// tag). Values are checked by validateShopTypes. Contract:
+	// reference/contracts/plugin-shop-types.md.
+	ShopTypes []string `json:"shop_types,omitempty"`
 }
 
 // ManifestRecordsForward names the plugin-records collections (and snapshot

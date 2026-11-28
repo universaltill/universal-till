@@ -219,6 +219,10 @@ func validateABI3Fields(m *Manifest) error {
 	if err := validateRecordsForward(m); err != nil {
 		return err
 	}
+	// ut-docs#7246: both install paths run validateABI3Fields.
+	if err := validateShopTypes(m); err != nil {
+		return err
+	}
 
 	for _, e := range m.Entries {
 		if e.View != "" && !pluginViewNameRe.MatchString(e.View) {
