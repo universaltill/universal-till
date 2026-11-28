@@ -1860,6 +1860,216 @@ func TestLegReconcile_AttemptUnreadableUnknownLegIsWarned_7027(t *testing.T) {
 	}
 }
 
+// --- ut-docs#7039: boot reconciliation never races a live check or settle ---
+
+// holdKey takes the live settle's guard for id, as a manager's settle or
+// check holds it. The returned func releases it (also run at cleanup).
+func holdKey(t *testing.T, id string) func() {
+	t.Helper()
+	if !tapLegInFlight.acquire(id) {
+		t.Fatalf("guard for %s already held", id)
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { tapLegInFlight.release(id) }) }
+	t.Cleanup(release)
+	return release
+}
+
+// wantKeyFree: the guard for id is not held (acquire succeeds), then released.
+func wantKeyFree(t *testing.T, id string) {
+	t.Helper()
+	if !tapLegInFlight.acquire(id) {
+		t.Fatalf("guard for %s still held after the pass", id)
+	}
+	tapLegInFlight.release(id)
+}
+
+// AC1: a key held by a live settle is skipped before any read or write.
+func TestLegReconcile_BusyKeySkipsLegUntouched_7039(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		states   []string
+		decided  bool
+		wantLast string
+	}{
+		{"unknown open attempt", []string{data.LegAsked, data.LegUnknown}, false, data.LegUnknown},
+		{"asked open attempt", []string{data.LegAsked}, false, data.LegAsked},
+		{"reversing", []string{data.LegAsked, data.LegCaptured, data.LegReversing}, false, data.LegReversing},
+		{"unknown decided attempt", []string{data.LegAsked, data.LegUnknown}, true, data.LegUnknown},
+		{"asked decided attempt", []string{data.LegAsked}, true, data.LegAsked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := legRig(t)
+			buf := &syncBuffer{}
+			t.Cleanup(logging.CaptureForTest(buf))
+			id := "busy-" + strings.ReplaceAll(tc.name, " ", "-")
+			if tc.decided {
+				e.seedAttempt(t, id, data.AttemptResolvedNotCharged, "")
+			} else {
+				e.orphan(t, id, "stripe")
+			}
+			e.seed(t, id, "tapstripe", tc.states...)
+			before := len(e.chain(t, id))
+			holdKey(t, id)
+			res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+			if res != (LegReconcileResult{}) {
+				t.Fatalf("result = %+v, want the zero value", res)
+			}
+			if got := e.last(t, id); got.State != tc.wantLast {
+				t.Fatalf("leg = %s, want %s", got.State, tc.wantLast)
+			}
+			if n := len(e.chain(t, id)); n != before {
+				t.Fatalf("journal rows %d -> %d, want untouched", before, n)
+			}
+			out := buf.String()
+			if !strings.Contains(out, id) || !strings.Contains(out, "ut-docs#7039") {
+				t.Fatalf("no skip line naming the id: %s", out)
+			}
+			if strings.Contains(out, "refund it there") {
+				t.Fatalf("skip logged the refund warning: %s", out)
+			}
+		})
+	}
+}
+
+// AC2: the skipped leg is closed by the next boot once the settle is done.
+func TestLegReconcile_SkippedLegClosedNextBootAfterSettle_7039(t *testing.T) {
+	e := legRig(t)
+	e.orphan(t, "skip-1", "stripe")
+	e.seed(t, "skip-1", "tapstripe", data.LegAsked, data.LegUnknown)
+	release := holdKey(t, "skip-1")
+	if res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute)); res != (LegReconcileResult{}) {
+		t.Fatalf("busy pass result = %+v", res)
+	}
+	if err := data.NewPaymentAttemptRepo(e.dp.Db).Mark(context.Background(), "skip-1", data.AttemptResolvedNotCharged, data.AttemptUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	e.wantNotListed(t, "skip-1")
+	res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+	if res.Closed != 1 || res.Warned != 0 {
+		t.Fatalf("next boot result = %+v, want Closed=1", res)
+	}
+	e.wantClosed(t, "skip-1")
+	e.wantNotListed(t, "skip-1")
+}
+
+// AC3: a boot pass running while a manager's settle is in flight lists
+// nothing; the settled tap is never shown on Settings -> Payments.
+func TestLegReconcile_BootDuringLiveSettleListsNothing_7039(t *testing.T) {
+	e := legRig(t)
+	e.orphan(t, "live-1", "stripe")
+	e.seed(t, "live-1", "tapstripe", data.LegAsked, data.LegUnknown)
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.broker.setOnCall(func(p string) {
+		if strings.HasSuffix(p, "/session_status") {
+			once.Do(func() { close(entered); <-release })
+		}
+	})
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- e.resolveAttn(t, e.manager, "live-1", "not_charged", "", dataAPITestManagerPIN) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the settle never reached the broker")
+	}
+	res := ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+	if res != (LegReconcileResult{}) {
+		close(release)
+		t.Fatalf("boot during the settle: result = %+v, want the zero value", res)
+	}
+	if got := e.last(t, "live-1"); got.State != data.LegUnknown {
+		close(release)
+		t.Fatalf("leg = %s, want still unknown", got.State)
+	}
+	close(release)
+	if rec := <-first; rec.Code != 200 {
+		t.Fatalf("settle = %d %s", rec.Code, rec.Body.String())
+	}
+	e.wantNotListed(t, "live-1")
+	res = ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+	if res.Closed != 1 {
+		t.Fatalf("next boot result = %+v, want Closed=1", res)
+	}
+	e.wantClosed(t, "live-1")
+}
+
+// AC4: the guard is released on every return path of a pass.
+func TestLegReconcile_ReleasesKeyOnEveryPath_7039(t *testing.T) {
+	run := func(e *legEnv) LegReconcileResult {
+		return ReconcilePaymentLegs(context.Background(), e.dp, time.Now().Add(time.Minute))
+	}
+	t.Run("closed", func(t *testing.T) {
+		e := legRig(t)
+		e.seedAttempt(t, "rel-closed", data.AttemptResolvedNotCharged, "")
+		e.seed(t, "rel-closed", "tapstripe", data.LegAsked, data.LegUnknown)
+		if res := run(e); res.Closed != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-closed")
+	})
+	t.Run("warned open attempt", func(t *testing.T) {
+		e := legRig(t)
+		e.orphan(t, "rel-warned", "stripe")
+		e.seed(t, "rel-warned", "tapstripe", data.LegAsked, data.LegUnknown)
+		if res := run(e); res.Warned != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-warned")
+	})
+	t.Run("no attempt row", func(t *testing.T) {
+		e := legRig(t)
+		e.seed(t, "rel-none", "tapstripe", data.LegAsked, data.LegUnknown)
+		if res := run(e); res.Warned != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-none")
+	})
+	t.Run("reversing", func(t *testing.T) {
+		e := legRig(t)
+		e.seed(t, "rel-rev", "tapstripe", data.LegAsked, data.LegCaptured, data.LegReversing)
+		if res := run(e); res.Warned != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-rev")
+	})
+	t.Run("attempt unreadable", func(t *testing.T) {
+		e := legRig(t)
+		e.seed(t, "rel-get", "tapstripe", data.LegAsked, data.LegUnknown)
+		e.dropTable(t, "payment_attempts")
+		if res := run(e); res.Warned != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-get")
+	})
+	t.Run("journal transition", func(t *testing.T) {
+		e := legRig(t)
+		e.seedAttempt(t, "rel-tr", data.AttemptResolvedNotCharged, "")
+		e.seed(t, "rel-tr", "tapstripe", data.LegAsked, data.LegUnknown)
+		stale := e.last(t, "rel-tr")
+		e.seed(t, "rel-tr", "tapstripe", data.LegWarned) // the leg moved after the list was read
+		var res LegReconcileResult
+		reconcileGuarded(context.Background(), e.dp, data.NewPaymentLegJournalRepo(e.dp.Db), stale, &res)
+		if res != (LegReconcileResult{}) {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-tr")
+	})
+	t.Run("cancelled context", func(t *testing.T) {
+		e := legRig(t)
+		e.seed(t, "rel-ctx", "tapstripe", data.LegAsked, data.LegUnknown)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if res := ReconcilePaymentLegs(ctx, e.dp, time.Now().Add(time.Minute)); res != (LegReconcileResult{}) {
+			t.Fatalf("result = %+v", res)
+		}
+		wantKeyFree(t, "rel-ctx")
+	})
+}
+
 // --- ut-docs#7041: a refunded card whose return was not recorded ---
 
 // refundNoReturn journals a warned/refund_no_return refund leg for a real
