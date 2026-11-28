@@ -81,7 +81,7 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 	// every reader already falls back to; persisting it here made the row look
 	// chosen, so a joined till's per-till template seed (which never
 	// overwrites a set theme) was a no-op on every real boot.
-	if cur, ok, err := s.Get(ctx, "theme"); err != nil || !ok || cur == "" {
+	if cur, ok, err := s.Get(ctx, "theme"); err != nil || !ok || strings.TrimSpace(cur) == "" {
 		delete(kv, "theme")
 	}
 	// ut-docs#4273: a placeholder (the UT_STORE_NAME default "My Store",

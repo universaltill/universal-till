@@ -20,9 +20,12 @@ import (
 const shopTemplateClassesJSONPath = "docs/shop-template-classes.json"
 
 // neverRarelyPrefixes are registry key prefixes the artefact never flags as
-// rarely needed, whatever a template demotes (ADR-0190: no payments/fiscal/
-// tax/auth/permission setting is hidden by a template). my.'s rarelyNeeded.ts
-// denies the same list; keep the two identical.
+// rarely needed, whatever a template demotes (ADR-0190 section 5 keeps
+// payments/fiscal/tax/auth/permission keys out of template seeds; this list is
+// the deliberately conservative my. side of it, so my. never groups them).
+// my.'s rarelyNeeded.ts and ut-cloud's claims deny the same list; keep the
+// three identical. The till's own card-level demotion (market_stall demotes
+// settings-idle-lock, reference table row 24) is a separate, accepted surface.
 var neverRarelyPrefixes = []string{"store.", "shop.", "payments.", "payment.", "fiscal.", "tax.", "auth.", "security."}
 
 func neverRarely(key string) bool {

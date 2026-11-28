@@ -87,5 +87,14 @@ func seedJoinedTillTemplate(ctx context.Context, d *common.Deps) {
 	if err != nil || shopType == "" {
 		return
 	}
-	applyShopTemplate(ctx, d, shopType)
+	r := shopTemplateFor(d, shopType)
+	if r == nil {
+		return
+	}
+	// ApplyPerTill directly, not applyShopTemplate: a promotion clearing the
+	// primary URL between the check above and a second tillFollowsMain check
+	// would otherwise run the full main-till Apply (ledger + shop-wide keys).
+	if err := shoptemplate.ApplyPerTill(ctx, templateSettingsStore{d}, r); err != nil {
+		logging.L().Warnf("join: seed per-till theme for shop_type %q: %v", shopType, err)
+	}
 }

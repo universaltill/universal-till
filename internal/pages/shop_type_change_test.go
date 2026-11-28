@@ -444,7 +444,7 @@ func TestShopTypePreview_HiddenMenuTilesAndSettingsCardsUnderOwnHeadings(t *test
 	if im > is {
 		t.Error("hidden menu tiles must come before hidden settings cards")
 	}
-	menu := body[im:is]
+	menu := between(t, body, hm, "</ul>")
 	if !strings.Contains(menu, "Tables") || strings.Contains(menu, "Order numbers") {
 		t.Errorf("menu group wrong: %s", menu)
 	}
