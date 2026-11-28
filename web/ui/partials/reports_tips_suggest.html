@@ -1,0 +1,45 @@
+{{/* ut-docs#7108: answer to tips.suggest.ask. A suggestion only: "Use" fills
+     the record-a-payout form (worker + amount), the manager confirms or edits
+     and presses Record. Nothing is written here. */}}
+{{ if or .Rows .Unmapped }}
+<div class="card" id="tips-suggest-card">
+  <p class="muted">{{ T "reports.tips.suggest_title" }} ({{ .From }} – {{ .To }})</p>
+  <table class="table">
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td>{{ .Name }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td><button type="button" class="btn secondary" data-tips-use data-cashier="{{ .CashierID }}" data-minor="{{ .AmountMinor }}" data-plain="{{ .Plain }}">{{ T "reports.tips.suggest_use" }}</button></td>
+      </tr>
+      {{ end }}
+      {{ range .Unmapped }}
+      <tr>
+        <td>{{ .Label }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td class="muted">{{ T "reports.tips.suggest_unmapped" }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+<script>
+(function () {
+  var card = document.getElementById('tips-suggest-card');
+  if (!card) return;
+  card.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-tips-use]');
+    if (!b) return;
+    var sel = document.querySelector('#tips-record-form select[name=cashier_id]');
+    var amt = document.getElementById('tips-amount');
+    if (!sel || !amt) return;
+    sel.value = b.getAttribute('data-cashier');
+    amt.value = b.getAttribute('data-plain');
+    amt.dispatchEvent(new Event('input', { bubbles: true }));
+    amt.focus();
+  });
+})();
+</script>
+{{ else }}
+<p class="muted" id="tips-suggest-empty">{{ T "reports.tips.suggest_none" }}</p>
+{{ end }}

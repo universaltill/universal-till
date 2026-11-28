@@ -16,5 +16,10 @@
     <span id="eod-day-x-print-msg" class="x-report-print-msg" aria-live="polite"></span>
   </div>
   {{ if .Empty }}<p class="muted">{{ T "reports.eod.day_x.empty" }}</p>{{ end }}
+  {{- if .FeeLines }}{{/* ut-docs#7160: imported card fees, screen only; absent data renders nothing. */}}
+  <div class="eod-day-x-fee" role="group" aria-label="{{ T "reports.eod.stripe_fee" }}">
+    {{ range .FeeLines }}<p class="eod-day-x-fee-row" style="display:flex; justify-content:space-between; gap:.75rem; margin-block:.25rem; overflow-wrap:anywhere"><span>{{ T .LocaleKey }}</span><span style="white-space:nowrap; font-variant-numeric:tabular-nums">{{ moneyIn .Fee.Minor .Currency }}</span></p>{{ end }}
+  </div>
+  {{- end }}
   <pre class="paper-preview" dir="ltr" aria-label="{{ T "reports.eod.day_x.paper_label" }}">{{ .Preview }}</pre>
 </div>

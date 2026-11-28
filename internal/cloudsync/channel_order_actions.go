@@ -177,3 +177,20 @@ func uploadChannelOrderActions(ctx context.Context, cfg *config.Config, db *sql.
 		logging.L().Infof("cloudsync: channel order actions: %d sent (%d applied, %d refused, %d with a note)", sum.Sent, sum.Applied, sum.Refused, sum.Noted)
 	}
 }
+
+// expireDeliveryAvailability turns every item whose "unavailable until" has
+// passed back to available and queues the neutral availability.set signal
+// (ut-docs#6583). Local and offline-safe; the main till only (a satellite's
+// copy of the field is the main till's). Never returns an error: logged, and
+// the next tick retries. Returns how many items it cleared.
+func expireDeliveryAvailability(ctx context.Context, db *sql.DB, now time.Time) int {
+	if v, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url"); strings.TrimSpace(v) != "" {
+		return 0
+	}
+	n, err := data.NewDeliveryAvailabilityRepo(db).ExpireDue(ctx, now)
+	if err != nil {
+		logging.L().Warnf("cloudsync: delivery availability expiry: %v", err)
+		return 0
+	}
+	return n
+}

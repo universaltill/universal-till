@@ -284,6 +284,9 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		// The operator is stamped once, here, so a job started from the
 		// answer belongs to the same request (ut-docs#4143).
 		actx := withAgentOperator(r.Context())
+		if inOverlay {
+			actx = withOverlaySeam(actx) // ut-docs#7206: validated for sell.overlay
+		}
 		ans, vctx, payload, err = askPluginAction(actx, d, entry, actionPerm, locale, sub, ups)
 		switch {
 		case err != nil:
@@ -306,7 +309,11 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	case panelGet:
 		doc, err = askSlotDocument(r.Context(), d, entry.Slot, entry, locale, pluginViewParams(r))
 	default:
-		doc, err = askPluginView(r.Context(), d, entry, locale, pluginViewParams(r))
+		askCtx := r.Context()
+		if inOverlay {
+			askCtx = withOverlaySeam(askCtx) // ut-docs#7206: validated for sell.overlay
+		}
+		doc, err = askPluginView(askCtx, d, entry, locale, pluginViewParams(r))
 	}
 
 	if err == nil && redirect != "" {
@@ -326,6 +333,9 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	case doc != nil:
 		body.View = doc.Prepare(locale)
 		resolveAgentConfirms(r.Context(), d, &body.View, entry.PluginID, locale)
+		if inOverlay {
+			signOverlaySuggestions(&body.View, entry.PluginID)
+		}
 		switch {
 		case panelGet:
 			// A panel's own paging (ut-docs#4114): links that swap the next
@@ -612,6 +622,12 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	}
 	// A file field is only valid on an entry that declared its size cap.
 	vctx.Uploads = entry.UploadMaxMB > 0
+	// The sell-screen overlay seam (ut-docs#7206): suggestions with
+	// add_to_basket are valid there, for a plugin holding view:sales.
+	if inOverlaySeam(ctx) {
+		vctx.Seam = pluginview.SeamSellOverlay
+		vctx.ViewSales = pluginHoldsViewSales(ctx, d, entry.PluginID)
+	}
 	// ADR-0149 §6 (ut-docs#3699): every ui.* ask says who is asking. Set
 	// on the caller's map, so a job started from an action answer
 	// (startPluginJob reuses the payload) carries it too.

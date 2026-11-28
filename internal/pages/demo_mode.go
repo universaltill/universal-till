@@ -173,6 +173,15 @@ var demoDeniedRoutes = map[string]bool{
 	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
 	// demo visitor needs.
 	"POST /csp-report": true,
+	// Delivery-platform orders and availability (ut-docs#6988): a demo till
+	// has no platform connection; deny, GET included.
+	"GET /api/delivery/orders":               true,
+	"GET /api/delivery/summary":              true,
+	"POST /api/delivery/orders/{id}/actions": true,
+	"GET /api/delivery/service":              true,
+	"POST /api/delivery/service":             true,
+	"GET /api/delivery/availability":         true,
+	"POST /api/delivery/availability":        true,
 	// Card readers (ut-docs#6566): the manager's per-till reader list holds
 	// device ids of a real payment provider; a demo till has no readers to
 	// manage and a public visitor must not add one.
@@ -331,6 +340,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/pos/identify/plugin": true,
 	// Its pick (ut-docs#4006): stores a photo; no job to pick from in a demo.
 	"POST /api/pos/identify/plugin/pick": true,
+	// A sell-screen overlay view's basket suggestion (ut-docs#7206): a demo has no plugin view to pick from.
+	"POST /api/pos/plugin-view/pick": true,
 	// Its suggestion thumbnails (ut-docs#3957): a plugin's blob store.
 	"GET /api/pos/identify/plugin/thumb": true,
 	// Cloud enrolment, registration, telemetry and LAN
@@ -751,6 +762,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /api/audit/export":      true,
 	"GET /api/invoices/export":   true,
 	"GET /api/reports/worker-allocations/export":            true,
+	"GET /api/reports/tips-suggestions":                     true,
 	"GET /invoice/{display_no}":                             true,
 	"GET /invoices":                                         true,
 	"GET /refund/{receipt}":                                 true,

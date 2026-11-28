@@ -254,6 +254,13 @@ type SaleLineItem struct {
 	// OrderType (ut-docs#1181, ADR-0073): this line's own mode, "" (dine-in,
 	// omitted) or "takeaway" — never "mixed". Additive.
 	OrderType string `json:"order_type,omitempty"`
+	// Ref / RefPlugin (ut-docs#7206, ADR-0121 amendment 2026-11-28): the
+	// opaque per-line ref a page plugin attached when it added this line to
+	// the basket from the sell-screen overlay, and that plugin's id. Additive;
+	// both omitted when the line carries none. A ref is an id, never personal
+	// data; a plugin matches only the refs whose RefPlugin is its own.
+	Ref       string `json:"ref,omitempty"`
+	RefPlugin string `json:"ref_plugin,omitempty"`
 }
 
 // SalePayment is one tender applied to a sale (ERP contract).
@@ -794,6 +801,57 @@ func (eb *EventBus) enqueueWithDB(ctx context.Context, db *sql.DB, sub EventSubs
 func (eb *EventBus) Ask(ctx context.Context, eventType string, payload interface{}) (json.RawMessage, bool, error) {
 	resp, _, ok, err := eb.AskFrom(ctx, eventType, payload)
 	return resp, ok, err
+}
+
+// AskPermitted is Ask restricted to subscribers that hold `permission`
+// (declared in the manifest and granted by the operator): a plugin without
+// it never sees the payload and never answers, even when it subscribed first.
+// For asks whose payload or answer is only meant for plugins the operator
+// consented to separately (tips.suggest.ask, payout:suggest, ut-docs#7108).
+func (eb *EventBus) AskPermitted(ctx context.Context, eventType, permission string, payload interface{}) (json.RawMessage, bool, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal payload: %w", err)
+	}
+	event := Event{
+		ID:        uuid.NewString(),
+		Type:      eventType,
+		Timestamp: time.Now().UTC(),
+		Payload:   payloadBytes,
+	}
+
+	eb.mu.RLock()
+	subscribers := eb.subscribers[eventType]
+	eb.mu.RUnlock()
+
+	for _, sub := range subscribers {
+		if sub.Handler == nil {
+			continue
+		}
+		if err := CheckPermission(ctx, eb.dbHandle(), sub.PluginID, "events:receive"); err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
+		if ok, err := CheckPermissionGranted(ctx, eb.dbHandle(), sub.PluginID, permission); err != nil || !ok {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", "permission "+permission+" not held")
+			continue
+		}
+		resp, err := sub.Handler(ctx, event)
+		if errors.Is(err, ErrEventDataClassDenied) {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
+		if err != nil {
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
+			return nil, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
+		}
+		eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
+		if len(resp) == 0 {
+			continue
+		}
+		return resp, true, nil
+	}
+	return nil, false, nil
 }
 
 // AskFrom is Ask that also names WHICH plugin answered (pluginID is ""

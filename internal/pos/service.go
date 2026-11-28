@@ -395,6 +395,15 @@ type BasketLine struct {
 	// silently drop money. A double scan of the same label yields two
 	// visible lines the operator can void (accepted ADR trade-off).
 	NoMerge bool `json:"-"`
+	// PluginRef / PluginRefBy (ut-docs#7206, ADR-0121 amendment 2026-11-28):
+	// the opaque per-line ref a page plugin attached when it added this line
+	// from the sell-screen overlay, and that plugin's id. Set only by
+	// ScanRefLine (such a line is always NoMerge). Carried through
+	// hold/resume and stored on the sale line; "" on an ordinary line. Never
+	// personal data (the validator allows ids only) and not on the basket's
+	// wire.
+	PluginRef   string `json:"-"`
+	PluginRefBy string `json:"-"`
 	// OrderType (ut-docs#1181, ADR-0073) is THIS line's consumption mode:
 	// "" (dine-in) or OrderTypeTakeaway, never OrderTypeMixed. Set from the
 	// Service's default when the line is added, changed per line by
@@ -855,6 +864,42 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 	}
 	s.recomputeTotals()
 	return &s.basket, false
+}
+
+// ScanRefLine adds ONE new line for code at qty, priced by the same resolver
+// a scan uses (the catalogue price: a plugin never names a price), and stamps
+// it with the opaque per-line ref and the plugin that set it
+// (ut-docs#7206). The line is NoMerge, so two services with the same SKU
+// stay two lines each with its own ref, and a later plain scan never absorbs
+// it. It is never cached: the scan cache must not carry a ref into plain
+// scans. A gift voucher item or an unknown code adds nothing (ok false).
+func (s *Service) ScanRefLine(code string, qty float64, pluginID, ref string) (*Basket, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if qty <= 0 {
+		qty = 1
+	}
+	code = strings.TrimSpace(code)
+	var line BasketLine
+	var ok bool
+	if cached, found := s.scanCache[code]; found && code != "" {
+		line, ok = cached, true
+	} else if s.resolver != nil && code != "" {
+		line, ok = s.resolver.Resolve(code)
+	}
+	if !ok || line.IsGiftVoucherItem() {
+		s.recomputeTotals()
+		return s.basketCopyLocked(), false
+	}
+	if !line.QtyFromCode {
+		line.Qty = qty
+	}
+	line.OrderType = s.orderType
+	line.LineKey = "" // a fresh line, never the cached one's key
+	line.NoMerge = true
+	line.PluginRef, line.PluginRefBy = ref, pluginID
+	s.mergeResolved(line)
+	return s.basketCopyLocked(), true
 }
 
 // AddLineWithModifiers adds a resolved base line to the basket with chosen

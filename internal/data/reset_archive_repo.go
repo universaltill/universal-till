@@ -180,7 +180,7 @@ var resetArchiveTables = []resetArchiveTable{
 	{"sale_discounts", "id, sale_id, line_id, type, value, amount, reason"},
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
-	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id"},
+	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id, plugin_ref, plugin_ref_by"},
 	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
 	// age_verifications (ut-docs#3340, migrations 056/057): the ID-check
 	// outcome log. Its sale_id FK to sales has no ON DELETE action (056's

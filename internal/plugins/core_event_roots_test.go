@@ -20,7 +20,7 @@ import (
 // eventCallArity maps an event-raising method to its exact arg count and
 // the index of the event-name argument.
 var eventCallArity = map[string][2]int{
-	"Publish": {3, 1}, "PublishAuthorize": {3, 1}, "Ask": {3, 1}, "AskFrom": {3, 1},
+	"Publish": {3, 1}, "PublishAuthorize": {3, 1}, "Ask": {3, 1}, "AskFrom": {3, 1}, "AskPermitted": {4, 1},
 	"PublishAuthorizeWithID": {4, 2}, "AskPlugin": {4, 2},
 }
 

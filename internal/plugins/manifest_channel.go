@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -34,6 +35,10 @@ const (
 // ChannelType is the canonical type of a sales-channel adapter.
 const ChannelType = "channel"
 
+// ChannelKindDelivery is the delivery-platform channel kind (ADR-0215): fixed
+// partner hosts instead of a per-shop account domain.
+const ChannelKindDelivery = "delivery"
+
 // ChannelContractVersion is the only `channel_contract` this till can list.
 // A new version is a new contract (sales-channel-v2), never an edit of v1.
 const ChannelContractVersion = 1
@@ -53,7 +58,7 @@ var (
 		"fulfilment", "refunds", "cancel", "customers", "compare_at", "item_create",
 	}
 	channelCapabilityDirections = []string{"push", "pull", "both"}
-	channelKinds                = []string{"webshop", "marketplace"}
+	channelKinds                = []string{"webshop", "marketplace", ChannelKindDelivery}
 	channelAuthGrants           = []string{"code", "client_credentials"}
 )
 
@@ -71,9 +76,12 @@ var (
 	// "evilmyshopify.com") do not.
 	channelSuffixRe = regexp.MustCompile(`^(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?){2,}$`)
 	// channelHeaderRe: an HTTP field-name token.
-	channelHeaderRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$`)
-	channelScopeRe  = regexp.MustCompile(`^[a-z0-9_:.\-]{1,100}$`)
-	channelTopicRe  = regexp.MustCompile(`^[a-z0-9_./\-]{1,100}$`)
+	channelHeaderRe         = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$`)
+	channelCapabilityNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	channelHostRe           = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+	channelRouteRe          = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	channelScopeRe          = regexp.MustCompile(`^[a-z0-9_:.\-]{1,100}$`)
+	channelTopicRe          = regexp.MustCompile(`^[a-z0-9_./\-]{1,100}$`)
 	// channelBareEventRe: a bare schedule event name. A channel plugin runs
 	// in the cloud host, where its schedule fires a `channel.tick` for the
 	// connection, so there is no shared event bus to collide on and the
@@ -223,10 +231,20 @@ func validateChannelBlock(pluginID string, c *ManifestChannel) error {
 	if !slices.Contains(channelKinds, c.Kind) {
 		return fmt.Errorf("manifest channel.kind %q is not one of %s", c.Kind, strings.Join(channelKinds, "|"))
 	}
-	if err := validateChannelAccount(c.Account, c.AccountSuffix); err != nil {
-		return err
+	delivery := c.Kind == ChannelKindDelivery
+	if delivery {
+		if err := validateDeliveryHosts(c); err != nil {
+			return err
+		}
+	} else {
+		if c.AccountModel != "" || len(c.Hosts) > 0 || c.StoreRef != "" {
+			return fmt.Errorf("manifest channel.account_model, hosts and store_ref are only allowed on kind %q", ChannelKindDelivery)
+		}
+		if err := validateChannelAccount(c.Account, c.AccountSuffix); err != nil {
+			return err
+		}
 	}
-	if err := validateChannelAuth(c.Auth); err != nil {
+	if err := validateChannelAuth(c.Auth, delivery); err != nil {
 		return err
 	}
 	if len(c.Capabilities) > maxChannelCapabilityCount {
@@ -238,11 +256,30 @@ func validateChannelBlock(pluginID string, c *ManifestChannel) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		raw := c.Capabilities[k]
+		if delivery {
+			// A delivery capability is a bare scalar (string, boolean or
+			// number); the vocabulary is the contract's, not this till's.
+			if !channelCapabilityNameRe.MatchString(k) {
+				return fmt.Errorf("manifest channel.capabilities has an invalid name %q", k)
+			}
+			var v any
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return fmt.Errorf("manifest channel.capabilities[%q] is not valid JSON", k)
+			}
+			switch v.(type) {
+			case string, bool, float64:
+			default:
+				return fmt.Errorf("manifest channel.capabilities[%q] must be a string, boolean or number", k)
+			}
+			continue
+		}
 		if !slices.Contains(channelCapabilityEntities, k) {
 			return fmt.Errorf("manifest channel.capabilities has unknown capability %q (allowed: %s)", k, strings.Join(channelCapabilityEntities, ", "))
 		}
-		if v := c.Capabilities[k]; !slices.Contains(channelCapabilityDirections, v) {
-			return fmt.Errorf("manifest channel.capabilities[%q] is %q (allowed: %s, or omit the capability)", k, v, strings.Join(channelCapabilityDirections, "|"))
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil || !slices.Contains(channelCapabilityDirections, v) {
+			return fmt.Errorf("manifest channel.capabilities[%q] is %s (allowed: %s, or omit the capability)", k, strings.TrimSpace(string(raw)), strings.Join(channelCapabilityDirections, "|"))
 		}
 	}
 	if l := c.Limits; l != nil && (l.MaxOptions < 0 || l.MaxVariants < 0) {
@@ -325,7 +362,35 @@ func validateChannelAccount(pattern, suffix string) error {
 	return nil
 }
 
-func validateChannelAuth(a *ManifestChannelAuth) error {
+// validateDeliveryHosts checks the fixed-host model of a delivery channel:
+// account_model "fixed", a live host pair (and an optional sandbox one), and a
+// store_ref pattern that is anchored and compiles.
+func validateDeliveryHosts(c *ManifestChannel) error {
+	if c.AccountModel != "fixed" {
+		return fmt.Errorf("manifest channel.account_model %q must be %q for a delivery channel", c.AccountModel, "fixed")
+	}
+	if _, ok := c.Hosts["live"]; !ok {
+		return errors.New("manifest channel.hosts.live is required for a delivery channel")
+	}
+	for mode, h := range c.Hosts {
+		if mode != "live" && mode != "sandbox" {
+			return fmt.Errorf("manifest channel.hosts has unknown mode %q (live or sandbox)", mode)
+		}
+		if !channelHostRe.MatchString(h.API) || !channelHostRe.MatchString(h.Auth) {
+			return fmt.Errorf("manifest channel.hosts.%s must name plain lower-case host names for api and auth", mode)
+		}
+	}
+	if c.StoreRef == "" || len(c.StoreRef) > maxChannelAccountPatternLen ||
+		!strings.HasPrefix(c.StoreRef, "^") || !strings.HasSuffix(c.StoreRef, "$") {
+		return errors.New("manifest channel.store_ref must be an anchored pattern (start with ^, end with $)")
+	}
+	if _, err := regexp.Compile(c.StoreRef); err != nil {
+		return fmt.Errorf("manifest channel.store_ref is not a valid pattern: %v", err)
+	}
+	return nil
+}
+
+func validateChannelAuth(a *ManifestChannelAuth, delivery bool) error {
 	if a == nil {
 		return errors.New("manifest channel.auth is required")
 	}
@@ -342,15 +407,21 @@ func validateChannelAuth(a *ManifestChannelAuth) error {
 		}
 		seen[g] = true
 	}
-	if seen["code"] || a.AuthorizeURL != "" {
-		if err := checkChannelTemplateURL("authorize_url", a.AuthorizeURL); err != nil {
+	tokenPrefix := "https://{account}/"
+	if delivery {
+		if seen["code"] || a.AuthorizeURL != "" {
+			return errors.New("manifest channel.auth.authorize_url is not allowed on a delivery channel (client_credentials only)")
+		}
+		tokenPrefix = "https://{auth}/"
+	} else if seen["code"] || a.AuthorizeURL != "" {
+		if err := checkChannelTemplateURL("authorize_url", a.AuthorizeURL, tokenPrefix); err != nil {
 			return err
 		}
 	}
-	if err := checkChannelTemplateURL("token_url", a.TokenURL); err != nil {
+	if err := checkChannelTemplateURL("token_url", a.TokenURL, tokenPrefix); err != nil {
 		return err
 	}
-	if len(a.Scopes) == 0 || len(a.Scopes) > maxChannelScopes {
+	if len(a.Scopes) > maxChannelScopes || (len(a.Scopes) == 0 && !delivery) {
 		return fmt.Errorf("manifest channel.auth.scopes must list 1 to %d scopes", maxChannelScopes)
 	}
 	for _, s := range a.Scopes {
@@ -361,6 +432,9 @@ func validateChannelAuth(a *ManifestChannelAuth) error {
 	if a.Inject == nil || a.Inject.Header == "" {
 		return errors.New("manifest channel.auth.inject.header is required")
 	}
+	if a.Inject.Scheme != "" && !channelHeaderRe.MatchString(a.Inject.Scheme) {
+		return fmt.Errorf("manifest channel.auth.inject.scheme %q is not a valid scheme token", a.Inject.Scheme)
+	}
 	if !channelHeaderRe.MatchString(a.Inject.Header) || forbiddenChannelHeaders[strings.ToLower(a.Inject.Header)] {
 		return fmt.Errorf("manifest channel.auth.inject.header %q cannot carry a credential", a.Inject.Header)
 	}
@@ -370,12 +444,12 @@ func validateChannelAuth(a *ManifestChannelAuth) error {
 // checkChannelTemplateURL requires https://{account}/<path>: the only host
 // an authorize or token URL may have is the connection's own verified
 // account, so the plugin cannot send an OAuth code or secret elsewhere.
-func checkChannelTemplateURL(field, raw string) error {
-	const prefix = "https://{account}/"
+func checkChannelTemplateURL(field, raw, prefix string) error {
+	host := strings.TrimSuffix(strings.TrimPrefix(prefix, "https://"), "/")
 	if !strings.HasPrefix(raw, prefix) {
 		return fmt.Errorf("manifest channel.auth.%s %q must start with %s", field, raw, prefix)
 	}
-	u, err := url.Parse(strings.Replace(raw, "{account}", "account.invalid", 1))
+	u, err := url.Parse(strings.Replace(raw, host, "account.invalid", 1))
 	if err != nil || u.Host != "account.invalid" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Path, "{}") {
 		return fmt.Errorf("manifest channel.auth.%s %q must be https://{account}/<path> with no credentials, query or other template", field, raw)
 	}
@@ -399,6 +473,9 @@ func validateChannelWebhooks(w *ManifestChannelWebhook) error {
 		}
 		seen[t] = true
 	}
+	if w.Route != "" && !channelRouteRe.MatchString(w.Route) {
+		return fmt.Errorf("manifest channel.webhooks.route %q is not a valid route name", w.Route)
+	}
 	v := w.Verify
 	if v == nil {
 		if len(w.Topics) > 0 {
@@ -414,6 +491,12 @@ func validateChannelWebhooks(w *ManifestChannelWebhook) error {
 	}
 	if v.Encoding != "base64" && v.Encoding != "hex" {
 		return fmt.Errorf("manifest channel.webhooks.verify.encoding %q is not base64 or hex", v.Encoding)
+	}
+	if len(v.Canonical) > 256 {
+		return errors.New("manifest channel.webhooks.verify.canonical is too long")
+	}
+	if v.SequenceHeader != "" && (!channelHeaderRe.MatchString(v.SequenceHeader) || forbiddenChannelHeaders[strings.ToLower(v.SequenceHeader)]) {
+		return fmt.Errorf("manifest channel.webhooks.verify.sequence_header %q is not a usable header name", v.SequenceHeader)
 	}
 	return nil
 }

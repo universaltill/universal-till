@@ -1733,16 +1733,26 @@ type InstallOptions struct {
 
 // ManifestChannel is the `channel` block of the contract (section 1).
 type ManifestChannel struct {
-	Kind           string                  `json:"kind"`
-	Account        string                  `json:"account"`
-	AccountSuffix  string                  `json:"account_suffix"`
-	Auth           *ManifestChannelAuth    `json:"auth,omitempty"`
-	Capabilities   map[string]string       `json:"capabilities,omitempty"`
-	Limits         *ManifestChannelLimits  `json:"limits,omitempty"`
-	PushFields     []string                `json:"push_fields,omitempty"`
-	StockLocations bool                    `json:"stock_locations,omitempty"`
-	Webhooks       *ManifestChannelWebhook `json:"webhooks,omitempty"`
-	Schedules      []ManifestSchedule      `json:"schedules,omitempty"`
+	Kind          string `json:"kind"`
+	Account       string `json:"account"`
+	AccountSuffix string `json:"account_suffix"`
+	// AccountModel, Hosts and StoreRef are the fixed-host model of a delivery
+	// channel (ADR-0215 Decision 6, ut-docs#6989). omitempty: a webshop
+	// manifest marshals byte-identically to before. ut-cloud's
+	// signing.CanonicalChannel mirrors them in this order.
+	AccountModel string                          `json:"account_model,omitempty"`
+	Hosts        map[string]ManifestChannelHosts `json:"hosts,omitempty"`
+	StoreRef     string                          `json:"store_ref,omitempty"`
+	Auth         *ManifestChannelAuth            `json:"auth,omitempty"`
+	// Capabilities hold raw JSON: a webshop capability is a direction string,
+	// a delivery one may be a boolean or a number, and the signed bytes must
+	// keep the type the publisher wrote.
+	Capabilities   map[string]json.RawMessage `json:"capabilities,omitempty"`
+	Limits         *ManifestChannelLimits     `json:"limits,omitempty"`
+	PushFields     []string                   `json:"push_fields,omitempty"`
+	StockLocations bool                       `json:"stock_locations,omitempty"`
+	Webhooks       *ManifestChannelWebhook    `json:"webhooks,omitempty"`
+	Schedules      []ManifestSchedule         `json:"schedules,omitempty"`
 }
 
 // ManifestChannelAuth says how the host obtains and injects the credential.
@@ -1755,10 +1765,18 @@ type ManifestChannelAuth struct {
 	Inject       *ManifestChannelAuthInject `json:"inject,omitempty"`
 }
 
+// ManifestChannelHosts is one mode's (live, sandbox) fixed API and token host
+// of a delivery channel (ADR-0215 Decision 6).
+type ManifestChannelHosts struct {
+	API  string `json:"api"`
+	Auth string `json:"auth"`
+}
+
 // ManifestChannelAuthInject names the request header that carries the
 // credential on every call the host makes for the plugin.
 type ManifestChannelAuthInject struct {
 	Header string `json:"header"`
+	Scheme string `json:"scheme,omitempty"`
 }
 
 // ManifestChannelLimits are the channel's own catalogue limits.
@@ -1770,6 +1788,7 @@ type ManifestChannelLimits struct {
 // ManifestChannelWebhook lists the topics the channel sends and how the HOST
 // verifies a signature (the plugin only parses a webhook already verified).
 type ManifestChannelWebhook struct {
+	Route  string                        `json:"route,omitempty"`
 	Topics []string                      `json:"topics,omitempty"`
 	Verify *ManifestChannelWebhookVerify `json:"verify,omitempty"`
 }
@@ -1779,6 +1798,11 @@ type ManifestChannelWebhookVerify struct {
 	Header   string `json:"header"`
 	Alg      string `json:"alg"`
 	Encoding string `json:"encoding"`
+	// Canonical and SequenceHeader describe the signed string of a delivery
+	// webhook (ADR-0215); the host, not the plugin, applies them.
+	Canonical      string `json:"canonical,omitempty"`
+	SequenceHeader string `json:"sequence_header,omitempty"`
+	SecretSource   string `json:"secret_source,omitempty"`
 }
 
 // adoptablePaymentKeys returns the hint keys that equal a payment entry key of
