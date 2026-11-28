@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -25,30 +26,27 @@ import (
 func seenAgo(d time.Duration) string { return time.Now().Add(-d).UTC().Format(time.RFC3339) }
 
 // The owner's real case: "phone till" and "iphone-till" are ghosts of the one
-// phone that is now "phone-till2". All three kinds of old entry are listed,
-// and both ghosts point at the live phone.
-func TestOldEntriesFrom_ThreeKindsAndTheSamePhoneHint(t *testing.T) {
-	live := tills.Row{ID: "t3", Name: "phone-till2", InLocal: true, InCloud: true, State: tills.StateOK, LastSeen: seenAgo(time.Hour)}
+// phone that is now "phone-till2". All three kinds of old entry are listed, the
+// device-proven ones point at the live phone (tills.MarkSameDevice, #7098), a
+// till that just joined is never an old entry.
+func TestOldEntriesFrom_ThreeKindsAndTheSameDeviceMark(t *testing.T) {
 	o := tillsOthers{
 		CloudOK: true,
-		Rows: []tills.Row{
-			{ID: "t0", Name: "mac-till", IsSelf: true, State: tills.StateOK, InLocal: true, InCloud: true},
-			live,
+		OldEntries: []tills.Row{
+			{ID: "g1", Name: "iphone-till", InLocal: true, State: tills.StateOldEntry, LongUnseen: true, LastSeen: seenAgo(96 * time.Hour), SameDeviceAs: "phone-till2",
+				Actions: []tills.Action{tills.ActionRemove}},
+			{ID: "g2", Name: "week tablet", InLocal: true, State: tills.StateLocalOnly, LongUnseen: true, LastSeen: seenAgo(48 * time.Hour),
+				Actions: []tills.Action{tills.ActionRemove}},
 		},
-		Stale: []tills.Row{
-			{ID: "g1", Name: "iphone-till", InLocal: true, State: tills.StateOldEntry, LongUnseen: true, LastSeen: seenAgo(96 * time.Hour)},
-			{ID: "g2", Name: "week tablet", InLocal: true, State: tills.StateLocalOnly, LastSeen: seenAgo(48 * time.Hour)},
-		},
+		Stale: []tills.Row{{ID: "new", Name: "new phone", InLocal: true, State: tills.StateLocalOnly, LastSeen: seenAgo(time.Minute)}},
 		CloudOnly: []tills.Row{
-			{ID: "g3", Name: "phone till", InCloud: true, State: tills.StateCloudOnly, LastSeen: seenAgo(72 * time.Hour)},
+			{ID: "g3", Name: "phone till", InCloud: true, State: tills.StateCloudOnly, LastSeen: seenAgo(72 * time.Hour), CloudDeviceID: "dev g3&x",
+				SameDeviceAs: "phone-till2", Actions: []tills.Action{tills.ActionRemoveCloud}},
 		},
 	}
-	o.Rows = append(o.Rows, o.Stale...)
-	o.Rows = append(o.Rows, o.CloudOnly...)
-
 	got := oldEntriesFrom(o)
 	if len(got) != 3 {
-		t.Fatalf("want 3 entries, got %d: %+v", len(got), got)
+		t.Fatalf("want 3 entries (the just-joined till is not one), got %d: %+v", len(got), got)
 	}
 	byID := map[string]oldEntry{}
 	for _, e := range got {
@@ -57,102 +55,54 @@ func TestOldEntriesFrom_ThreeKindsAndTheSamePhoneHint(t *testing.T) {
 	if byID["g1"].Kind != oldKindOld || byID["g2"].Kind != oldKindLocal || byID["g3"].Kind != oldKindCloud {
 		t.Fatalf("kinds wrong: %+v", got)
 	}
-	// Cloud-only entries come last.
 	if got[len(got)-1].ID != "g3" {
 		t.Fatalf("cloud-only entry must be listed last: %+v", got)
 	}
-	for _, id := range []string{"g1", "g3"} {
-		if byID[id].SameAsName != "phone-till2" || byID[id].SameAsID != "t3" {
-			t.Errorf("%s should point at the live phone, got %+v", id, byID[id])
-		}
-	}
-	// Same name as a live till is never a hint (that is the same entry).
-	if h := sameDeviceHint(tills.Row{Name: "PHONE-TILL2", LastSeen: seenAgo(96 * time.Hour)}, o.Rows); h != nil {
-		t.Errorf("a ghost with the live till's own name is not 'another name': %+v", h)
-	}
-	// A till seen BEFORE the ghost cannot be its replacement; neither can this till.
-	if h := sameDeviceHint(tills.Row{Name: "x", LastSeen: seenAgo(0)}, o.Rows); h != nil {
-		t.Errorf("a live till older than the ghost is not a replacement: %+v", h)
-	}
-	if h := sameDeviceHint(tills.Row{Name: "x"}, o.Rows); h != nil {
-		t.Errorf("no last-seen, no hint: %+v", h)
+	if byID["g1"].SameAsName != "phone-till2" || byID["g3"].SameAsName != "phone-till2" || byID["g2"].SameAsName != "" {
+		t.Errorf("same-device marks wrong: %+v", got)
 	}
 }
 
-// Account removal is a seam until the cloud call exists: the cloud-only entry
-// is honest about it (no Remove button), the local ones stay removable.
-func TestOldEntries_CloudOnlyIsNotRemovableWhileTheSeamIsAStub(t *testing.T) {
-	old := accountRemovalReady
-	t.Cleanup(func() { accountRemovalReady = old })
-
+// An account-only entry is removable only while the shop's removal is on (the
+// row carries the cloud action); it goes through main's cloud-remove route,
+// named by its device id; Remove all offers only what can be removed now.
+func TestOldEntries_CloudOnlyRemovableOnlyWithTheCloudAction(t *testing.T) {
 	o := tillsOthers{CloudOK: true,
-		Stale:     []tills.Row{{ID: "a", Name: "A", State: tills.StateLocalOnly}},
-		CloudOnly: []tills.Row{{ID: "b", Name: "B", State: tills.StateCloudOnly}}}
-	accountRemovalReady = false
+		OldEntries: []tills.Row{{ID: "a", Name: "A", State: tills.StateLocalOnly, LongUnseen: true, Actions: []tills.Action{tills.ActionRemove}}},
+		CloudOnly:  []tills.Row{{ID: "b", Name: "B", State: tills.StateCloudOnly, CloudDeviceID: "dev b&x"}}}
 	e := oldEntriesFrom(o)
 	if !e[0].Removable || e[1].Removable {
-		t.Fatalf("stub: local removable, cloud not: %+v", e)
+		t.Fatalf("setting off: local removable, cloud not: %+v", e)
 	}
 	if urls := oldRemoveURLs(e); urls != "/api/sync/tills/a/revoke" {
 		t.Fatalf("Remove all must only offer what can be removed now, got %q", urls)
 	}
-	accountRemovalReady = true
+	o.CloudOnly[0].Actions = []tills.Action{tills.ActionRemoveCloud}
 	e = oldEntriesFrom(o)
-	if !e[1].Removable || e[1].RemoveURL() != "/api/sync/tills/b/remove-from-account" {
-		t.Fatalf("ready: cloud entry removed through the account route, got %+v", e[1])
+	if !e[1].Removable || e[1].RemoveURL() != "/api/sync/tills/cloud-remove?device_id=dev+b%26x" {
+		t.Fatalf("setting on: cloud entry removed through main's cloud-remove, got %+v", e[1])
 	}
-	if urls := oldRemoveURLs(e); urls != "/api/sync/tills/a/revoke /api/sync/tills/b/remove-from-account" {
+	if urls := oldRemoveURLs(e); urls != "/api/sync/tills/a/revoke /api/sync/tills/cloud-remove?device_id=dev+b%26x" {
 		t.Fatalf("Remove all urls = %q", urls)
 	}
 }
 
-// The banner names the entries in plain words, joins them with "and", and
-// carries the live phone's name; it never says "disagree".
+// The banner names the entries it can remove in plain words, joins them with
+// "and", and carries the live phone's name; entries with no button are not in it.
 func TestOldBanner_NamesTheEntriesAndThePhone(t *testing.T) {
 	b := oldBannerFrom([]oldEntry{
 		{Name: "phone till", Removable: true, SameAsName: "phone-till2"},
 		{Name: "iphone-till", Removable: true, SameAsName: "phone-till2"},
+		{Name: "waiting", Removable: false},
 	}, "en", "and")
-	if b.Count != 2 || b.Removable != 2 || b.Phone != "phone-till2" || b.Pending {
+	if b.Removable != 2 || b.Phone != "phone-till2" {
 		t.Fatalf("banner = %+v", b)
 	}
 	if b.Names != "“phone till” and “iphone-till”" {
 		t.Fatalf("names = %q", b.Names)
 	}
-	b = oldBannerFrom([]oldEntry{{Name: "a", Removable: false}}, "en", "and")
-	if !b.Pending || b.Removable != 0 || b.Names != "“a”" {
-		t.Fatalf("pending banner = %+v", b)
-	}
-}
-
-func postSection(mux *http.ServeMux, path string) *httptest.ResponseRecorder {
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
-	return rec
-}
-
-// POST /api/sync/tills/{id}/remove-from-account: answers honestly (501 with
-// words) while the cloud call does not exist, and never touches the cloud.
-func TestRemoveFromAccount_HonestWhileTheSeamIsAStub(t *testing.T) {
-	old := accountRemovalReady
-	t.Cleanup(func() { accountRemovalReady = old })
-	accountRemovalReady = false
-	mux, _ := tillsTabsMux(t, nil, nil)
-	rec := postSection(mux, "/api/sync/tills/ghost-1/remove-from-account")
-	if rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "next update") {
-		t.Fatalf("stub = %d %q, want 501 saying it arrives in the next update", rec.Code, rec.Body.String())
-	}
-}
-
-// A joined (additional) till cannot remove account entries: only the main
-// till speaks for the shop.
-func TestRemoveFromAccount_RefusedOnAJoinedTill(t *testing.T) {
-	mux, dp := tillsTabsMux(t, nil, nil)
-	if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://main.local"); err != nil {
-		t.Fatal(err)
-	}
-	if rec := postSection(mux, "/api/sync/tills/ghost-1/remove-from-account"); rec.Code != http.StatusConflict {
-		t.Fatalf("joined till = %d, want 409", rec.Code)
+	if b = oldBannerFrom([]oldEntry{{Name: "a", Removable: false}}, "en", "and"); b.Removable != 0 || b.Names != "" {
+		t.Fatalf("an entry with no button must not raise the banner: %+v", b)
 	}
 }
 
@@ -167,62 +117,23 @@ func postPIN(mux *http.ServeMux, path, pin string, user *auth.User) *httptest.Re
 	return rec
 }
 
-// The inline PIN step: a removal waits for POST /api/sync/tills/verify-pin.
-// No PIN and a wrong PIN are refused with words (401, in the person's
-// language), the manager's own PIN passes (204), a cashier session never
-// reaches the PIN check.
+// The inline PIN step: a removal waits for POST /api/sync/tills/verify-pin. It
+// is the same rule as every removal route (authorizeTillRemoval): no PIN and a
+// wrong PIN are refused with words (403, in the person's language), a manager's
+// PIN passes (204) whoever is signed in, a manager session alone does not.
 func TestVerifyRemovalPIN_ManagerPinRequiredInline(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	registerTillsTabs(mux, dp)
 
-	if rec := postPIN(mux, "/api/sync/tills/verify-pin", "", nil); rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Invalid PIN") {
-		t.Fatalf("no PIN = %d %q, want 401 Invalid PIN", rec.Code, rec.Body.String())
+	if rec := postPIN(mux, "/api/sync/tills/verify-pin", "", nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Enter a manager PIN") {
+		t.Fatalf("no PIN = %d %q, want 403 asking for a manager PIN", rec.Code, rec.Body.String())
 	}
-	if rec := postPIN(mux, "/api/sync/tills/verify-pin", "000000", nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong PIN = %d, want 401", rec.Code)
+	if rec := postPIN(mux, "/api/sync/tills/verify-pin", "000000", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong PIN = %d, want 403", rec.Code)
 	}
 	if rec := postPIN(mux, "/api/sync/tills/verify-pin", dataAPITestManagerPIN, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("manager PIN = %d %q, want 204", rec.Code, rec.Body.String())
-	}
-}
-
-func TestVerifyRemovalPIN_CashierSessionIsRefusedBeforeAnyPinLookup(t *testing.T) {
-	t.Setenv("UT_AUTH", "")
-	mux, dp := newDataAPITestDeps(t)
-	registerTillsTabs(mux, dp)
-	cashier := auth.User{ID: "c1", Role: "cashier"}
-	if rec := postPIN(mux, "/api/sync/tills/verify-pin", dataAPITestManagerPIN, &cashier); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier = %d, want 403 even with a right PIN", rec.Code)
-	}
-}
-
-// The account-side removal checks the PIN itself (it has no other guard).
-func TestRemoveFromAccount_AsksForTheManagerPin(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	old, oldRemove := accountRemovalReady, removeFromAccount
-	t.Cleanup(func() { accountRemovalReady, removeFromAccount = old, oldRemove })
-	accountRemovalReady = true
-	called := ""
-	removeFromAccount = func(_ context.Context, _ *common.Deps, id string) error { called = id; return nil }
-
-	mux, dp := newDataAPITestDeps(t)
-	registerTillsTabs(mux, dp)
-	resetFleetCache()
-	oldFetch := tillsFleetFetch // package-global: restore so later tests (-shuffle) do not see this list
-	tillsFleetFetch = func(context.Context, *common.Deps) ([]enroll.Device, error) {
-		return []enroll.Device{{DeviceID: "d1", TillID: "ghost-1", Name: "phone till"}}, nil
-	}
-	t.Cleanup(func() { tillsFleetFetch = oldFetch; resetFleetCache() })
-
-	if rec := postPIN(mux, "/api/sync/tills/ghost-1/remove-from-account", "000000", nil); rec.Code != http.StatusUnauthorized || called != "" {
-		t.Fatalf("wrong PIN = %d (removed %q), want 401 and nothing removed", rec.Code, called)
-	}
-	if rec := postPIN(mux, "/api/sync/tills/ghost-1/remove-from-account", dataAPITestManagerPIN, nil); rec.Code != http.StatusNoContent || called != "ghost-1" {
-		t.Fatalf("right PIN = %d (removed %q), want 204 and ghost-1 removed", rec.Code, called)
-	}
-	if rec := postPIN(mux, "/api/sync/tills/not-listed/remove-from-account", dataAPITestManagerPIN, nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("an entry the account does not list = %d, want 404", rec.Code)
 	}
 }
 
@@ -250,9 +161,14 @@ func seedGhostsForOneLivePhoneAll(t *testing.T) (*http.ServeMux, *common.Deps, s
 	g1, _ := repo.InsertTill(ctx, "phone till", hashBearer("g1"))
 	g2, _ := repo.InsertTill(ctx, "iphone-till", hashBearer("g2"))
 	for id, ago := range map[string]time.Duration{g1: 90 * time.Hour, g2: 60 * time.Hour} {
-		if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`, seenAgo(ago), id); err != nil {
+		// Same device id as the live phone: the proof tills.MarkSameDevice
+		// uses (names are never compared, ut-docs#7098).
+		if _, err := dp.Db.Exec(`UPDATE tills SET last_seen_at = ?, device_id = 'dev-live' WHERE id = ?`, seenAgo(ago), id); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := dp.Db.Exec(`UPDATE tills SET device_id = 'dev-live' WHERE id = 'live'`); err != nil {
+		t.Fatal(err)
 	}
 	return mux, dp, g1, g2
 }
@@ -405,7 +321,8 @@ func TestRoster_RevokeUsesTheInlinePinPanel(t *testing.T) {
 }
 
 // Review 7173: the manager PIN is enforced by the revoke route itself, so a
-// direct POST (no browser, no inline panel) cannot skip it.
+// direct POST (no browser, no inline panel) cannot skip it; one rule with main's
+// removal routes (#7098): none or a wrong PIN is 403, the right one 204.
 func TestRevoke_EnforcesTheManagerPinServerSide(t *testing.T) {
 	mux, dp, g1, _ := seedGhostsForOneLivePhoneAll(t)
 	repo := data.NewTillsRepo(dp.Db)
@@ -419,13 +336,52 @@ func TestRevoke_EnforcesTheManagerPinServerSide(t *testing.T) {
 		return false
 	}
 	path := "/api/sync/tills/" + g1 + "/revoke"
-	if rec := postPIN(mux, path, "", nil); rec.Code != http.StatusUnauthorized || !has() {
-		t.Fatalf("no PIN = %d (till kept=%v), want 401 and the till kept", rec.Code, has())
+	if rec := postPIN(mux, path, "", nil); rec.Code != http.StatusForbidden || !has() {
+		t.Fatalf("no PIN = %d (till kept=%v), want 403 and the till kept", rec.Code, has())
 	}
-	if rec := postPIN(mux, path, "000000", nil); rec.Code != http.StatusUnauthorized || !has() {
-		t.Fatalf("wrong PIN = %d (till kept=%v), want 401 and the till kept", rec.Code, has())
+	if rec := postPIN(mux, path, "000000", nil); rec.Code != http.StatusForbidden || !has() {
+		t.Fatalf("wrong PIN = %d (till kept=%v), want 403 and the till kept", rec.Code, has())
 	}
 	if rec := postPIN(mux, path, dataAPITestManagerPIN, nil); rec.Code != http.StatusNoContent || has() {
 		t.Fatalf("right PIN = %d (till kept=%v), want 204 and the till gone", rec.Code, has())
+	}
+}
+
+// Account-side removal is wired to main's cloud-remove (ut-docs#7098): with the
+// shop's removal switched on, a ghost only the shop list holds gets the same
+// inline PIN panel and posts to cloud-remove with its device id; with it off it
+// says "Nothing to do" and has no button. No placeholder copy remains.
+func TestOldSection_CloudOnlyGhostIsRemovableWithThePinWhenSwitchedOn(t *testing.T) {
+	mux, dp := tillsTabsMux(t, []enroll.Device{{DeviceID: "dev-ghost", TillID: "ghost-1", Name: "phone till"}}, nil)
+	body := tabsGet(mux, "/ui/tills/section/old").Body.String()
+	if !strings.Contains(body, `data-kind="cloud"`) || !strings.Contains(body, "Nothing to do. This does not affect selling.") || strings.Contains(body, "data-pin-open") {
+		t.Fatalf("switched off: want the entry with 'Nothing to do' and no Remove: %s", body)
+	}
+	if strings.Contains(body, "next update") {
+		t.Fatalf("the 'arrives in the next update' placeholder must be gone: %s", body)
+	}
+	if err := dp.Settings.Set(t.Context(), settingCloudRemove, "1"); err != nil {
+		t.Fatal(err)
+	}
+	body = tabsGet(mux, "/ui/tills/section/old").Body.String()
+	for _, want := range []string{`aria-controls="pin-ghost-1-remove"`, `data-remove-routes="/api/sync/tills/cloud-remove?device_id=dev-ghost"`, `name="override_pin"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("switched on: missing %s: %s", want, body)
+		}
+	}
+	other := tabsGet(mux, "/ui/tills/section/others").Body.String()
+	if !strings.Contains(other, `data-testid="tills-old-banner"`) || !strings.Contains(other, "1 old entry is left over") {
+		t.Errorf("switched on: the banner must offer the removal: %s", other)
+	}
+	// The panel's call: no PIN is refused by the route itself, the manager's PIN removes.
+	calls := ""
+	oldCall := tillsCloudRemoveCall
+	tillsCloudRemoveCall = func(_ context.Context, _ *config.Config, id string) error { calls = id; return nil }
+	t.Cleanup(func() { tillsCloudRemoveCall = oldCall })
+	if rec := postPIN(mux, "/api/sync/tills/cloud-remove?device_id=dev-ghost", "", nil); rec.Code != http.StatusForbidden || calls != "" {
+		t.Fatalf("no PIN = %d (called %q), want 403 and nothing removed", rec.Code, calls)
+	}
+	if rec := postPIN(mux, "/api/sync/tills/cloud-remove?device_id=dev-ghost", dataAPITestManagerPIN, nil); rec.Code != http.StatusNoContent || calls != "dev-ghost" {
+		t.Fatalf("manager PIN = %d (called %q), want 204 and dev-ghost removed", rec.Code, calls)
 	}
 }

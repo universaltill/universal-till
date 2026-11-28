@@ -3,10 +3,11 @@
      when a live till with another name looks like the same phone, and one
      Remove all. A removal asks for the manager PIN in a panel right under the
      button (tills_pin_panel.html: no native confirm, no dialog, no showModal),
-     is audited by the existing revoke route, and the list, the tree's count
+     is audited by main's revoke / cloud-remove routes, and the list, the tree's count
      tag and the Other tills banner follow without a page reload
-     (tills-changed). Account-side removal of a cloud-only entry waits for
-     the cloud call (accountRemovalReady): until then the entry says so. */}}
+     (tills-changed). An entry only the shop's online list holds is removed
+     through main's cloud-remove route once the shop has switched that on
+     (tills.cloud_remove_enabled); until then it says "Nothing to do". */}}
 {{ with .Others }}
 <div id="tills-old" data-ut-refresh="#tills-old" data-ut-refresh-url="/ui/tills/section/old" data-testid="tills-old" data-old-count="{{ $.OldCount }}">
 {{ if not .CloudOK }}
@@ -43,9 +44,10 @@
       {{ if .SameAsName }}
       {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-replace" .ID) "q" (printf "%s %s" (printf (T "tills.tree.confirm.replace_title") .Name .SameAsName) (printf (T "tills.tree.confirm.replace_body") .SameAsName .Name)) "ok" (T "tills.tree.confirm.replace_ok") "urls" .RemoveURL "done" (printf (T "tills.tree.old.replaced") .Name .SameAsName)) }}
       {{ end }}
-      {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-remove" .ID) "q" (printf "%s %s" (printf (T "tills.tree.confirm.remove_title") .Name) (T "tills.tree.confirm.remove_body")) "ok" (T "tills.tree.old.remove") "urls" .RemoveURL "done" (printf (T "tills.tree.old.removed") .Name)) }}
+      {{ $body := T "tills.tree.confirm.remove_body" }}{{ if eq .Kind "cloud" }}{{ $body = T "tills.tree.confirm.remove_body_cloud" }}{{ end }}
+      {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-remove" .ID) "q" (printf "%s %s" (printf (T "tills.tree.confirm.remove_title") .Name) $body) "ok" (T "tills.tree.old.remove") "urls" .RemoveURL "done" (printf (T "tills.tree.old.removed") .Name)) }}
       {{ else }}
-      <p class="hint" data-testid="tills-cloud-pending">{{ T "tills.tree.old.cloud_pending" }}</p>
+      <p class="hint" data-testid="tills-cloud-pending">{{ T "tills.list.cloud_only.wait" }}</p>
       {{ end }}
     </li>
     {{ end }}

@@ -145,6 +145,46 @@ func TestRedactedJoinSnapshot_NullsTillDeviceIDs(t *testing.T) {
 	}
 }
 
+// ut-docs#7098: register_devices is main-till-local (ADR-0086): device ids of
+// the other tills never reach a joining replica in the join snapshot.
+func TestRedactedJoinSnapshot_EmptiesRegisterDevices(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	for _, s := range []string{
+		`INSERT INTO registers (id, name, is_active) VALUES ('r1','phone',1)`,
+		`INSERT INTO register_devices (register_id, device_id, till_id) VALUES ('r1','dev-secret','t1')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	raw, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("dev-secret")) {
+		t.Fatal("a device id survives in the raw bytes of the join snapshot")
+	}
+	sd, err := sql.Open("sqlite", "file:"+escapeSQLiteURIPath(copyPath)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sd.Close()
+	var n int
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM register_devices`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("register_devices rows in the join snapshot = %d (%v), want 0", n, err)
+	}
+	var live int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM register_devices`).Scan(&live); err != nil || live != 1 {
+		t.Fatalf("the live table lost its row: %d %v", live, err)
+	}
+}
+
 // ut-docs#426 (review finding): SQL-level NULL is not enough. SQLite doesn't
 // zero the bytes a shrunk record frees, so a plain `UPDATE ... SET
 // bearer_hash = NULL` leaves the real hash strings physically present in the

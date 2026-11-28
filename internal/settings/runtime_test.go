@@ -147,6 +147,10 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	cfg.Locales.TaxInclusive = true
 	cfg.Locales.TaxRateBP = 810 // fractional: ut-docs#3259
 
+	// Theme is only rewritten once a row exists (ut-docs#6347).
+	if err := s.Set(ctx, "theme", "amber"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SaveRuntimeConfig(ctx, cfg); err != nil {
 		t.Fatalf("SaveRuntimeConfig: %v", err)
 	}
@@ -219,12 +223,28 @@ func TestSaveRuntimeConfig_WritesExpectedKeys(t *testing.T) {
 		t.Fatalf("All: %v", err)
 	}
 	for _, k := range []string{
-		"theme", "store.name", "store.currency",
+		"store.name", "store.currency",
 		"store.locale", "store.tax_inclusive", "store.tax_rate",
 	} {
 		if _, ok := all[k]; !ok {
 			t.Errorf("SaveRuntimeConfig did not write expected key %q (all keys: %v)", k, all)
 		}
+	}
+	// ut-docs#6347: an unset theme stays unset (config default is not a
+	// choice); a stored one is rewritten as before.
+	if _, ok := all["theme"]; ok {
+		t.Error("SaveRuntimeConfig persisted the config-default theme for a till with no theme row")
+	}
+	if err := s.Set(ctx, "theme", "amber"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseCfg()
+	cfg.Theme = "dark"
+	if err := s.SaveRuntimeConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := s.Get(ctx, "theme"); v != "dark" {
+		t.Errorf("stored theme = %q, want cfg value dark written through", v)
 	}
 	// ut-docs#1172: store.currency_symbol was a dead, drift-prone setting —
 	// never read by anything except this same load/save round-trip. Every

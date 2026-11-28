@@ -70,7 +70,6 @@
         "settings-tills-this"
       ],
       "rarely_needed_keys": [
-        "auth.idle_lock_minutes",
         "invoice.seller_address",
         "invoice.seller_name",
         "invoice.seller_vat_no",
@@ -84,8 +83,7 @@
         "receipt.header3",
         "sale.browsing_mode",
         "sale.display_no_scheme",
-        "sale.order_type_prompt",
-        "store.staff_locales"
+        "sale.order_type_prompt"
       ]
     },
     "other": {

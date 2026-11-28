@@ -15,7 +15,18 @@
         {{/* ut-docs#7057: never hidden, always explained. */}}
         {{ if .AlreadyEnrolled }}<br><span class="tag warn" data-testid="pending-already-enrolled">{{ T "tills.pending.already_enrolled" }}</span>
         <br><small class="muted">{{ printf (T "tills.pending.already_enrolled_hint") .VerificationCode }}</small>{{ end }}
-        {{ if .NameInUse }}<br><span class="tag warn" data-testid="pending-name-in-use">{{ T "tills.pending.name_in_use" }}</span>{{ end }}</td>
+        {{ if .NameInUse }}<br><span class="tag warn" data-testid="pending-name-in-use">{{ T "tills.pending.name_in_use" }}</span>{{ end }}
+        {{/* ut-docs#7098: the same device coming back under a new name. The
+             strong prompt (a device-id match) or, without one, a select of old
+             entries. Outside the forms like the PIN box; the buttons below pull
+             it in. Names are untrusted: bdi, never a fixed width. */}}
+        {{ if .SamePhoneID }}<p data-testid="pending-same-device"><strong><bdi>{{ printf (T "tills.pending.same_phone") .SamePhoneOf }}</bdi></strong><br>
+          <small class="muted">{{ T "tills.pending.same_phone_hint" }}</small></p>
+        {{ else if .Candidates }}<p><label for="replace-{{ .ID }}">{{ T "tills.pending.replace_pick" }}</label><br>
+          <select name="replace_of" id="replace-{{ .ID }}" aria-label="{{ T "tills.pending.replace_pick" }} — {{ .DeviceName }}" data-testid="pending-replace-select">
+            <option value="" selected>{{ T "tills.pending.replace_none" }}</option>
+            {{ range .Candidates }}<option value="{{ .ID }}">{{ .Label }}</option>{{ end }}
+          </select></p>{{ end }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
       {{/* ut-docs#2781: the role the till asked to join as, which the
            manager can change before approving. Outside both forms like the
@@ -67,8 +78,20 @@
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
         {{ if .NameInUse }}
         <span class="muted" data-testid="pending-approve-disabled"><button class="btn primary" type="button" disabled>{{ T "tills.pairing.approve_btn" }}</button> {{ T "tills.pending.name_in_use_hint" }}</span>
-        {{ else }}
+        {{ else if .SamePhoneID }}
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}" hx-swap="none"
+              hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
+              data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
+          <input type="hidden" name="replace_of" value="{{ .SamePhoneID }}">
+          <button class="btn primary" type="submit" data-testid="pending-replace-yes"><bdi>{{ printf (T "tills.pending.same_phone_yes") .SamePhoneOf }}</bdi></button>
+        </form>
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}" hx-swap="none"
+              hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
+              data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
+          <button class="btn secondary" type="submit">{{ T "tills.pending.same_phone_no" }}</button>
+        </form>
+        {{ else }}
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}{{ if .Candidates }}, #replace-{{ .ID }}{{ end }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>

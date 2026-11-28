@@ -11,6 +11,9 @@
 <p class="muted">{{ T "registers.strand_warning" }}</p>
 
 {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
+{{/* ut-docs#7098: one-time notice after the optional auto-retire retired some. */}}
+{{ if eq .autoRetireNote 1 }}<p class="chip chip-note" role="status">{{ T "registers.auto_retire_notice_one" }}</p>
+{{ else if gt .autoRetireNote 1 }}<p class="chip chip-note" role="status">{{ printf (T "registers.auto_retire_notice") .autoRetireNote }}</p>{{ end }}
 
 {{ template "list_header" (dict
      "searchID"       "registers-search"
@@ -33,7 +36,9 @@
       <tr>
         <th>{{ T "registers.col.name" }}</th>
         <th>{{ T "registers.col.location" }}</th>
+        <th>{{ T "registers.col.till" }}</th>
         <th>{{ T "registers.col.status" }}</th>
+        <th><span class="visually-hidden">{{ T "registers.col.actions" }}</span></th>
       </tr>
     </thead>
     <tbody>
@@ -46,20 +51,35 @@
     {{ if .inactive }}
     <tbody class="registers-inactive">
       <tr>
-        <td colspan="3" class="muted">{{ T "registers.inactive" }} ({{ len .inactive }})</td>
+        <td colspan="5" class="muted">{{ T "registers.inactive" }} ({{ len .inactive }})</td>
       </tr>
       {{ range .inactive }}{{ template "register_row" . }}{{ end }}
     </tbody>
     {{ end }}
     <tbody>
       <tr id="registers-no-results" class="list-empty-row" hidden>
-        <td colspan="3">{{ T "common.no_results" }}</td>
+        <td colspan="5">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
   </div>
   {{ end }}
 </div>
+
+{{/* ut-docs#7098: optional auto-retire (default OFF). Managers, main till only
+     (a replica sees no dead control). The day count is fixed text, never a
+     field (no keyboard on a till). Auto-submits on change. */}}
+{{ if .isPrimary }}
+<form class="auto-retire" method="post" action="/registers/auto-retire" hx-boost="true"
+      hx-trigger="change" hx-target="#auto-retire-status" hx-swap="innerHTML">
+  <div class="field-checks">
+    <label class="modifier-option"><input type="checkbox" name="enabled" value="1" {{ if .autoRetire }}checked{{ end }} />
+      {{ printf (T "registers.auto_retire.label") .autoRetireDays }}</label>
+  </div>
+  <p class="muted">{{ T "registers.auto_retire.hint" }}</p>
+  <span id="auto-retire-status" role="status"></span>
+</form>
+{{ end }}
 
 {{ template "record_dialog" (dict
      "id"             "register-dialog"
@@ -82,7 +102,7 @@
   </label>
   <label>{{ T "registers.new.location_label" }}
     <select name="location_id">
-      <option value="">{{ T "registers.new.location_none" }}</option>
+      <option value="">{{ T "registers.location_default" }}</option>
       {{ range .root.stockLocations }}
       <option value="{{ .ID }}">{{ .Name }}</option>
       {{ end }}
@@ -114,7 +134,10 @@
 </form>
 {{ end }}
 
-{{/* One register row; shared by the active and inactive groups. */}}
+{{/* One register row; shared by the active and inactive groups. The Retire /
+     Activate button sits in its own unlabelled cell (table-cards.js makes it
+     the card's action on a phone); a button inside the row never opens the
+     edit dialog (record-dialog.js ignores buttons without data-record-edit). */}}
 {{ define "register_row" }}
 <tr class="register-row" data-id="{{ .ID }}"
     data-record-open="register-dialog"
@@ -124,10 +147,29 @@
     data-field-location_id="{{ .LocationValue }}"
     data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
   <td><button type="button" class="record-row-open" data-record-edit aria-describedby="registers-row-edit-hint"><span class="record-row-name">{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</span></button></td>
-  <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
+  <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.location_default" }}</span>{{ end }}</td>
+  <td>{{ if .Ghost.IsSelf }}{{ T "registers.till.self" }}{{ else if .Ghost.TillName }}{{ .Ghost.TillName }}{{ else }}<span class="muted">{{ T "registers.till.none" }}</span>{{ end }}</td>
   <td>
     {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}
+    {{ if .Ghost.StateKey }}<br />{{ if .Ghost.Stale }}<span class="chip chip-warn">{{ T .Ghost.StateKey }}</span>{{ else }}<span class="muted">{{ T .Ghost.StateKey }}</span>{{ end }}{{ end }}
+    {{ if and (not .IsActive) .Ghost.RetiredKey }}<br /><span class="muted">{{ printf (T "registers.retired_on") (T .Ghost.RetiredKey) (date .Ghost.RetiredOn) }}</span>{{ end }}
     {{ if .InUse }}<br /><span class="muted">{{ T "registers.in_use_hint" }}</span>{{ end }}
+  </td>
+  <td>
+    {{ if .CanRetire }}
+    <form method="post" action="/api/registers/{{ .ID }}/active" hx-boost="true" hx-target="body"
+          hx-confirm="{{ printf (T "registers.retire_confirm_named") .Name }}" data-confirm-ok="{{ T "registers.retire" }}">
+      <input type="hidden" name="active" value="0" />
+      <input type="hidden" name="reason" value="manual" />
+      <button type="submit" class="btn{{ if not .RetireHighlight }} secondary{{ end }}"
+              aria-label="{{ printf (T "registers.retire_aria") .Name }}" title="{{ printf (T "registers.retire_aria") .Name }}">{{ T "registers.retire" }}</button>
+    </form>
+    {{ else if and (not .IsActive) .IsPrimary }}
+    <form method="post" action="/api/registers/{{ .ID }}/active" hx-boost="true" hx-target="body">
+      <input type="hidden" name="active" value="1" />
+      <button type="submit" class="btn secondary">{{ T "registers.activate" }}</button>
+    </form>
+    {{ end }}
   </td>
 </tr>
 {{ end }}

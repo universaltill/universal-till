@@ -53,6 +53,11 @@ type Action string
 // ActionRemove revokes the local enrolment (POST /api/sync/tills/{id}/revoke).
 const ActionRemove Action = "remove"
 
+// ActionRemoveCloud removes a live entry that exists only in the shop's online
+// list (POST /api/sync/tills/cloud-remove), offered only when the cloud has the
+// capability switched on (Source.CloudRemoveOK, ut-docs#7098).
+const ActionRemoveCloud Action = "remove_cloud"
+
 // OldEntryAfter is how long a till not in the account must have been unseen
 // to count as an old entry.
 const OldEntryAfter = 30 * 24 * time.Hour
@@ -70,6 +75,10 @@ type Source struct {
 	// RemovedTillIDs are till ids the account lists as removed (the cloud's
 	// removed_tills); nil while the cloud does not send them.
 	RemovedTillIDs map[string]bool
+	// CloudRemoveOK: the till may remove a live account-only entry from the
+	// shop's list (the cloud's till-initiated remove is on). Without it a
+	// cloud-only row carries no action.
+	CloudRemoveOK bool
 }
 
 // Row is one till in the merged list.
@@ -85,6 +94,12 @@ type Row struct {
 	SameNameOtherID bool
 	ReplacedBy      string
 	Actions         []Action
+	// DeviceID is the device id a local row joined with ("" when unknown);
+	// CloudDeviceID the one the shop's list holds for it (the id the cloud
+	// remove names). SameDeviceAs is the name of the live entry this old entry
+	// is the same device as (MarkSameDevice).
+	DeviceID, CloudDeviceID string
+	SameDeviceAs            string
 }
 
 // NormRole maps the account's role words (primary/replica) and the local
@@ -132,7 +147,7 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 	if s.Self.ID != "" {
 		r := &Row{ID: s.Self.ID, Name: s.Self.Name, Role: s.Self.Role, IsSelf: true, InLocal: true, State: StateOK}
 		if c, ok := cloudByID[s.Self.ID]; ok {
-			r.InCloud, r.CloudRole = true, c.Role
+			r.InCloud, r.CloudRole, r.CloudDeviceID = true, c.Role, c.DeviceID
 		}
 		if s.Replaced != nil {
 			r.State, r.ReplacedBy = StateReplaced, s.Replaced.By
@@ -143,9 +158,9 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 		if l.ID == s.Self.ID {
 			continue
 		}
-		r := &Row{ID: l.ID, Name: l.Name, Role: l.Role, LastSeen: l.LastSeenAt, InLocal: true, State: StateOK}
+		r := &Row{ID: l.ID, Name: l.Name, Role: l.Role, LastSeen: l.LastSeenAt, InLocal: true, State: StateOK, DeviceID: l.DeviceID}
 		if c, ok := cloudByID[l.ID]; ok {
-			r.InCloud, r.CloudRole = true, c.Role
+			r.InCloud, r.CloudRole, r.CloudDeviceID = true, c.Role, c.DeviceID
 			if c.Role != "" && c.Role != NormRole(l.Role) {
 				r.State = StateRoleMismatch
 			}
@@ -162,7 +177,11 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 				r.State = StateOldEntry
 				r.LongUnseen = true
 			}
-			r.Actions = []Action{ActionRemove}
+			// A till that just joined is one tap from removal no more: Remove
+			// appears once it is old (ut-docs#7098).
+			if r.LongUnseen {
+				r.Actions = []Action{ActionRemove}
+			}
 		}
 		add(r)
 	}
@@ -175,8 +194,12 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 				continue
 			}
 			c.Role = NormRole(c.Role)
-			add(&Row{ID: c.TillID, Name: c.Name, Role: c.Role, CloudRole: c.Role, LastSeen: c.LastSeen,
-				InCloud: true, State: StateCloudOnly})
+			cr := &Row{ID: c.TillID, Name: c.Name, Role: c.Role, CloudRole: c.Role, LastSeen: c.LastSeen,
+				InCloud: true, State: StateCloudOnly, CloudDeviceID: c.DeviceID}
+			if s.CloudRemoveOK && c.DeviceID != "" {
+				cr.Actions = []Action{ActionRemoveCloud}
+			}
+			add(cr)
 		}
 	}
 	rows := make([]Row, 0, len(order))

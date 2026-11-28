@@ -87,16 +87,21 @@ func TestTillsOthers_StaleRowIsFlaggedAndOneTapRemovable_CloudDownNeverStale(t *
 	if _, err := repo.InsertTill(context.Background(), "Ghost tablet", hashBearer("g")); err != nil {
 		t.Fatal(err)
 	}
-	body := tabsGet(mux, "/ui/tills/tab/others").Body.String()
-	if !strings.Contains(body, "Ghost tablet") || !strings.Contains(body, "Cloud only") {
-		t.Fatalf("both sources must be listed: %s", body)
+	// Both sources are listed: this network's till in Other tills, the entry
+	// only the shop list holds in Old entries (with no Remove while the shop's
+	// removal is off). A till that just joined is never an old entry.
+	body := tabsGet(mux, "/ui/tills/section/others").Body.String()
+	oldBody := tabsGet(mux, "/ui/tills/section/old").Body.String()
+	if !strings.Contains(body, "Ghost tablet") || !strings.Contains(oldBody, "Cloud only") || strings.Contains(oldBody, "Ghost tablet") {
+		t.Fatalf("both sources must be listed: %s / %s", body, oldBody)
 	}
 	// cloud list unavailable: nothing may be called stale.
 	resetFleetCache()
 	tillsFleetFetch = func(context.Context, *common.Deps) ([]enroll.Device, error) { return nil, errors.New("down") }
-	body = tabsGet(mux, "/ui/tills/tab/others").Body.String()
-	if strings.Contains(body, "tills-remove-stale") {
-		t.Fatalf("unknown account list must never offer stale removal: %s", body)
+	body = tabsGet(mux, "/ui/tills/section/others?refresh=1").Body.String()
+	oldBody = tabsGet(mux, "/ui/tills/section/old").Body.String()
+	if strings.Contains(body, "tills-old-banner") || strings.Contains(oldBody, "till-old-entry") || strings.Contains(oldBody, "tills-remove-all") {
+		t.Fatalf("unknown account list must never offer stale removal: %s / %s", body, oldBody)
 	}
 }
 
@@ -110,7 +115,7 @@ func TestTillsRevokeStale_RemovesOnlyStaleAndAudits_RefusesWhenCloudUnknown(t *t
 	}
 	post := func(ids ...string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": ids}.Encode()))
+		req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": ids, "override_pin": {dataAPITestManagerPIN}}.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		mux.ServeHTTP(rec, req)
 		return rec
@@ -227,7 +232,7 @@ func TestTillsOld_EntriesAreListedWithTheirRemoveButtons(t *testing.T) {
 	}
 	// The bulk endpoint (kept) removes the old entry.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": {oldID}}.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": {oldID}, "override_pin": {dataAPITestManagerPIN}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -249,12 +254,12 @@ func TestTillsOthers_UnpairedSaysNotConnectedNotUnreachable(t *testing.T) {
 	if !strings.Contains(body, "not connected to a shop account") || !strings.Contains(body, "Pair with a shop") || !strings.Contains(body, `href="/settings#settings-tills-shop"`) {
 		t.Fatalf("unpaired: want not-connected wording and the pair action: %s", body)
 	}
-	if strings.Contains(body, "reach your shop account") || strings.Contains(body, "Try again") {
+	if strings.Contains(body, "reach your shop list") || strings.Contains(body, "Try again") {
 		t.Fatalf("unpaired: must not offer a retry that can never work: %s", body)
 	}
 	dp.Cfg.Marketplace = config.MarketplaceConfig{EndpointURL: "https://x.invalid", StoreID: "s", MerchantToken: "t"}
 	body = tabsGet(mux, "/ui/tills/section/others?refresh=1").Body.String()
-	if !strings.Contains(body, "reach your shop account") || strings.Contains(body, "not connected to a shop account") {
+	if !strings.Contains(body, "reach your shop list") || strings.Contains(body, "not connected to a shop account") {
 		t.Fatalf("paired but account down: want the unreachable wording: %s", body)
 	}
 }

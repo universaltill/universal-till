@@ -64,3 +64,28 @@ the three existing revoke tests that post no PIN failed with 401 after it, provi
 ## Verdict
 Approve after the fix above, conditional on the #2786 merge-order notes in finding 2 (second PR to merge owns the
 reconciliation). Deferred: cloud-only removal wiring, same-device unification, orphan key cleanup.
+
+## Reconciliation with PR #2786 (ut-docs#7098), merged into this branch
+
+Merge commit `git merge origin/main`; nothing duplicated, main's server logic wins where it exists.
+- **Main's, kept as is:** `POST /api/sync/tills/cloud-remove` (+ `enroll.RemoveFromAccount`, default-off
+  `tills.cloud_remove_enabled`), `revoke-stale`, `revokeTillAndRetireRegister`, one device / one register,
+  `tills.MarkSameDevice`, Unpaired state, `Actionable` counts, auto-retire hook (kept in `tillsPageData` case `others`).
+- **Ours, kept:** one tree, Old entries sub-row with the count tag, the inline PIN panel, plain copy.
+  `tills_tab_others.html` and main's `tills_others_list.html` stay deleted; the new behaviour was ported into
+  `tills_section_others.html` / `tills_section_old.html` (banner only while `Actionable`, a just-joined till is never an old
+  entry, `SameDeviceAs` replaces the name heuristic, `tills.list.cloud_only.wait` for an account-only entry while removal is off).
+- **Stub seam deleted:** `accountRemovalReady`, `removeFromAccount`, route `remove-from-account`, key
+  `tills.tree.old.cloud_pending` and its "arrives in the next update" copy. Account-only ghosts are removable with the manager
+  PIN: the panel posts `/api/sync/tills/cloud-remove?device_id=...` once the shop's removal is on.
+- **ONE PIN rule (decision, deviates from main's text on one point):** `authorizeTillRemoval` now requires a manager PIN
+  (`override_pin` from the panel or `manager_pin`) on every removal route (revoke, revoke-stale, cloud-remove, verify-pin), also for a signed-in
+  manager (ADR-0087 step-up; owner 2026-11-27 "no removal without the PIN"). Main's "a manager session needs no PIN" branch is dropped,
+  main's cashier-plus-manager-PIN case and its 403/429 answers are kept. The replica/flag-off checks run before the PIN
+  so they never burn lockout attempts. The audit actor is the PIN's manager. `verifyRemovalPIN` and the 401 codes are gone
+  (no PIN or a wrong one is 403, lockout 429).
+- **Tests ported, not dropped:** main's `tills_ghosts_7098_test.go` and `tills_remove_pin_test.go` now run on
+  `/ui/tills/section/others|old` and the one PIN rule; main's `TestTillsOthers_*` expectations in `tills_tabs_test.go` likewise.
+- **Open:** the role-mismatch row of main's merged list has no equivalent in the tree (the tree lists working tills in the
+  live roster and calls nothing a warning that a manager cannot fix); the shop's removal switch has no UI, so the cloud-remove
+  button is covered by a Go test, not e2e.

@@ -330,6 +330,25 @@ function bootTill(port: number, cloudUrl: string) {
   const url = `http://127.0.0.1:${port}`;
   return {
     url,
+    // A till that just joined is never an "old entry" (ut-docs#7098: Remove only
+    // appears once it was unseen for a day), so a ghost is aged in the throwaway DB.
+    ageTill(id: string) {
+      const dbs: string[] = [];
+      const walk = (d: string) => {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const f = path.join(d, e.name);
+          if (e.isDirectory()) walk(f);
+          else if (e.name.endsWith('.db') && !e.name.startsWith('backup')) dbs.push(f);
+        }
+      };
+      walk(dataDir);
+      const past = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
+      for (const f of dbs) {
+        try {
+          execFileSync('sqlite3', [f, `UPDATE tills SET last_seen_at='${past}', enrolled_at='${past}' WHERE id='${id.replace(/[^A-Za-z0-9_-]/g, '')}';`]);
+        } catch { /* not the till database */ }
+      }
+    },
     async ready() {
       for (let i = 0; i < 120; i++) {
         if (await isHealthy(url)) return;
@@ -456,6 +475,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
   test('two old entries: banner names them and has a fix button; Old entries lists both; the tree counts 2', async () => {
     const assertClean = watchConsole(page);
     ghostIds.push(await enrollGhost(api, 'tree-ghost-a'), await enrollGhost(api, 'tree-ghost-b'));
+    ghostIds.forEach((id) => till.ageTill(id));
     await warmThenOpen('others');
 
     const banner = page.getByTestId('tills-old-banner');
@@ -484,24 +504,30 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
     assertClean();
   });
 
-  test('a cloud-only ghost is listed with a Remove or an honest "pending" line, never a dead link', async () => {
+  test('a cloud-only ghost is listed with "Nothing to do" while the shop list removal is off (no dead link, no placeholder promise)', async () => {
     const now = new Date().toISOString();
     cloud.devices.push({ device_id: 'tree-cloud-ghost', till_id: 'tree-cloud-ghost-till', name: 'phone till', version: '1.0.0', first_seen: now, last_seen: now });
     await warmThenOpen('old');
     const entry = oldEntries(page).filter({ hasText: 'phone till' });
     await expect(entry).toHaveCount(1);
     await expect(entry).toHaveAttribute('data-kind', 'cloud');
-    // While account-side removal is not wired the row says so; once it is, it has the PIN opener.
-    await expect(entry.locator('[data-pin-open], [data-testid="tills-cloud-pending"]').first()).toBeVisible();
+    // The shop's removal (tills.cloud_remove_enabled, default off, ut-docs#7098) is off here:
+    // the row says there is nothing to do and offers no button. With it on, the row gets the
+    // same PIN opener and posts to cloud-remove: covered by the Go test
+    // TestOldSection_CloudOnlyGhostIsRemovableWithThePinWhenSwitchedOn (the flag has no UI).
+    await expect(entry).toContainText('Nothing to do');
+    await expect(entry.locator('[data-pin-open]')).toHaveCount(0);
+    await expect(entry).not.toContainText('next update');
     await expect(entry.locator('a[href*="my.universaltill.com"]')).toHaveCount(0);
   });
 
   // -- (e) remove flow ------------------------------------------------------
 
   test('Remove opens the PIN panel inline; a wrong PIN errors, the right one removes the row and the count follows without a reload', async () => {
-    const assertClean = watchConsole(page, /^Failed to load resource:.*401/);
+    const assertClean = watchConsole(page, /^Failed to load resource:.*40[13]/);
     const noNativeDialogs = watchDialogs(page);
     ghostIds.push(await enrollGhost(api, 'tree-ghost-a'), await enrollGhost(api, 'tree-ghost-b'));
+    ghostIds.forEach((id) => till.ageTill(id));
     await warmThenOpen('old');
     await page.evaluate(() => ((window as any).__tree7173 = 'alive'));
     await expect(oldEntries(page)).toHaveCount(2);
@@ -567,6 +593,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
 
   test('Escape closes the PIN panel and puts focus back on the button that opened it; nothing is removed', async () => {
     ghostIds.push(await enrollGhost(api, 'tree-ghost-a'), await enrollGhost(api, 'tree-ghost-b'));
+    ghostIds.forEach((id) => till.ageTill(id));
     await warmThenOpen('old');
     const opener = oldEntries(page).filter({ hasText: 'tree-ghost-b' }).locator('[data-pin-open]').first();
     await opener.focus();
@@ -584,6 +611,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
   test('the banner button and Remove all use the same inline PIN panel and clear every entry', async () => {
     const noNativeDialogs = watchDialogs(page);
     ghostIds.push(await enrollGhost(api, 'tree-ghost-a'), await enrollGhost(api, 'tree-ghost-b'));
+    ghostIds.forEach((id) => till.ageTill(id));
     await warmThenOpen('others');
     await page.evaluate(() => ((window as any).__tree7173 = 'alive'));
     await expect(page.getByTestId('tills-old-banner')).toBeVisible();
