@@ -425,3 +425,68 @@ func TestShopTypePreview_LegacySameTypeTitleAndSettingsGroupedApart(t *testing.T
 		}
 	}
 }
+
+// ut-docs#6347 Q1: a hidden menu tile is restored under Hidden menu tiles, a
+// hidden settings card sits in More settings; each gets its own heading and the
+// menu group comes first (the body scrolls on a 1024x600 kiosk).
+func TestShopTypePreview_HiddenMenuTilesAndSettingsCardsUnderOwnHeadings(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	useRealShopTemplates(t, d)
+	stChange(t, mux, "cafe")
+	stChange(t, mux, "hospitality")
+	body := getAs(mux, "/api/settings/shop-type/preview?to=retail", &mgrUser).Body.String()
+	const hm = "Will be hidden from your menu (restore any time in Settings &gt; Hidden menu tiles)"
+	const hs = "Will move to More settings (still there, just tucked away)"
+	im, is := strings.Index(body, hm), strings.Index(body, hs)
+	if im < 0 || is < 0 {
+		t.Fatalf("want both hidden headings (menu %d, settings %d):\n%s", im, is, body)
+	}
+	if im > is {
+		t.Error("hidden menu tiles must come before hidden settings cards")
+	}
+	menu := body[im:is]
+	if !strings.Contains(menu, "Tables") || strings.Contains(menu, "Order numbers") {
+		t.Errorf("menu group wrong: %s", menu)
+	}
+	cards := between(t, body, hs, "</ul>")
+	if strings.Contains(cards, "Tables") || !strings.Contains(cards, "Order numbers") {
+		t.Errorf("settings group wrong: %s", cards)
+	}
+}
+
+// ut-docs#6347 Q2: the shop-type banner/preview has no motion today; if one is
+// added it must be finite and inside prefers-reduced-motion: no-preference.
+func TestAppCSSShopTypeRulesHaveNoUnguardedOrInfiniteMotion(t *testing.T) {
+	css := readAppCSS(t)
+	// Blank out the no-preference blocks: motion is allowed there (finite only).
+	guarded := css
+	for {
+		i := strings.Index(guarded, "@media (prefers-reduced-motion: no-preference)")
+		if i < 0 {
+			break
+		}
+		blk := extractBlock(t, guarded[i:], "@media (prefers-reduced-motion: no-preference)")
+		guarded = guarded[:i] + guarded[i+strings.Index(guarded[i:], blk)+len(blk):]
+		_ = blk
+	}
+	check := func(src string, motion bool) {
+		for _, rule := range strings.Split(src, "}") {
+			open := strings.Index(rule, "{")
+			if open < 0 {
+				continue
+			}
+			sel, decl := strings.TrimSpace(rule[:open]), rule[open+1:]
+			if !strings.Contains(sel, ".shop-type-undo") && !strings.Contains(sel, ".shop-type-preview") {
+				continue
+			}
+			if motion && (strings.Contains(decl, "animation") || strings.Contains(decl, "transition")) {
+				t.Errorf("%s: animation/transition outside prefers-reduced-motion: no-preference", sel)
+			}
+			if strings.Contains(decl, "infinite") {
+				t.Errorf("%s: infinite iteration is not allowed", sel)
+			}
+		}
+	}
+	check(guarded, true)
+	check(css, false)
+}

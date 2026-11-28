@@ -18,6 +18,10 @@
       {{ if .LabelOnly }}
       <p>{{ T "settings.template.preview.label_only" }}</p>
       {{ end }}
+      {{ if .HiddenMenu }}
+      <h4>{{ T "settings.template.preview.group_hidden_menu" }}</h4>
+      <ul class="shop-type-list">{{ range .HiddenMenu }}<li>{{ .Label }}</li>{{ end }}</ul>
+      {{ end }}
       {{ if .ShownMenu }}
       <h4>{{ T "settings.template.preview.group_shown" }}</h4>
       <ul class="shop-type-list">{{ range .ShownMenu }}<li>{{ .Label }}</li>{{ end }}</ul>
@@ -26,9 +30,9 @@
       <h4>{{ T "settings.template.preview.group_shown_settings" }}</h4>
       <ul class="shop-type-list">{{ range .ShownSettings }}<li>{{ .Label }}</li>{{ end }}</ul>
       {{ end }}
-      {{ if .Hidden }}
+      {{ if .HiddenSettings }}
       <h4>{{ T "settings.template.preview.group_hidden" }}</h4>
-      <ul class="shop-type-list">{{ range .Hidden }}<li>{{ .Label }}</li>{{ end }}</ul>
+      <ul class="shop-type-list">{{ range .HiddenSettings }}<li>{{ .Label }}</li>{{ end }}</ul>
       {{ end }}
       {{ if .Values }}
       <fieldset class="shop-type-values">

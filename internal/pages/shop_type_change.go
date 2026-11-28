@@ -285,7 +285,7 @@ func shopTypePreviewData(locale, from, to string, p shoptemplate.Preview) map[st
 	title := strings.NewReplacer("{from}", orDash(shopTypeLabel(locale, from)), "{to}", orDash(shopTypeLabel(locale, to))).Replace(httpx.T(locale, titleKey))
 	return map[string]any{
 		"To": to, "Title": title,
-		"ShownMenu": previewRows(locale, kindOf(p.Shown, shoptemplate.KindMenu)), "ShownSettings": previewRows(locale, kindOf(p.Shown, shoptemplate.KindSettings)), "Hidden": previewRows(locale, p.Hidden),
+		"ShownMenu": previewRows(locale, kindOf(p.Shown, shoptemplate.KindMenu)), "ShownSettings": previewRows(locale, kindOf(p.Shown, shoptemplate.KindSettings)), "HiddenMenu": previewRows(locale, kindOf(p.Hidden, shoptemplate.KindMenu)), "HiddenSettings": previewRows(locale, kindOf(p.Hidden, shoptemplate.KindSettings)),
 		"Values": vals, "Kept": kept, "KeptHead": firstN(kept, 3), "KeptRest": restAfter(kept, 3),
 		"KeptMore":  strings.ReplaceAll(httpx.T(locale, "settings.template.preview.kept_count"), "{count}", strconv.Itoa(len(restAfter(kept, 3)))),
 		"LabelOnly": p.LabelOnly(),

@@ -5161,6 +5161,7 @@
   "settings.template.preview.confirm": "Change shop type",
   "settings.template.preview.error": "We could not prepare the preview. Your shop type has not changed.",
   "settings.template.preview.group_hidden": "Will move to More settings (still there, just tucked away)",
+  "settings.template.preview.group_hidden_menu": "Will be hidden from your menu (restore any time in Settings > Hidden menu tiles)",
   "settings.template.preview.group_kept": "Kept exactly as you set them",
   "settings.template.preview.group_shown": "Will appear in your menu",
   "settings.template.preview.group_values": "Values you could also change (nothing changes unless you tick it)",
