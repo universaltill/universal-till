@@ -372,3 +372,46 @@ func TestChannelOrderDetail_LateCancelAndUnmappedRejectAreSaid(t *testing.T) {
 		t.Fatalf("unmapped reject not said:\n%.2000s", body)
 	}
 }
+
+// Legal review R3a / R14: the till blanks an expired delivery note itself
+// before it shows one, while a live order still shows its note (the kitchen
+// ticket prints it); the shop's retention setting is honoured.
+func TestDeliveryAPI_ExpiredNoteIsErasedBeforeItIsShown(t *testing.T) {
+	e := newDeliveryEnv(t)
+	e.deliveryOrder("live", "preparing", nil)
+	e.deliveryOrder("done", "collected", nil)
+	ago := func(h int) string { return time.Now().Add(-time.Duration(h) * time.Hour).UTC().Format(time.RFC3339) }
+	if _, err := e.d.Db.Exec(`UPDATE channel_orders SET terminal_at=?, status_changed_at=? WHERE external_order_id='done'`, ago(25), ago(1)); err != nil {
+		t.Fatal(err)
+	}
+	notes := func() map[string]string {
+		_, out := e.api("GET", "/api/delivery/orders", "", cashier)
+		got := map[string]string{}
+		for _, o := range out["data"].(map[string]any)["orders"].([]any) {
+			m := o.(map[string]any)
+			got[m["order_number"].(string)], _ = m["note"].(string)
+		}
+		return got
+	}
+	got := notes()
+	if got["#live"] != "No nuts" {
+		t.Fatalf("a live order must still show its note: %v", got)
+	}
+	if got["#done"] != "" {
+		t.Fatalf("an order 25 h past its terminal state must not show its note: %v", got)
+	}
+	// A shop setting of 72 h keeps a 25 h old note... until it is longer.
+	e2 := newDeliveryEnv(t)
+	e2.deliveryOrder("done2", "collected", nil)
+	if _, err := e2.d.Db.Exec(`UPDATE channel_orders SET terminal_at=? WHERE external_order_id='done2'`, ago(25)); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.NewSettingsRepo(e2.d.Db).Set(context.Background(), data.DeliveryNoteRetentionKey, "72"); err != nil {
+		t.Fatal(err)
+	}
+	_, out := e2.api("GET", "/api/delivery/orders", "", cashier)
+	o := out["data"].(map[string]any)["orders"].([]any)[0].(map[string]any)
+	if o["note"] != "No nuts" {
+		t.Fatalf("with a 72 h setting a 25 h old note stays: %v", o["note"])
+	}
+}

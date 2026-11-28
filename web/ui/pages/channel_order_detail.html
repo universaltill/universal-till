@@ -35,6 +35,7 @@
   {{ if eq $o.Kind "delivery" }}
   {{ if $o.LateCancel }}<p class="login-error" role="alert" data-testid="channel-order-late-cancel">{{ T "channel_orders.detail.late_cancel" }}</p>{{ end }}
   {{ if eq $o.RejectReason "unmapped_line" }}<p class="login-error" role="status" data-testid="channel-order-reject-unmapped">{{ T "channel_orders.detail.reject_unmapped" }}</p>{{ end }} <!-- login-error-role:allow static status note, not an error needing interruption -->
+  {{ if eq $o.RejectReason "withdrawn" }}<p class="login-error" role="status" data-testid="channel-order-withdrawn">{{ T "channel_orders.detail.withdrawn" }}</p>{{ end }} <!-- login-error-role:allow static status note, not an error needing interruption -->
   {{ if $o.Note }}<div class="delivery-note" data-testid="delivery-note" role="note"><strong>{{ T "delivery.note_label" }}</strong> <bdi dir="auto">{{ $o.Note }}</bdi></div>{{ end }}
   {{ end }}
   {{ if $o.CurrencyMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}

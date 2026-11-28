@@ -654,6 +654,7 @@
   "channel_orders.detail.service": {"description": "Label on a delivery order: whether the order is delivered or collected.", "review": "standard"},
   "channel_orders.detail.accept_by": {"description": "Label on a delivery order: the time by which the platform wants it accepted or rejected.", "review": "standard"},
   "channel_orders.detail.late_cancel": {"description": "Warning on a delivery order the platform cancelled after the kitchen had started: the food may already be made.", "review": "standard"},
+  "channel_orders.detail.withdrawn": {"description": "Notice on a delivery order the till closed itself because the customer's data (and its note) was erased while the order was still open.", "review": "standard"},
   "channel_orders.detail.reject_unmapped": {"description": "Notice on a delivery order this till rejected itself because a line is not in the shop's catalogue (the unmapped-line policy).", "review": "standard"},
   "delivery.service.delivery": {"description": "Order service type: the platform's courier delivers the order.", "review": "standard", "max_length": 16},
   "delivery.service.collection": {"description": "Order service type: the customer collects the order at the shop.", "review": "standard", "max_length": 16},

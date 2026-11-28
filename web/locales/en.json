@@ -4300,6 +4300,7 @@
   "channel_orders.detail.service": "Service",
   "channel_orders.detail.accept_by": "Accept by",
   "channel_orders.detail.late_cancel": "Cancelled after cooking started",
+  "channel_orders.detail.withdrawn": "Order withdrawn: the customer's data was erased, so this order was closed.",
   "channel_orders.detail.reject_unmapped": "Rejected by this till: an item on the order is not in your catalogue.",
   "delivery.service.delivery": "Delivery",
   "delivery.service.collection": "Collection",

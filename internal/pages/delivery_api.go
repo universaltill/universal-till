@@ -176,6 +176,11 @@ func registerDeliveryAPI(mux *http.ServeMux, d *common.Deps) {
 	avail := data.NewDeliveryAvailabilityRepo(d.Db)
 
 	mux.HandleFunc("GET /api/delivery/orders", func(w http.ResponseWriter, r *http.Request) {
+		// The till enforces the note deadline itself before it shows one
+		// (legal review R3a); a failure is logged without any note text.
+		if _, err := data.EraseExpiredDeliveryNotesNow(r.Context(), d.Db); err != nil {
+			logging.L().Warnf("delivery api: note erasure failed: %v", err)
+		}
 		list, err := orders.ListDelivery(r.Context(), time.Now().Add(-deliveryDoneWindow).UTC().Format(time.RFC3339), 100)
 		if err != nil {
 			logging.L().Warnf("delivery api: list failed: %v", err)
@@ -186,6 +191,9 @@ func registerDeliveryAPI(mux *http.ServeMux, d *common.Deps) {
 		blocked, _, _ := actions.Blocked(r.Context())
 		views := make([]deliveryOrderView, 0, len(list))
 		for _, o := range list {
+			if o.Note != "" || hasLineNote(o) {
+				_ = orders.MarkDeliveryNoteViewed(r.Context(), o.ID, time.Now())
+			}
 			v, err := deliveryViewOf(r.Context(), d, o, canAct && blocked == 0)
 			if err != nil {
 				deliveryFail(w, http.StatusInternalServerError, "load_failed")
@@ -436,4 +444,14 @@ func deliveryShapeBad(in data.ChannelOrderActionInput) bool {
 	default:
 		return in.RejectReason != "" || in.PrepMinutes != 0
 	}
+}
+
+// hasLineNote reports whether any loaded line carries a customer note.
+func hasLineNote(o data.ChannelOrder) bool {
+	for _, l := range o.Lines {
+		if l.Note != "" {
+			return true
+		}
+	}
+	return false
 }

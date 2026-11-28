@@ -43,6 +43,10 @@ const (
 	// DeliveryUnmappedPolicyKey is the settings key of the policy above.
 	DeliveryUnmappedPolicyKey           = "delivery.unmapped_policy"
 	DeliveryRejectReasonItemUnavailable = "item_unavailable"
+	// DeliveryRejectWithdrawn is channel_orders.reject_reason of a live order
+	// the till moved to a terminal state itself because the customer's data
+	// was erased (legal review R8); staff see it as "order withdrawn".
+	DeliveryRejectWithdrawn = "withdrawn"
 )
 
 // ChannelDeliveryFee is an informational customer-side fee (outside total_minor).
@@ -310,10 +314,10 @@ func (r *ChannelOrdersRepo) Apply(ctx context.Context, in ChannelOrderInput) (Ch
 		status = "new"
 	}
 	var storedRev int64
-	var storedStatus, storedKind, storedReject string
+	var storedStatus, storedKind, storedReject, storedErased, storedNote string
 	var storedRank int
-	err = tx.QueryRowContext(ctx, `SELECT id, revision, order_kind, reject_reason FROM channel_orders WHERE connection_id = ? AND external_order_id = ?`,
-		in.ConnectionID, in.ExternalOrderID).Scan(&res.OrderID, &storedRev, &storedKind, &storedReject)
+	err = tx.QueryRowContext(ctx, `SELECT id, revision, order_kind, reject_reason, note_erased_at, note FROM channel_orders WHERE connection_id = ? AND external_order_id = ?`,
+		in.ConnectionID, in.ExternalOrderID).Scan(&res.OrderID, &storedRev, &storedKind, &storedReject, &storedErased, &storedNote)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	switch {
 	case err != nil && !isNew:
@@ -321,7 +325,55 @@ func (r *ChannelOrdersRepo) Apply(ctx context.Context, in ChannelOrderInput) (Ch
 	case !isNew && in.Revision <= storedRev:
 		return ChannelOrderResult{OrderID: res.OrderID, Duplicate: true}, nil
 	}
+	if storedErased != "" {
+		// The note was erased on this till (retention or redact): a later
+		// revision still carrying the text must never bring it back.
+		in.Note = ""
+		lines := make([]ChannelOrderLineInput, len(in.Lines))
+		copy(lines, in.Lines)
+		for i := range lines {
+			lines[i].Note = ""
+		}
+		in.Lines = lines
+	}
 	isDelivery := in.Delivery != nil || storedKind == ChannelKindDelivery
+	// A note-free revision is NOT a redact by itself: the cloud queues every
+	// staff-action revision (Accept, Ready, Collected) with no note. For an order
+	// that is live before and after the update the kitchen keeps the notes it is
+	// cooking from; only a revision that ends the order blanks them (below).
+	keptNotes := false
+	var storedLineNotes int
+	if !isNew && isDelivery && storedErased == "" && in.Note == "" {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM channel_order_lines WHERE order_id = ? AND note <> ''`, res.OrderID).Scan(&storedLineNotes); err != nil {
+			return res, fmt.Errorf("read stored line notes: %w", err)
+		}
+	}
+	if !isNew && isDelivery && storedErased == "" && in.Note == "" && (storedNote != "" || storedLineNotes > 0) &&
+		!IsDeliveryTerminal(in.Status) && storedReject == "" {
+		var storedStatusNow string
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM channel_orders WHERE id = ?`, res.OrderID).Scan(&storedStatusNow); err != nil {
+			return res, fmt.Errorf("read channel order status: %w", err)
+		}
+		if !IsDeliveryTerminal(storedStatusNow) {
+			in.Note = storedNote
+			lines := make([]ChannelOrderLineInput, len(in.Lines))
+			copy(lines, in.Lines)
+			for i := range lines {
+				if lines[i].Note != "" {
+					continue
+				}
+				// Same line id AND same item: ids are positional on some
+				// platforms, so a renumbered line must not inherit a note.
+				var ln string
+				if err := tx.QueryRowContext(ctx, `SELECT note FROM channel_order_lines WHERE order_id = ? AND line_id = ? AND name = ? AND sku = ?`,
+					res.OrderID, lines[i].LineID, lines[i].Name, lines[i].SKU).Scan(&ln); err == nil {
+					lines[i].Note = ln
+				}
+			}
+			in.Lines = lines
+			keptNotes = true
+		}
+	}
 	kind := ChannelKindWebshop
 	if isDelivery {
 		kind = ChannelKindDelivery
@@ -367,15 +419,15 @@ INSERT INTO channel_orders (id, connection_id, plugin_key, external_order_id, ex
   order_discount_minor, tax_added_minor, refund_total_minor, total_minor, customer_country, currency_mismatch, total_mismatch,
   fulfilment_rank, created_at, updated_at,
   order_kind, service, accept_by, scheduled_start_at, confirm_at, prep_minutes, courier_ref, pickup_code, tip_minor, fees_json,
-  note, reject_reason, status_changed_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  note, reject_reason, status_changed_at, note_present, note_chars)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			res.OrderID, in.ConnectionID, in.PluginKey, in.ExternalOrderID, in.ExternalVersion, in.Revision, in.DirectiveID,
 			in.OrderNumber, in.PlacedAt, in.Currency, status, in.PaymentState, in.Shipping.Minor(), in.ShippingTaxBP,
 			boolInt(in.ShippingTaxIncluded), in.OrderDiscount.Minor(), in.TaxAdded.Minor(), in.RefundTotal.Minor(),
 			in.Total.Minor(), in.CustomerCountry, boolInt(in.CurrencyMismatch), boolInt(in.TotalMismatch),
 			nextRank, now, now,
 			kind, d.Service, d.AcceptBy, d.ScheduledStartAt, d.ConfirmAt, d.PrepMinutes, d.CourierRef, d.PickupCode,
-			d.Tip.Minor(), feesJSON, in.Note, rejectReason, now); err != nil {
+			d.Tip.Minor(), feesJSON, in.Note, rejectReason, now, boolInt(in.Note != ""), len([]rune(in.Note))); err != nil {
 			return res, fmt.Errorf("insert channel order: %w", err)
 		}
 	} else {
@@ -399,14 +451,33 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
 			in.TaxAdded.Minor(), in.RefundTotal.Minor(), in.Total.Minor(), in.CustomerCountry, boolInt(in.CurrencyMismatch),
 			boolInt(in.TotalMismatch), nextRank, now,
 			kind, d.Service, d.AcceptBy, d.ScheduledStartAt, d.ConfirmAt, d.PrepMinutes, d.CourierRef, d.PickupCode,
-			d.Tip.Minor(), feesJSON, in.Note, boolInt(res.LateCancel), res.OrderID)
+			d.Tip.Minor(), feesJSON, in.Note, boolInt(res.LateCancel), boolInt(in.Note != ""), len([]rune(in.Note)), res.OrderID)
 		if _, err := tx.ExecContext(ctx, `
 UPDATE channel_orders SET status_changed_at=`+changedAt+`, external_version=?, revision=?, last_directive_id=?, order_number=?, status=?, payment_state=?,
   shipping_minor=?, shipping_tax_bp=?, shipping_tax_included=?, order_discount_minor=?, tax_added_minor=?,
   refund_total_minor=?, total_minor=?, customer_country=?, currency_mismatch=?, total_mismatch=?, fulfilment_rank=?, updated_at=?,
   order_kind=?, service=?, accept_by=?, scheduled_start_at=?, confirm_at=?, prep_minutes=?, courier_ref=?, pickup_code=?,
-  tip_minor=?, fees_json=?, note=?, late_cancel=MAX(late_cancel, ?) WHERE id=?`, args...); err != nil {
+  tip_minor=?, fees_json=?, note=?, late_cancel=MAX(late_cancel, ?),
+  note_present=MAX(note_present, ?), note_chars=MAX(note_chars, ?) WHERE id=?`, args...); err != nil {
 			return res, fmt.Errorf("update channel order: %w", err)
+		}
+	}
+	// The retention clock starts once, when the order first reaches a terminal
+	// state (or the till rejected it at intake); a later refund fact never
+	// restarts it.
+	if isDelivery && (IsDeliveryTerminal(nextStatus) || rejectReason != "") {
+		if _, err := tx.ExecContext(ctx, `UPDATE channel_orders SET terminal_at = ? WHERE id = ? AND terminal_at = ''`, now, res.OrderID); err != nil {
+			return res, fmt.Errorf("mark channel order terminal: %w", err)
+		}
+	}
+	// The cloud's update for an order that ended carries no note where the till
+	// held one (a redact, or a plain staff or platform end: no marker tells them
+	// apart). The update above already blanked the order note and the lines are
+	// written with their own (empty) notes: stamp the audit columns. The order
+	// status is whatever Apply recorded; nothing here relabels it.
+	if !isNew && isDelivery && !keptNotes && (storedNote != "" || storedLineNotes > 0) && in.Note == "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE channel_orders SET note_erased_at = ?, note_erased_by = ? WHERE id = ? AND note_erased_at = ''`, now, NoteErasedByCloudEnd, res.OrderID); err != nil {
+			return res, fmt.Errorf("mark note erased: %w", err)
 		}
 	}
 	// A delivery order the till rejected, or the platform rejected, never

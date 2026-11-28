@@ -2,9 +2,11 @@ package pages
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -42,6 +44,11 @@ func registerChannelOrdersPage(mux *http.ServeMux, d *common.Deps) {
 		if !requirePage(d, w, r, "reports") {
 			return
 		}
+		// The till enforces the delivery-note deadline itself before it shows
+		// a note (legal review R3a); a failure is logged without note text.
+		if _, err := data.EraseExpiredDeliveryNotesNow(r.Context(), d.Db); err != nil {
+			logging.L().Warnf("channel order page: note erasure failed: %v", err)
+		}
 		o, ok, err := repo.Get(r.Context(), r.PathValue("id"))
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "channel_orders.error.load_failed", err)
@@ -50,6 +57,9 @@ func registerChannelOrdersPage(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			httpx.RenderError(w, r, http.StatusNotFound, "channel_orders.error.not_found", nil)
 			return
+		}
+		if o.Note != "" || hasLineNote(o) {
+			_ = repo.MarkDeliveryNoteViewed(r.Context(), o.ID, time.Now())
 		}
 		view, err := channelOrderDetailData(r.Context(), d, r, o, "", "", "", channelFormValues{})
 		if err != nil {
