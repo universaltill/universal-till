@@ -117,7 +117,10 @@ func TestTemplateStateReconcileTickSeedsJoinedTillTheme(t *testing.T) {
 	var wg sync.WaitGroup
 	StartTemplateStateReconcile(ctx, d, &wg)
 	deadline := time.Now().Add(5 * time.Second)
-	for getSetting(t, d, "theme") != "dark" && time.Now().Before(deadline) {
+	// Wait for the tick's whole effect (setting AND in-memory state): the state
+	// is published after the setting row, so cancelling on the row alone could
+	// cut the tick off between the two (seed-22 flake).
+	for (getSetting(t, d, "theme") != "dark" || d.CurrentState().Theme != "dark") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()
