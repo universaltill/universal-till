@@ -404,6 +404,11 @@ func tillsRedirectTarget(r *http.Request) string {
 			q.Set("refresh", "1")
 		}
 	}
+	// ?lang= survives so a localised link (the docs-shots, a shared link)
+	// still renders in that language after the redirect.
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		q.Set("lang", lang)
+	}
 	out := "/settings"
 	if len(q) > 0 {
 		out += "?" + q.Encode()
