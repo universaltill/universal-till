@@ -260,7 +260,7 @@ func TestShopTypeUndoBanner_OnMenuWhileUnexpired(t *testing.T) {
 	}
 }
 
-func TestShopTypeDismiss_RemovesRecordAndBanner(t *testing.T) {
+func TestShopTypeDismiss_HidesBannerButKeepsUndo(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	useRealShopTemplates(t, d)
 	stChange(t, mux, "retail")
@@ -270,6 +270,28 @@ func TestShopTypeDismiss_RemovesRecordAndBanner(t *testing.T) {
 	}
 	if strings.Contains(getAs(mux, "/settings", &mgrUser).Body.String(), `data-testid="shop-type-undo"`) {
 		t.Fatal("banner still renders after dismiss")
+	}
+	// The 7 day record survives, and Undo stays reachable in the Shop type card.
+	if _, ok := shoptemplate.ParseUndo(stGet(t, d, shoptemplate.UndoKey), time.Now()); !ok {
+		t.Fatal("dismiss must keep the undo record")
+	}
+	panel := getAs(mux, "/api/settings/shop-type/panel", &mgrUser).Body.String()
+	if !strings.Contains(panel, "/api/settings/shop-type/undo") {
+		t.Fatalf("Undo must stay reachable from the Shop type card after dismiss:\n%s", panel)
+	}
+	if rec := postForm(mux, "/api/settings/shop-type/undo", url.Values{}, &mgrUser); rec.Code == http.StatusConflict {
+		t.Fatalf("undo after dismiss refused: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := stGet(t, d, common.KeyShopType); got == "retail" {
+		t.Fatal("undo after dismiss did not revert the shop type")
+	}
+}
+
+func TestShopTypeBanner_MentionsSevenDays(t *testing.T) {
+	mux, dp := activeRetailMenuDeps(t)
+	stSet(t, dp, shoptemplate.UndoKey, shoptemplate.NewUndo("retail", "cafe", "", nil, nil, time.Now()).Encode())
+	if b := getPage(t, mux, "/menu").Body.String(); !strings.Contains(b, "7 days") {
+		t.Fatalf("banner must mention the 7 days:\n%s", b)
 	}
 }
 
@@ -426,34 +448,6 @@ func TestShopTypePreview_LegacySameTypeTitleAndSettingsGroupedApart(t *testing.T
 	}
 }
 
-// ut-docs#6347 Q1: a hidden menu tile is restored under Hidden menu tiles, a
-// hidden settings card sits in More settings; each gets its own heading and the
-// menu group comes first (the body scrolls on a 1024x600 kiosk).
-func TestShopTypePreview_HiddenMenuTilesAndSettingsCardsUnderOwnHeadings(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	useRealShopTemplates(t, d)
-	stChange(t, mux, "cafe")
-	stChange(t, mux, "hospitality")
-	body := getAs(mux, "/api/settings/shop-type/preview?to=retail", &mgrUser).Body.String()
-	const hm = "Will be hidden from your menu (restore any time in Settings &gt; Hidden menu tiles)"
-	const hs = "Will move to More settings (still there, just tucked away)"
-	im, is := strings.Index(body, hm), strings.Index(body, hs)
-	if im < 0 || is < 0 {
-		t.Fatalf("want both hidden headings (menu %d, settings %d):\n%s", im, is, body)
-	}
-	if im > is {
-		t.Error("hidden menu tiles must come before hidden settings cards")
-	}
-	menu := between(t, body, hm, "</ul>")
-	if !strings.Contains(menu, "Tables") || strings.Contains(menu, "Order numbers") {
-		t.Errorf("menu group wrong: %s", menu)
-	}
-	cards := between(t, body, hs, "</ul>")
-	if strings.Contains(cards, "Tables") || !strings.Contains(cards, "Order numbers") {
-		t.Errorf("settings group wrong: %s", cards)
-	}
-}
-
 // ut-docs#6347 Q2: the shop-type banner/preview has no motion today; if one is
 // added it must be finite and inside prefers-reduced-motion: no-preference.
 func TestAppCSSShopTypeRulesHaveNoUnguardedOrInfiniteMotion(t *testing.T) {
@@ -489,4 +483,17 @@ func TestAppCSSShopTypeRulesHaveNoUnguardedOrInfiniteMotion(t *testing.T) {
 	}
 	check(guarded, true)
 	check(css, false)
+}
+
+// ut-docs#7191: a shop with no type yet (from == "") gets the "set up" title,
+// never "Change shop type: — to X".
+func TestShopTypePreviewData_NoCurrentTypeUsesSetUpTitle(t *testing.T) {
+	got := shopTypePreviewData("en", "", "cafe", shoptemplate.Preview{})["Title"]
+	want := "Set up your menu and settings for: " + shopTypeLabel("en", "cafe")
+	if got != want {
+		t.Fatalf("title = %q, want %q", got, want)
+	}
+	if !strings.Contains(want, "Cafe") {
+		t.Fatalf("test premise: label for cafe = %q", want)
+	}
 }

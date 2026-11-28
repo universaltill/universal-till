@@ -12,15 +12,11 @@
 {{ else }}
   <form hx-post="/api/settings/shop-type" hx-target="#shop-type-msg" hx-swap="innerHTML show:#settings-shop-type:top" hx-disabled-elt="#shop-type-confirm">
     <input type="hidden" name="to" value="{{ .To }}">
-    <div class="shop-type-preview-body">
+    <div class="shop-type-preview-body" tabindex="0" role="region" aria-labelledby="shop-type-preview-title">
       <h3 id="shop-type-preview-title" tabindex="-1">{{ .Title }}</h3>
       <p class="muted">{{ T "settings.template.preview.intro" }}</p>
       {{ if .LabelOnly }}
       <p>{{ T "settings.template.preview.label_only" }}</p>
-      {{ end }}
-      {{ if .HiddenMenu }}
-      <h4>{{ T "settings.template.preview.group_hidden_menu" }}</h4>
-      <ul class="shop-type-list">{{ range .HiddenMenu }}<li>{{ .Label }}</li>{{ end }}</ul>
       {{ end }}
       {{ if .ShownMenu }}
       <h4>{{ T "settings.template.preview.group_shown" }}</h4>
@@ -30,9 +26,9 @@
       <h4>{{ T "settings.template.preview.group_shown_settings" }}</h4>
       <ul class="shop-type-list">{{ range .ShownSettings }}<li>{{ .Label }}</li>{{ end }}</ul>
       {{ end }}
-      {{ if .HiddenSettings }}
+      {{ if .Hidden }}
       <h4>{{ T "settings.template.preview.group_hidden" }}</h4>
-      <ul class="shop-type-list">{{ range .HiddenSettings }}<li>{{ .Label }}</li>{{ end }}</ul>
+      <ul class="shop-type-list">{{ range .Hidden }}<li>{{ .Label }}</li>{{ end }}</ul>
       {{ end }}
       {{ if .Values }}
       <fieldset class="shop-type-values">
@@ -51,8 +47,8 @@
       </details>
       {{ end }}
       {{ end }}
-      <p class="muted">{{ T "settings.template.preview.never_changed_line" }}</p>
     </div>
+    <p class="muted">{{ T "settings.template.preview.never_changed_line" }}</p>
     <div class="shop-type-bar">
       <button type="button" class="btn secondary" hx-get="/api/settings/shop-type/panel" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.cancel" }}</button>
       <button type="submit" class="btn primary" id="shop-type-confirm">{{ T "settings.template.preview.confirm" }}</button>

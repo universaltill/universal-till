@@ -266,3 +266,44 @@ func TestResolve_PluginGroupIDsNeverCollide(t *testing.T) {
 		t.Fatalf("want two plugin tiles, got %d", plugin)
 	}
 }
+
+// A plugin's own group tile (the service/salon "Hardware" group) carries a
+// description and a purpose-fit icon, not the generic puzzle piece
+// (ut-docs#7205).
+func TestCategories_SalonHardwareTileHasDescAndIcon(t *testing.T) {
+	initRealI18n(t)
+	got := Resolve("en", []uislot.Amendment{
+		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-printer", Group: "layout.salon.settings_group"},
+		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-tills", Group: "layout.salon.settings_group"},
+	})
+	var found bool
+	for _, c := range Categories("en", got) {
+		if c.Label != "Hardware" {
+			continue
+		}
+		found = true
+		if c.Desc == "" || strings.HasPrefix(c.Desc, "layout.") {
+			t.Errorf("Hardware tile has no description: %q", c.Desc)
+		}
+		if c.Icon == pluginGroupIcon || httpx.Icon(c.Icon) == "" {
+			t.Errorf("Hardware tile icon %q must be a specific, drawable icon", c.Icon)
+		}
+	}
+	if !found {
+		t.Fatal("no Hardware tile")
+	}
+}
+
+// A legacy salon replay shop keeps the plain plugin tile (ADR-0190 byte
+// identity); the described tile is for template-ledger shops (ut-docs#7205).
+func TestCategoriesLegacy_SalonHardwareTileStaysPlain(t *testing.T) {
+	initRealI18n(t)
+	got := Resolve("en", []uislot.Amendment{
+		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-printer", Group: "layout.salon.settings_group"},
+	})
+	for _, c := range CategoriesLegacy("en", got) {
+		if c.Label == "Hardware" && (c.Desc != "" || c.Icon != pluginGroupIcon) {
+			t.Errorf("legacy Hardware tile must stay plain, got desc %q icon %q", c.Desc, c.Icon)
+		}
+	}
+}

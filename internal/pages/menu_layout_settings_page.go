@@ -66,6 +66,7 @@ func hiddenMenuRows(r *http.Request, d *common.Deps) []hiddenMenuRow {
 	restored := common.RestoredMenuKeys(r.Context(), d.Settings)
 	var rows []hiddenMenuRow
 	index := map[string]int{}
+	vis := &menuVisibility{d: d, r: r}
 	for _, a := range menuLayoutPool(d) {
 		// LayoutAmendmentsSnapshot is every active plugin's amendments of
 		// EVERY registered slot (ut-docs#1911), not Menu-only any more —
@@ -89,6 +90,12 @@ func hiddenMenuRows(r *http.Request, d *common.Deps) []hiddenMenuRow {
 		e, ok := uislot.CoreMenuEntry(a.Key)
 		if !ok {
 			continue // cannot happen post-validation; never show a row for a key that has no tile
+		}
+		// ut-docs#7202: a tile the viewer's own gate (VisibleIf) keeps off the
+		// Menu anyway renders nothing whether hidden or restored, so a
+		// Restore row for it would do nothing visible. Skip it.
+		if !vis.visible(e.VisibleIf) {
+			continue
 		}
 		index[a.Key] = len(rows)
 		rows = append(rows, hiddenMenuRow{Key: a.Key, Href: e.Href, LabelKey: e.LabelKey, Plugins: []string{name}, Restored: restored[a.Key]})

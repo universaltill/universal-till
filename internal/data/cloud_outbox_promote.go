@@ -91,11 +91,17 @@ UPDATE cloud_links
 // settings-only ClearReplicaIdentity plus, in the same transaction and after
 // sync.primary_url is gone, MarkUnsentPromotedFields. A replica never marks,
 // so migration 103 left its locally held icons unmarked; without marks the
-// first catalogue pull after promotion clears them. A marking error rolls
+// first catalogue pull after promotion clears them. Queued plugin records are
+// rejected "till_promoted" in the same transaction. A marking error rolls
 // the whole promotion back, so a promoted till is never left unmarked.
 func (r *SettingsRepo) PromoteReplica(ctx context.Context) error {
 	return r.clearReplicaIdentity(ctx, func(ctx context.Context, tx SyncQuerier) error {
-		_, err := NewCloudOutboxRepo().MarkUnsentPromotedFields(ctx, tx, time.Now().UTC().Format(time.RFC3339))
-		return err
+		now := time.Now().UTC()
+		if _, err := NewCloudOutboxRepo().MarkUnsentPromotedFields(ctx, tx, now.Format(time.RFC3339)); err != nil {
+			return err
+		}
+		// ut-docs#3697: queued plugin records can never reach the old main
+		// till now; the plugin's own local rows stay valid.
+		return RejectAllPendingRecords(ctx, tx, RecordReasonTillPromoted, now)
 	})
 }

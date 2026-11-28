@@ -7,7 +7,10 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // ADR-0121 §2 (ut-docs#3155): the plugin ABI a till implements, and the
@@ -213,6 +216,10 @@ func validateABI3Fields(m *Manifest) error {
 		seen[v] = true
 	}
 
+	if err := validateRecordsForward(m); err != nil {
+		return err
+	}
+
 	for _, e := range m.Entries {
 		if e.View != "" && !pluginViewNameRe.MatchString(e.View) {
 			return fmt.Errorf("manifest entry %q view %q must be lower-case letters, digits, '_', '.' or '-'", e.Key, e.View)
@@ -329,6 +336,46 @@ func validateMigrationsDir(dir string) error {
 	clean := path.Clean(dir)
 	if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") || clean == "." {
 		return fmt.Errorf("manifest db.migrations %q must be a directory inside the plugin", dir)
+	}
+	return nil
+}
+
+// maxRecordsNames caps records_forward.collections and .snapshots each.
+const maxRecordsNames = 8
+
+// validateRecordsForward (ut-docs#3697): collection and snapshot names are
+// ^[a-z][a-z0-9_]{0,31}$, unique, at most 8 each; the field, or a
+// plugin.records.received.ask hook, needs the records:sync permission. A
+// manifest with neither is untouched.
+func validateRecordsForward(m *Manifest) error {
+	hasPerm := slices.Contains(m.Permissions, RecordsSyncPermission)
+	if rf := m.RecordsForward; rf != nil {
+		if !hasPerm {
+			return fmt.Errorf("manifest records_forward needs the %s permission", RecordsSyncPermission)
+		}
+		for _, f := range []struct {
+			field string
+			names []string
+		}{{"collections", rf.Collections}, {"snapshots", rf.Snapshots}} {
+			if len(f.names) > maxRecordsNames {
+				return fmt.Errorf("manifest records_forward.%s lists %d names; at most %d", f.field, len(f.names), maxRecordsNames)
+			}
+			seen := make(map[string]bool, len(f.names))
+			for _, n := range f.names {
+				if !data.RecordCollectionRe.MatchString(n) {
+					return fmt.Errorf("manifest records_forward.%s %q must match %s", f.field, n, data.RecordCollectionRe)
+				}
+				if seen[n] {
+					return fmt.Errorf("manifest records_forward.%s %q more than once", f.field, n)
+				}
+				seen[n] = true
+			}
+		}
+	}
+	for _, h := range m.Hooks {
+		if h.Event == RecordsReceivedEvent && !hasPerm {
+			return fmt.Errorf("manifest hook %q needs the %s permission", RecordsReceivedEvent, RecordsSyncPermission)
+		}
 	}
 	return nil
 }

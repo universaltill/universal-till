@@ -1848,6 +1848,10 @@ func applySyncMoves(body []byte) {
 // (missing = periodic). Best-effort by design: an absent block (older
 // cloud) touches nothing at all, cloud_link included; a malformed one is
 // ignored whole and the previous cache kept; a write failure is logged.
+// When the block moves the till from till mode into cloud or adopting, the
+// same transaction marks the promoted fields the cloud never received, so
+// the first pull cannot clear them (ut-docs#6243); a marking error rolls the
+// whole cache write back and the next tick retries.
 // None of it ever fails the sync tick or its directive handling.
 func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json.RawMessage, now time.Time) {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -1864,10 +1868,24 @@ func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json
 		return
 	}
 	renewalWatchMarkers(ctx, settings, kv, now)
-	if err := settings.SetMany(ctx, kv); err != nil {
+	n, err := settings.SetManyMarkingCatalogModeEntry(ctx, kv)
+	if err != nil {
+		if errors.Is(err, data.ErrCatalogModeEntryMarks) {
+			// Deterministic failures here repeat every tick and freeze the whole
+			// entitlement cache, so surface it as a problem (heartbeat), not a log line.
+			logging.L().WarnProblemf(problemKeyCatalogModeMarks, "cloudsync: entitlement cache not updated, catalogue mode entry marks failed (retrying each tick): %v", err)
+			return
+		}
 		logging.L().Warnf("cloudsync: entitlement cache not updated (will retry next tick): %v", err)
+		return
+	}
+	logging.ResolveProblems(problemKeyCatalogModeMarks)
+	if n > 0 {
+		logging.L().Infof("cloudsync: catalogue mode entered %s: marked %d promoted field(s) for upload", kv[entitlement.KeyCatalogMaster], n)
 	}
 }
+
+const problemKeyCatalogModeMarks = "cloudsync.catalog_mode_entry_marks"
 
 // planRequiredEntitlement pulls data.entitlement out of a 402
 // plan_required body (ut-docs#3624), raw like pushSync keeps a 200's, so

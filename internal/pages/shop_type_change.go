@@ -90,7 +90,8 @@ type shopTypePanelView struct {
 	Label         string
 	Satellite     bool
 	SatelliteText string
-	Tidy          *templateTidyView // legacy shop: "Tidy my menu for {type}" (S8)
+	Tidy          *templateTidyView   // legacy shop: "Tidy my menu for {type}" (S8)
+	Undo          *shopTypeBannerView // a dismissed (banner-less) but live undo record
 }
 
 func shopTypePanelFor(ctx context.Context, d *common.Deps, r *http.Request, locale string) shopTypePanelView {
@@ -101,6 +102,11 @@ func shopTypePanelFor(ctx context.Context, d *common.Deps, r *http.Request, loca
 		v.SatelliteText = shopTypeSatelliteText(ctx, d, locale)
 	}
 	v.Tidy = templateTidyFor(r, d, locale)
+	if !v.Satellite && canPerform(d, r, "settings") {
+		if u, ok := shopTypeLiveUndo(d, r); ok && u.Dismissed {
+			v.Undo = shopTypeUndoView(locale, u)
+		}
+	}
 	return v
 }
 
@@ -118,21 +124,35 @@ func shopTypeUndoBannerFor(d *common.Deps, r *http.Request, locale string) *shop
 	if d == nil || d.Settings == nil || !canPerform(d, r, "settings") || tillFollowsMain(r.Context(), d) {
 		return nil
 	}
+	u, ok := shopTypeLiveUndo(d, r)
+	if !ok || u.Dismissed {
+		return nil // dismissed: the strip is gone, the record (and Undo) stays
+	}
+	return shopTypeUndoView(locale, u)
+}
+
+func shopTypeUndoView(locale string, u shoptemplate.Undo) *shopTypeBannerView {
+	return &shopTypeBannerView{Text: strings.ReplaceAll(httpx.T(locale, "settings.template.undo.banner"), "{type}", shopTypeLabel(locale, u.ToType))}
+}
+
+// shopTypeLiveUndo is the stored undo record while it is unexpired and still
+// matches the current type; an expired one is pruned (single row, no timer).
+func shopTypeLiveUndo(d *common.Deps, r *http.Request) (shoptemplate.Undo, bool) {
 	raw, _, err := d.Settings.Get(r.Context(), shoptemplate.UndoKey)
 	if err != nil || raw == "" {
-		return nil
+		return shoptemplate.Undo{}, false
 	}
 	u, ok := shoptemplate.ParseUndo(raw, time.Now())
 	if !ok {
-		if err := d.Settings.Set(r.Context(), shoptemplate.UndoKey, ""); err != nil { // settings-write:allow prune an expired undo record (main/single till only, checked above)
+		if err := d.Settings.Set(r.Context(), shoptemplate.UndoKey, ""); err != nil { // settings-write:allow prune an expired undo record (main/single till only, checked by callers)
 			logging.L().Warnf("shop type undo: prune expired record: %v", err)
 		}
-		return nil
+		return shoptemplate.Undo{}, false
 	}
 	if cur, _, _ := d.Settings.Get(r.Context(), common.KeyShopType); cur != u.ToType {
-		return nil // the type moved on by another route: nothing to undo here
+		return shoptemplate.Undo{}, false // the type moved on by another route: nothing to undo here
 	}
-	return &shopTypeBannerView{Text: strings.ReplaceAll(httpx.T(locale, "settings.template.undo.banner"), "{type}", shopTypeLabel(locale, u.ToType))}
+	return u, true
 }
 
 // shopTypeUndoneNotice is the one-line status after an undo (?shop_type_undone=N).
@@ -279,13 +299,13 @@ func shopTypePreviewData(locale, from, to string, p shoptemplate.Preview) map[st
 		kept = append(kept, seedKeyLabel(locale, k))
 	}
 	titleKey := "settings.template.preview.title"
-	if from == to {
+	if from == to || from == "" {
 		titleKey = "settings.template.preview.title_apply" // a shop that predates templates accepting its own type
 	}
 	title := strings.NewReplacer("{from}", orDash(shopTypeLabel(locale, from)), "{to}", orDash(shopTypeLabel(locale, to))).Replace(httpx.T(locale, titleKey))
 	return map[string]any{
 		"To": to, "Title": title,
-		"ShownMenu": previewRows(locale, kindOf(p.Shown, shoptemplate.KindMenu)), "ShownSettings": previewRows(locale, kindOf(p.Shown, shoptemplate.KindSettings)), "HiddenMenu": previewRows(locale, kindOf(p.Hidden, shoptemplate.KindMenu)), "HiddenSettings": previewRows(locale, kindOf(p.Hidden, shoptemplate.KindSettings)),
+		"ShownMenu": previewRows(locale, kindOf(p.Shown, shoptemplate.KindMenu)), "ShownSettings": previewRows(locale, kindOf(p.Shown, shoptemplate.KindSettings)), "Hidden": previewRows(locale, p.Hidden),
 		"Values": vals, "Kept": kept, "KeptHead": firstN(kept, 3), "KeptRest": restAfter(kept, 3),
 		"KeptMore":  strings.ReplaceAll(httpx.T(locale, "settings.template.preview.kept_count"), "{count}", strconv.Itoa(len(restAfter(kept, 3)))),
 		"LabelOnly": p.LabelOnly(),
@@ -535,9 +555,13 @@ func registerShopTypeChange(mux *http.ServeMux, d *common.Deps, posRepo *data.PO
 		if !gate(w, r) {
 			return
 		}
-		if err := d.Settings.Set(r.Context(), shoptemplate.UndoKey, ""); err != nil { // settings-write:allow dismiss the undo banner (main/single till only, gated above)
-			shopTypeFragmentError(w, http.StatusInternalServerError, httpx.T(httpx.RequestLocale(r), "settings.template.undo.error"))
-			return
+		// Dismiss only hides the banner: the record keeps its 7 days (ut-docs#7193).
+		if u, ok := shopTypeLiveUndo(d, r); ok && !u.Dismissed {
+			u.Dismissed = true
+			if err := d.Settings.Set(r.Context(), shoptemplate.UndoKey, u.Encode()); err != nil { // settings-write:allow mark the undo banner dismissed, record kept (main/single till only, gated above)
+				shopTypeFragmentError(w, http.StatusInternalServerError, httpx.T(httpx.RequestLocale(r), "settings.template.undo.error"))
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK) // empty body: htmx swaps the banner away

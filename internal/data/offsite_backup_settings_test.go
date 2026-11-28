@@ -19,7 +19,7 @@ func TestOffsiteBackupKeysArePerTillAndDroppedOnRestore(t *testing.T) {
 			t.Errorf("%s is not in db.RestoreDropKeys", k)
 		}
 	}
-	if len(OffsiteBackupKeys) != 15 {
+	if len(OffsiteBackupKeys) != 16 {
 		t.Errorf("key list changed (%d): update the restore drop list too", len(OffsiteBackupKeys))
 	}
 }

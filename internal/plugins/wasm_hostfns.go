@@ -100,6 +100,11 @@ type hostState struct {
 	viewsOnce sync.Once
 	viewsUsed []string
 	viewsOK   bool
+	// recordCalls counts this event's records_*/snapshot_* calls
+	// (recordCallsPerEvent); recordsForward is the installed manifest's
+	// records_forward, resolved with viewsUsed (ut-docs#3697).
+	recordCalls    int
+	recordsForward *ManifestRecordsForward
 	// aiAgent: the installed manifest declares ai.agent (ADR-0153), so each
 	// view_query also needs ai.send.<data class>. Set with viewsUsed.
 	aiAgent bool
@@ -250,6 +255,11 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostDeviceTimezoneGet).Export("device_timezone_get").
 		NewFunctionBuilder().WithFunc(hostPaymentProviderCall).Export("payment_provider_call").
 		NewFunctionBuilder().WithFunc(hostTapToPayRequest).Export("tap_to_pay_request").
+		NewFunctionBuilder().WithFunc(hostRecordsForward).Export("records_forward").
+		NewFunctionBuilder().WithFunc(hostRecordsRole).Export("records_role").
+		NewFunctionBuilder().WithFunc(hostRecordsStatus).Export("records_status").
+		NewFunctionBuilder().WithFunc(hostSnapshotSet).Export("snapshot_set").
+		NewFunctionBuilder().WithFunc(hostSnapshotGet).Export("snapshot_get").
 		Instantiate(ctx)
 	return err
 }
