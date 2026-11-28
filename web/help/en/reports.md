@@ -628,6 +628,16 @@ its own.
   worker, the date the money was actually paid, tip or service charge, the
   amount, and an optional note, then submits. The date can't be in the
   future — this records a payment that already happened.
+- **Suggest from staff logbook** — the button above the record form asks
+  an installed plugin for per-worker tip amounts for the selected dates
+  (for example from its own staff logbook) and lists them. It needs a
+  plugin that offers tip suggestions and that you have allowed to
+  "suggest tip amounts" (a permission you grant to that plugin). **Use** only fills the form for that worker: nothing is
+  recorded until you check the amount, edit it if needed, and press
+  Record payout yourself. Names the plugin can't match to a till login are
+  listed for you to record by hand. With no such plugin (or one that
+  doesn't answer) it shows "No suggestions for this period." and you type
+  the amounts as before.
 - **A worker's own records** — use the Worker filter to narrow both the
   totals and the payout list to one person, e.g. to show a worker (or show
   them, on request) what's been recorded as paid to them.
