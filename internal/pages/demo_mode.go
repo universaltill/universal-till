@@ -745,6 +745,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /api/audit/export":      true,
 	"GET /api/invoices/export":   true,
 	"GET /api/reports/worker-allocations/export":            true,
+	"GET /api/reports/tips-suggestions":                     true,
 	"GET /invoice/{display_no}":                             true,
 	"GET /invoices":                                         true,
 	"GET /refund/{receipt}":                                 true,
