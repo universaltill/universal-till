@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { TILL_SHUTDOWN } from './till-webserver';
 import { existsSync } from 'fs';
 
 // Sandboxed pipeline runners pre-install one Chromium at a fixed path
@@ -223,60 +224,70 @@ export default defineConfig<{}, WorkerOptions>({
   // option from `use`/`test.use`; `page.emulateMedia` works).
   webServer: [
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-layout.sh',
       url: 'http://127.0.0.1:8094/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: `bash ./run-till-templates.sh ${TEMPLATES_PORT} retail`,
       url: `http://127.0.0.1:${TEMPLATES_PORT}/healthz`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: `bash ./run-till-templates.sh ${TEMPLATES_PORT + 1} cafe http://127.0.0.1:1`,
       url: `http://127.0.0.1:${TEMPLATES_PORT + 1}/healthz`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-diagnostics.sh',
       url: 'http://127.0.0.1:8095/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-release-notes.sh',
       url: 'http://127.0.0.1:8097/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-incoming-notes.sh',
       url: 'http://127.0.0.1:8099/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-csp.sh',
       url: 'http://127.0.0.1:8098/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-cutout.sh',
       url: 'http://127.0.0.1:8101/healthz',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-notices.sh',
       url: 'http://127.0.0.1:8103/healthz',
       timeout: 120_000,
