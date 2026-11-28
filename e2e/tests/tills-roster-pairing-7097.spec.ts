@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import { test, expect } from './fixtures';
-import { answerPinPanel, gotoTillsSection } from './helpers';
+import { ADMIN_PIN, answerPinPanel, ensureManagerPin, gotoTillsSection } from './helpers';
 
 // ut-docs#7097 / ut-docs#7057 (T7): one pending pair request per device, and
 // the Tills & devices section refresh never wipes what a manager is working on.
@@ -21,6 +21,10 @@ async function pairRequest(request: any, name: string, secret: string, deviceId:
 }
 
 test.describe('roster and pairing requests (ut-docs#7097)', () => {
+  // Revoke now asks for the manager PIN: make sure the till has a manager
+  // PIN set, whatever spec ran first (helpers.ensureManagerPin).
+  test.beforeEach(async ({ page }) => { await ensureManagerPin(page); });
+
   test('three requests from one phone leave one pending row, the newest', async ({ page, request }) => {
     const name = 'e2e-7097-phone';
     const ids: string[] = [];
@@ -106,7 +110,7 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
     expect(second.ok(), await second.text()).toBe(true);
     expect((await second.json()).data.till_id, 'rename keeps the row').toBe(firstId);
     expect((await second.json()).data.replaced).toBe(true);
-    const revoke = await request.post(`/api/sync/tills/${firstId}/revoke`);
+    const revoke = await request.post(`/api/sync/tills/${firstId}/revoke`, { form: { override_pin: ADMIN_PIN } });
     expect(revoke.ok()).toBe(true);
   });
 });

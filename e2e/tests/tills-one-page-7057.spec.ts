@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import { test, expect } from './fixtures';
-import { watchConsole, answerTillConfirm, answerPinPanel, gotoTillsSection, ADMIN_PIN } from './helpers';
+import { watchConsole, answerTillConfirm, answerPinPanel, gotoTillsSection, ADMIN_PIN, ensureManagerPin } from './helpers';
 
 // ut-docs#7057 / ut-docs#7173: "Tills & devices" is a set of sections in the
 // Settings tree (it was a five-tab page at /tills). Add a till (code), a stale
@@ -10,6 +10,10 @@ import { watchConsole, answerTillConfirm, answerPinPanel, gotoTillsSection, ADMI
 const SEED_COMMITMENT = 'b'.repeat(64);
 
 test.describe('tills & devices page (ut-docs#7057)', () => {
+  // Revoke now asks for the manager PIN: make sure the till has a manager
+  // PIN set, whatever spec ran first (helpers.ensureManagerPin).
+  test.beforeEach(async ({ page }) => { await ensureManagerPin(page); });
+
   test('the tree lists the Tills & devices sections in order and the keyboard moves between them', async ({ page }) => {
     // ut-docs#7173: the five tabs became rows of the Settings tree (this is
     // the short check; tills-tree-7173.spec.ts holds the full tree spec).

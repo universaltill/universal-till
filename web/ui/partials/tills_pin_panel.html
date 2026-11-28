@@ -2,12 +2,12 @@
      Opens right under its button: no native confirm, no dialog, no showModal,
      no overlay, so the status bar and the lock stay reachable (offline-first
      rules). tills-tree.js checks the PIN (POST /api/sync/tills/verify-pin)
-     and only then posts each removal in data-remove-urls. Every word is
+     and only then posts each removal in data-remove-routes. Every word is
      rendered here, already translated. Params: id, q (the question), ok (the
      confirm verb), urls (space separated removal routes), done (the line said
      after). */}}
 <div class="tills-pin" id="{{ .id }}" data-pin-panel hidden role="group" aria-labelledby="{{ .id }}-q"
-     data-remove-urls="{{ .urls }}" data-done-text="{{ .done }}" data-failed-text="{{ T "tills.tree.old.remove_failed" }}">
+     data-remove-routes="{{ .urls }}" data-done-text="{{ .done }}" data-failed-text="{{ T "tills.tree.old.remove_failed" }}">
   <p id="{{ .id }}-q" class="tills-pin-q">{{ .q }}</p>
   <div class="tills-pin-row">
     <label for="{{ .id }}-pin">{{ T "elevation.pin_label" }}</label>

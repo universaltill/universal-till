@@ -327,6 +327,20 @@ export async function ensureRegisteredAutomatically(page: Page) {
   }).toPass({ timeout: 30_000 });
 }
 
+// ut-docs#7173: removing a till (Revoke, Remove old entry) asks for the manager
+// PIN, and the server checks it. The default project's till is auth-off and
+// fresh, so it has no manager PIN until something sets one: a spec that
+// removes a till calls this first. Same POST the wizard's Finish button sends;
+// ADMIN_PIN is the value every other spec uses, so setting it again is
+// harmless.
+export async function ensureManagerPin(page: Page) {
+  const setup = await page.request.post('/api/setup', {
+    form: { store_name: 'E2E Test Shop', till_name: 'Till 1', country: 'GB', pin: ADMIN_PIN, pin_confirm: ADMIN_PIN },
+    maxRedirects: 0,
+  });
+  expect([200, 204, 302, 303, 409], `set the manager PIN (status ${setup.status()})`).toContain(setup.status());
+}
+
 // ut-docs#7173: Tills & devices is a set of sections in the Settings tree, not
 // a page. Opens `section` (an id suffix of #settings-tills-<section>), with an
 // optional query such as '?need=join' or '?lang=de' (leading '?', before the

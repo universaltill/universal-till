@@ -30,7 +30,7 @@
     {{ range $.Old }}
     <li class="tills-row" id="till-row-{{ .ID }}" data-till-id="{{ .ID }}" data-kind="{{ .Kind }}" data-testid="till-old-entry">
       <div class="tills-row-head"><strong>{{ .Name }}</strong> <span class="tag warn">{{ T "tills.tree.old.tag" }}</span></div>
-      <p>{{ T "tills.tree.old.desc" }}</p>
+      <p>{{ if eq .Kind "cloud" }}{{ T "tills.tree.old.desc" }}{{ else }}{{ T "tills.tree.old.desc_local" }}{{ end }}</p>
       {{ if .LastSeen }}<p class="muted">{{ printf (T "tills.tree.last_seen") (datetime .LastSeen) }}</p>{{ end }}
       {{ if $.SyncPrimary }}
       {{ else if .Removable }}

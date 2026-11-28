@@ -265,7 +265,7 @@ func TestOldSection_RemovalIsAnInlinePinPanelNotADialog(t *testing.T) {
 		for _, want := range []string{
 			`aria-controls="pin-` + id + `-remove"`,
 			`id="pin-` + id + `-remove"`,
-			`data-remove-urls="/api/sync/tills/` + id + `/revoke"`,
+			`data-remove-routes="/api/sync/tills/` + id + `/revoke"`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("missing %s in the old-entries section", want)
@@ -393,7 +393,7 @@ func TestRoster_RevokeUsesTheInlinePinPanel(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("no inline PIN opener on the Revoke button: %s", body)
 	}
-	if !strings.Contains(body, `data-remove-urls="/api/sync/tills/`+id+`/revoke"`) {
+	if !strings.Contains(body, `data-remove-routes="/api/sync/tills/`+id+`/revoke"`) {
 		t.Fatalf("the panel must post the existing revoke route")
 	}
 	if strings.Contains(body, `hx-post="/api/sync/tills/`+id+`/revoke"`) {

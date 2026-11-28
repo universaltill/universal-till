@@ -6491,6 +6491,7 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 /* A search hit: the control's own label, then the section it lives in. */
 .settings-hit-text, .settings-hit-section { display: block; }
 .settings-hit-section { font-size: .8rem; color: var(--muted); margin-block-start: .1rem; }
+.settings-tree-link.is-current .tag.warn { background: var(--surface); color: var(--text); border-color: var(--surface); }
 .settings-tree-link.is-current .settings-hit-section { color: inherit; opacity: .85; }
 .settings-noresults { margin: 0; padding: .5rem .6rem; }
 .settings-panel { min-inline-size: 0; }

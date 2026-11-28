@@ -46,6 +46,22 @@
   // The listener above is on document (capture) because the event does not
   // bubble: capture still reaches it.
 
+  // A first-load deep link (/settings#settings-tills-old, or an old /tills?tab=
+  // redirect) shows its card before this deferred script has registered the
+  // listener, so the event above was already lost. On init, load the lazy
+  // card that is visible right now (ut-docs#7173).
+  function loadVisible() {
+    lazyCards().forEach(function (c) {
+      if (c.classList.contains('settings-section-hidden')) return;
+      bodies(c).forEach(function (b) { if (!b.hasAttribute('data-requested')) load(b); });
+    });
+  }
+  UT.loadVisibleTills = loadVisible;
+  // After DOMContentLoaded (so htmx, also deferred, has processed the page and
+  // its ut:load-section trigger exists): a timeout runs after htmx's own handler.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(loadVisible, 0); });
+  else setTimeout(loadVisible, 0);
+
   // Something changed (a removal, a role change): reload the sections that
   // are already loaded, so the list, the banner and the count agree.
   var focusAfter = null;
@@ -53,6 +69,9 @@
     lazyCards().forEach(function (c) {
       bodies(c).forEach(function (b) {
         if (b.hasAttribute('data-requested')) {
+          // A manager mid-approval in the pairing box is never interrupted by a
+          // push (ut-docs#7097 AC16): leave that section as it is.
+          if (b.querySelector('#pending-pairings, #reader-requests') && window.utPairingBusy && window.utPairingBusy()) return;
           if (!c.classList.contains('settings-section-hidden')) focusAfter = c;
           load(b);
         }
@@ -177,7 +196,7 @@
     var input = panel.querySelector('[data-pin-input]');
     var confirmBtn = panel.querySelector('[data-pin-confirm]');
     var pin = input ? input.value.trim() : '';
-    var urls = (panel.getAttribute('data-remove-urls') || '').split(/\s+/).filter(Boolean);
+    var urls = (panel.getAttribute('data-remove-routes') || '').split(/\s+/).filter(Boolean);
     if (!urls.length || confirmBtn.disabled) return;
     var err = panel.querySelector('[data-pin-error]');
     if (err) { err.textContent = ''; err.hidden = true; }

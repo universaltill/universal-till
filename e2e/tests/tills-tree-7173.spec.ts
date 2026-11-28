@@ -109,6 +109,19 @@ test.describe('old URLs and old card ids land on the right card (ut-docs#7173)',
     await expect(page.getByTestId('tills-add-join')).toBeVisible();
   });
 
+  // Regression (Tester bug 1): a cold first load straight onto a lazy section
+  // (the old /tills?tab= redirects land here) must load it, although the
+  // deferred tills-tree.js registers after the page's own hash handling.
+  for (const sec of ['this', 'others', 'old'] as const) {
+    test(`a cold deep link to #settings-tills-${sec} loads the section without a click`, async ({ page }) => {
+      // First navigation of a fresh context: nothing cached, no hashchange.
+      await page.goto(`/settings#settings-tills-${sec}`);
+      const body = page.locator(`#settings-tills-${sec} [data-tills-body]`).first();
+      test.skip((await body.count()) === 0, `${sec} is not offered on this till`);
+      await expect(body).toHaveAttribute('data-loaded', '1');
+    });
+  }
+
   // Reached through the tree instead of a URL: click each row.
   const TREE_TARGETS = [...TREE_ROWS.map((s) => `settings-tills-${s}`), 'settings-kiosk', 'settings-notices'];
   for (const id of TREE_TARGETS) {
@@ -391,7 +404,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
 
   test.afterEach(async () => {
     // Put the till back: revoke whatever a test left behind.
-    for (const id of ghostIds) await api.post(`/api/sync/tills/${id}/revoke`).catch(() => undefined);
+    for (const id of ghostIds) await api.post(`/api/sync/tills/${id}/revoke`, { form: { override_pin: ADMIN_PIN } }).catch(() => undefined);
     ghostIds = [];
     cloud.devices.length = 0;
     cloud.mode.down = false;
@@ -473,7 +486,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
 
   test('a cloud-only ghost is listed with a Remove or an honest "pending" line, never a dead link', async () => {
     const now = new Date().toISOString();
-    cloud.devices.push({ device_id: 'tree-cloud-ghost', name: 'phone till', version: '1.0.0', first_seen: now, last_seen: now });
+    cloud.devices.push({ device_id: 'tree-cloud-ghost', till_id: 'tree-cloud-ghost-till', name: 'phone till', version: '1.0.0', first_seen: now, last_seen: now });
     await warmThenOpen('old');
     const entry = oldEntries(page).filter({ hasText: 'phone till' });
     await expect(entry).toHaveCount(1);
@@ -486,7 +499,7 @@ test.describe.serial('Other tills banner, Old entries and removal (ut-docs#7173)
   // -- (e) remove flow ------------------------------------------------------
 
   test('Remove opens the PIN panel inline; a wrong PIN errors, the right one removes the row and the count follows without a reload', async () => {
-    const assertClean = watchConsole(page);
+    const assertClean = watchConsole(page, /^Failed to load resource:.*401/);
     const noNativeDialogs = watchDialogs(page);
     ghostIds.push(await enrollGhost(api, 'tree-ghost-a'), await enrollGhost(api, 'tree-ghost-b'));
     await warmThenOpen('old');

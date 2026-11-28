@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, answerPinPanel, noNativeDialogs, gotoTillsSection } from './helpers';
+import { watchConsole, ensureManagerPin, answerPinPanel, noNativeDialogs, gotoTillsSection } from './helpers';
 
 // ut-docs#2904: pairing approve/deny, till revoke and Backup now used to
 // answer with HX-Refresh (a full page reload). They now re-render only
@@ -46,6 +46,7 @@ test('tills: deny and approve refresh only the pairing card, no page reload', as
 });
 
 test('tills: revoke refreshes only the enrolled-tills roster, no page reload', async ({ page }) => {
+  await ensureManagerPin(page); // revoke asks for the manager PIN: make sure it is set
   const assertClean = watchConsole(page);
   const api = page.request;
   // Same two real server calls as nav-rail-lock-reachable-1346.spec.ts:

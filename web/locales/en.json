@@ -5114,6 +5114,7 @@
   "tills.tree.old.intro": "Old entries are tills your account still lists but that are not set up on this till. They are often left over when a phone joins again under a new name.",
   "tills.tree.old.tag": "Old entry",
   "tills.tree.old.desc": "In your account, not added on this till.",
+  "tills.tree.old.desc_local": "Added on this till, but no longer in your account.",
   "tills.tree.old.remove": "Remove old entry",
   "tills.tree.old.remove_all": "Remove %d old entries",
   "tills.tree.old.same_phone": "This is the same phone as %s: replace",
