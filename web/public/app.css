@@ -5172,8 +5172,8 @@ body.login-screen {
    (below) for the button. */
 .pairing-notice { display: flex; align-items: center; gap: .6rem;
   padding: .55rem 1rem; font-weight: 600; font-size: .92rem;
-  background: rgba(37, 99, 235, .1); color: var(--accent);
-  border-block-end: 1px solid rgba(37, 99, 235, .3); }
+  background: var(--notice-info-bg); color: var(--notice-info-fg);
+  border-block-end: 1px solid var(--notice-info-bd); }
 .pairing-notice[hidden] { display: none; }
 .pairing-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pairing-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
@@ -5898,7 +5898,7 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
   cursor: pointer; text-align: center; line-height: 1.25;
   transition: border-color .12s ease, background .12s ease, transform .05s ease;
 }
-.picker-tile:hover { border-color: #cbd5e1; }
+@media (hover: hover) { .picker-tile:hover:not(:disabled) { border-color: var(--focus-border); } }
 .picker-tile:active { transform: scale(.97); }
 /* ut-docs#1103 UX1: >=3:1 ring (WCAG 1.4.11); the gap keeps it distinct from the checked inset ring. */
 .picker-tile:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; border-color: var(--focus-border); }
@@ -6905,7 +6905,7 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    defect ut-docs#300 shipped once already. Block + margin-block-start, not
    a float or a left/right margin, so RTL needs no separate rule. */
 .menulayout-dest { display: block; }
-.menulayout-goto { display: inline-block; margin-block-start: 0.25rem; font-size: 0.875rem; }
+.menulayout-goto { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; margin-block-start: 0.25rem; font-size: 0.875rem; }
 
 /* ==========================================================================
    ut-docs#2010 — app-wide list/edit standard: list header + record dialog.
@@ -8688,7 +8688,16 @@ input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
   padding-block-end: max(.6rem, env(safe-area-inset-bottom));
 }
 .shop-type-bar .btn { min-block-size: 2.75rem; min-inline-size: 2.75rem; }
-.shop-type-preview-body { max-block-size: min(60vh, 20rem); overflow-y: auto; padding-inline-end: .25rem; }
+/* ut-docs#7190: taller body plus a scroll-shadow cue (overlay scrollbars hide
+   that there is more); the safety line sits outside the scroller. */
+/* The 25rem is the room the panel header, safety line, pinned bar and status
+   bar take: the bar stays on screen at the 1024x600 kiosk floor, unscrolled. */
+.shop-type-preview-body { max-block-size: max(10rem, min(32rem, calc(100vh - 25rem))); overflow-y: auto; padding-inline-end: .25rem;
+  background:
+    linear-gradient(var(--surface) 30%, transparent) top / 100% 1.5rem no-repeat local,
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 1.5rem no-repeat local,
+    linear-gradient(rgba(0, 0, 0, .18), transparent) top / 100% .6rem no-repeat scroll,
+    linear-gradient(transparent, rgba(0, 0, 0, .18)) bottom / 100% .6rem no-repeat scroll; }
 .shop-type-preview-body h3:focus { outline: none; }
 .shop-type-list { margin-block: .25rem .75rem; padding-inline-start: 1.25rem; overflow-wrap: anywhere; }
 .shop-type-values { border: 0; padding: 0; margin-block: .5rem; min-inline-size: 0; }

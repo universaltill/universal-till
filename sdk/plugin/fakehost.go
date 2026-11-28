@@ -82,6 +82,18 @@ type FakeHost struct {
 	DeviceIPs      []string
 	DeviceTimezone string
 
+	// Plugin-records channel (ut-docs#3697). RecordCollections and
+	// SnapshotCollections are the manifest's records_forward lists (empty =
+	// every call is ErrDenied, as for a plugin that declares none); Replica
+	// is this till's role. Outbox is what records_forward queued, in order
+	// (a test may edit Status/Reason to play a main till's answer);
+	// Snapshots is the stored snapshot values.
+	RecordCollections   []string
+	SnapshotCollections []string
+	Replica             bool
+	Outbox              []FakeRecord
+	Snapshots           map[string][]byte
+
 	// InJob makes job_progress succeed (it is ErrNotFound outside a job).
 	InJob bool
 	Deny  map[string]bool
@@ -160,7 +172,7 @@ func NewFakeHost() *FakeHost {
 		Storage: map[string][]byte{}, Settings: map[string]string{}, Secrets: map[string]string{},
 		PluginID: "com.example.plugin",
 		Blobs:    map[string][]byte{}, Uploads: map[string][]byte{}, ImportFiles: map[int32][]byte{},
-		ItemImages: map[string]ItemImageFiles{}, images: map[int32]*bytes.Reader{},
+		ItemImages: map[string]ItemImageFiles{}, Snapshots: map[string][]byte{}, images: map[int32]*bytes.Reader{},
 		SecretSettings: map[string]bool{}, Deny: map[string]bool{}, Calls: map[string]int{},
 		streams: map[int32]*fakeStream{}, tcp: map[int32]io.ReadWriteCloser{},
 		uploads: map[int32]*fakeUpload{}, importPos: map[int32]int{},

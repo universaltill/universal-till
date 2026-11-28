@@ -148,6 +148,21 @@ func utDBOpenImport(importHandle int32) int32
 //go:wasmimport ut db_query_h
 func utDBQueryH(dbh int32, sqlPtr, sqlLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut records_forward
+func utRecordsForward(cPtr, cLen, idPtr, idLen, pPtr, pLen uint32) int32
+
+//go:wasmimport ut records_role
+func utRecordsRole(dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut records_status
+func utRecordsStatus(cPtr, cLen, dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut snapshot_set
+func utSnapshotSet(cPtr, cLen, pPtr, pLen uint32) int32
+
+//go:wasmimport ut snapshot_get
+func utSnapshotGet(cPtr, cLen, dstPtr, dstCap uint32) int32
+
 // ptr is the guest address and length of b; (0, 0) for an empty slice. The
 // caller keeps b alive across the host call with runtime.KeepAlive.
 func ptr(b []byte) (uint32, uint32) {
@@ -432,6 +447,51 @@ func rawTapToPayRequest(body, dst []byte) int32 {
 	dp, dc := ptr(dst)
 	r := utTapToPayRequest(rp, rl, dp, dc)
 	runtime.KeepAlive(body)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawRecordsForward(col, id, payload []byte) int32 {
+	cp, cl := ptr(col)
+	ip, il := ptr(id)
+	pp, pl := ptr(payload)
+	r := utRecordsForward(cp, cl, ip, il, pp, pl)
+	runtime.KeepAlive(col)
+	runtime.KeepAlive(id)
+	runtime.KeepAlive(payload)
+	return r
+}
+
+func rawRecordsRole(dst []byte) int32 {
+	dp, dc := ptr(dst)
+	r := utRecordsRole(dp, dc)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawRecordsStatus(col, dst []byte) int32 {
+	cp, cl := ptr(col)
+	dp, dc := ptr(dst)
+	r := utRecordsStatus(cp, cl, dp, dc)
+	runtime.KeepAlive(col)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawSnapshotSet(col, payload []byte) int32 {
+	cp, cl := ptr(col)
+	pp, pl := ptr(payload)
+	r := utSnapshotSet(cp, cl, pp, pl)
+	runtime.KeepAlive(col)
+	runtime.KeepAlive(payload)
+	return r
+}
+
+func rawSnapshotGet(col, dst []byte) int32 {
+	cp, cl := ptr(col)
+	dp, dc := ptr(dst)
+	r := utSnapshotGet(cp, cl, dp, dc)
+	runtime.KeepAlive(col)
 	runtime.KeepAlive(dst)
 	return r
 }

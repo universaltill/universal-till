@@ -12,9 +12,9 @@
 </a>
 {{ else if .keyAsk }}
 {{/* ut-docs#5066: the shop has not chosen whether a copy of its backup key is kept in the cloud. */}}
-<a href="/settings#settings-backup" class="sb-item sb-backup-copy" data-testid="sb-backup-key-ask"
+<a href="/settings#cloud-key-ask" class="sb-item sb-backup-copy" data-testid="sb-backup-key-ask"
    title="{{ T "backup.cloud.key.chip_hint" }}">
-  <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
+  <span class="btn-ico" aria-hidden="true">{{ icon "key" }}</span>
   <span class="sb-backup-copy-text">{{ T "backup.cloud.key.chip_ask" }}</span>
 </a>
 {{ else }}

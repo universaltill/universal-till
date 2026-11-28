@@ -7,4 +7,7 @@
 {{ else }}
 <button type="button" class="btn" id="shop-type-change" hx-get="/api/settings/shop-type/pick" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.shop_type.change_button" }}</button>
 {{ if .Tidy }}<button type="button" class="btn secondary" id="shop-type-tidy" hx-get="/api/settings/shop-type/preview?to={{ .Tidy.Type }}" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ .Tidy.Text }}</button>{{ end }}
+{{ if .Undo }}<p class="muted shop-type-undo-note" data-testid="shop-type-undo-note">{{ .Undo.Text }}</p>
+<button type="button" class="btn secondary" id="shop-type-undo-btn" hx-post="/api/settings/shop-type/undo" hx-target="#shop-type-undo-msg" hx-swap="innerHTML">{{ T "settings.template.undo.undo" }}</button>
+<span id="shop-type-undo-msg" class="shop-type-undo-msg"></span>{{ end }}
 {{ end }}

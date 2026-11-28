@@ -780,7 +780,7 @@ var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_track
 	"backup.offsite.attempts", "backup.offsite.refused_reason", "backup.offsite.pending_id",
 	"backup.offsite.pending_file", "backup.offsite.pending_meta",
 	"backup.offsite.key_in_cloud", "backup.offsite.escrow_blocked", "backup.offsite.key_exported_at",
-	"backup.offsite.link_copy"}
+	"backup.offsite.link_copy", "backup.offsite.copy_held"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// PluginHandoverRepo owns the plugin_handover table (122_plugin_handover.sql):
+// PluginHandoverRepo owns the plugin_handover table (123_plugin_handover.sql):
 // the per-till record of the core->plugin data handover (ut-docs#3157).
 type PluginHandoverRepo struct{ db *sql.DB }
 

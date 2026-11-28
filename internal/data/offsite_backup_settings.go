@@ -38,6 +38,11 @@ const (
 	// holds a wrapped copy of the key: "yes" (link via my.) or "no" (enter the
 	// saved key, or start a new key). The card offers the matching actions.
 	OffsiteLinkCopyKey = "backup.offsite.link_copy"
+	// OffsiteCopyHeldKey is "1" while the cloud holds (or may hold) a wrapped
+	// copy of the key: the last answer of the cloud, or the till's own send. It
+	// lets the card stay truthful after On then Off, because the till never
+	// deletes a held copy (ADR-0199 D17; ut-docs#7200).
+	OffsiteCopyHeldKey = "backup.offsite.copy_held"
 )
 
 // Values of OffsiteKeyInCloudKey.
@@ -51,7 +56,7 @@ var OffsiteBackupKeys = []string{
 	OffsiteLastSuccessAtKey, OffsiteLastSnapshotKey, OffsiteLastErrorKey, OffsiteLastErrorAtKey,
 	OffsiteFailingSinceKey, OffsiteNextAttemptAtKey, OffsiteAttemptsKey, OffsiteRefusedReasonKey,
 	OffsitePendingIDKey, OffsitePendingFileKey, OffsitePendingMetaKey,
-	OffsiteKeyInCloudKey, OffsiteEscrowBlockedKey, OffsiteKeyExportedAtKey, OffsiteLinkCopyKey,
+	OffsiteKeyInCloudKey, OffsiteEscrowBlockedKey, OffsiteKeyExportedAtKey, OffsiteLinkCopyKey, OffsiteCopyHeldKey,
 }
 
 // CountCompletedSales is how many completed or voided sales this till holds:

@@ -351,6 +351,7 @@ func (u *Uploader) ensureKey(ctx context.Context) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	u.noteBlocked(ctx, state.EscrowBlocked)
+	u.noteHeld(ctx, state.InCloud)
 	cloudHas := state.Generation != nil && *state.Generation > 0
 	switch {
 	case !have && cloudHas:
@@ -409,6 +410,9 @@ func (u *Uploader) register(ctx context.Context, dek []byte, gen int) error {
 		put.DEKB64 = base64.StdEncoding.EncodeToString(dek)
 	}
 	err := u.Cloud.PutKey(ctx, put)
+	if err == nil && put.DEKB64 != "" {
+		u.noteHeld(ctx, true)
+	}
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == 409 {
 		switch ae.Code {
@@ -521,6 +525,16 @@ func (u *Uploader) EnterSavedKey(ctx context.Context, text string) error {
 	return nil
 }
 
+// noteHeld records whether the cloud holds a wrapped copy of the key, so the
+// card never says "only on this till" while one exists (ut-docs#7200).
+func (u *Uploader) noteHeld(ctx context.Context, held bool) {
+	if held {
+		_ = u.Settings.Set(ctx, data.OffsiteCopyHeldKey, "1")
+	} else {
+		_ = u.Settings.Delete(ctx, data.OffsiteCopyHeldKey)
+	}
+}
+
 func (u *Uploader) noteBlocked(ctx context.Context, blocked bool) {
 	if blocked {
 		_ = u.Settings.Set(ctx, data.OffsiteEscrowBlockedKey, "1")
@@ -539,6 +553,9 @@ func (u *Uploader) syncEscrow(ctx context.Context, dek []byte, gen int, st KeySt
 			return
 		}
 		err := u.Cloud.PutKey(ctx, KeyPut{Generation: gen, DEKB64: base64.StdEncoding.EncodeToString(dek), Fingerprint: Fingerprint(dek)})
+		if err == nil {
+			u.noteHeld(ctx, true)
+		}
 		var ae *APIError
 		if errors.As(err, &ae) && ae.Status == 409 && ae.Code == "escrow_blocked" {
 			u.noteBlocked(ctx, true)
@@ -565,6 +582,7 @@ func (u *Uploader) ApplyKeyChoice(ctx context.Context) error {
 		return err
 	}
 	u.noteBlocked(ctx, st.EscrowBlocked)
+	u.noteHeld(ctx, st.InCloud)
 	if st.Generation == nil || *st.Generation != gen || st.Fingerprint == nil || *st.Fingerprint != Fingerprint(dek) {
 		return nil // not registered yet (or needs linking): the round deals with it
 	}
@@ -574,6 +592,9 @@ func (u *Uploader) ApplyKeyChoice(ctx context.Context) error {
 			return nil
 		}
 		err := u.Cloud.PutKey(ctx, KeyPut{Generation: gen, DEKB64: base64.StdEncoding.EncodeToString(dek), Fingerprint: Fingerprint(dek)})
+		if err == nil {
+			u.noteHeld(ctx, true)
+		}
 		var ae *APIError
 		if errors.As(err, &ae) && ae.Status == 409 && ae.Code == "escrow_blocked" {
 			u.noteBlocked(ctx, true) // the card says: turned off by the owner on my.
