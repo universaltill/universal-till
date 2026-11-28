@@ -1884,5 +1884,6 @@
   "plugins.data.delete_now.none": {"description": "Message when no removed data is kept for the plugin, so there is nothing to delete.", "review": "standard"},
   "plugins.data.delete_now.removed_kept_days": {"description": "Explains that a removed plugin's data is kept for a recovery period for reinstall, then deleted automatically.", "review": "standard"},
   "plugins.data.delete_now.retained": {"description": "Refusal shown when the plugin's data is under a legal retention period and cannot be deleted yet.", "review": "standard"},
+  "plugins.permissions.desc.payout_suggest": {"description": "Consent line on the plugin install and permissions screen for the payout:suggest permission: the plugin may suggest per-person tip amounts that pre-fill the tip payout form; the manager confirms or edits each one and the plugin never writes the payout record. Shown as a short sentence next to the permission name.", "review": "standard", "max_length": 100},
   "plugins.permissions.desc.records_sync": {"description": "Consent line on the plugin install and permissions screen for the records:sync permission: the plugin may copy its own records from a till to the main till of this shop, and publish small values (such as a staff list) that the shop's other tills read. Shown as a short sentence next to the permission name.", "review": "standard", "max_length": 80}
 }

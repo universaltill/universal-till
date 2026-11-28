@@ -41,8 +41,9 @@ var permissionDescKeys = map[string]string{
 	"schedule":        "plugins.permissions.desc.schedule",
 	"cloud:directive": "plugins.permissions.desc.cloud_directive",
 	"secret:write":    "plugins.permissions.desc.secret_write",
-	"records:sync":    "plugins.permissions.desc.records_sync", // ut-docs#3697
-	"device-info":     "plugins.permissions.desc.device_info",  // ADR-0140
+	"records:sync":    "plugins.permissions.desc.records_sync",   // ut-docs#3697
+	"payout:suggest":  "plugins.permissions.desc.payout_suggest", // ut-docs#7108
+	"device-info":     "plugins.permissions.desc.device_info",    // ADR-0140
 	// ADR-0149 §6 (ut-docs#3976): the staff list says what it never reads.
 	"view:users": "plugins.permissions.desc.view_users",
 	// ut-docs#4045: the non-★ shop facts class (shop.context.v2) says it

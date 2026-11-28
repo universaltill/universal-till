@@ -43,6 +43,10 @@ var exactPermissions = map[string]bool{
 	// plugin.records.received.ask). Bare name, no wildcard form.
 	"records:sync": true,
 
+	// ut-docs#7108 (ADR-0149 §6): answer tips.suggest.ask, the payout form's
+	// pre-fill. Bare name; the answer only suggests, core writes the ledger.
+	"payout:suggest": true,
+
 	// ut-docs#6455 (ADR-0198 §3.1): a payment plugin's two broker
 	// permissions, granted only by a manager. Exact names so the net: host
 	// rule never sees "payment_broker" as a host, and no net: host or

@@ -75,6 +75,8 @@
 
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "reports.tips.record_title" }}</h2>
+  <button type="button" class="btn secondary" hx-get="/api/reports/tips-suggestions?from={{ .From }}&amp;to={{ .To }}" hx-target="#tips-suggest-result" hx-swap="innerHTML">{{ T "reports.tips.suggest_btn" }}</button>
+  <div id="tips-suggest-result" aria-live="polite"></div>
   <form id="tips-record-form" hx-post="/api/reports/worker-allocations" hx-target="#report-tab-panel" hx-swap="innerHTML">
     {{ if .Period }}
     <input type="hidden" name="period" value="{{ .Period }}">
