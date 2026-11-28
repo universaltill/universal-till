@@ -184,6 +184,13 @@ func assertPairSecretsNotLogged(t *testing.T, logs *syncBuffer) {
 
 // --- postPair -------------------------------------------------------------
 
+// postPair is the plain first-pair call (no first_till, no rejoin), kept as a
+// test helper now that production reaches /pair through postPairOpts.
+func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version string) (storeID, merchantID, token string, err error) {
+	a, err := postPairOpts(ctx, endpoint, code, deviceID, deviceName, version, pairOpts{})
+	return a.storeID, a.merchantID, a.token, err
+}
+
 func TestPostPairSuccess(t *testing.T) {
 	cloud := newFakePairCloud(t)
 	store, merchant, token, err := postPair(context.Background(), cloud.srv.URL+"/api/", pairCode, "till-new", "Front counter", "0.30.0")

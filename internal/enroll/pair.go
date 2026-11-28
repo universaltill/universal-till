@@ -328,15 +328,6 @@ func adoptPaired(ctx context.Context, kv Settings, replica bool, newID, storeID,
 	}
 }
 
-// postPair calls POST /v1/stores/pair and returns the store, merchant and
-// device token the cloud answers with, accepted only when all three are
-// present and the token is well-formed. No Authorization header: the code
-// is the credential. Errors never carry the code or the token.
-func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version string) (storeID, merchantID, token string, err error) {
-	a, err := postPairFull(ctx, endpoint, code, deviceID, deviceName, version, false, "")
-	return a.storeID, a.merchantID, a.token, err
-}
-
 // pairAnswer is a successful /pair answer: the credential plus, from a
 // cloud that knows ADR-0166, the store profile block (nil otherwise).
 type pairAnswer struct {
