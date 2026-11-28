@@ -843,7 +843,7 @@ var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
-	"/shifts", "/reports", "/backups", "/about",
+	"/shifts", "/reports", "/backups", "/about", "/registers",
 	// ut-docs#6455: tap-to-pay "Check again" (POST /pay/tap/check) and the
 	// manager's resolve (POST /manager/pay/tap/resolve) are literal-child
 	// routes with no catch-all of their own.

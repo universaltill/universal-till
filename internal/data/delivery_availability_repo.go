@@ -14,7 +14,7 @@ import (
 )
 
 // Neutral availability signals for delivery channels (ADR-0215 decision 2,
-// ADR-0201 §2, ut-docs#6583, migration 124). Two things a shop tells the till
+// ADR-0201 §2, ut-docs#6583, migration 133). Two things a shop tells the till
 // that every connected delivery channel should follow:
 //
 //   - an item is "unavailable until" a time (the 86): items.unavailable_until;

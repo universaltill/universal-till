@@ -36,6 +36,9 @@ type TillRow struct {
 	BearerPrev    bool
 	BearerPending bool
 	RotateDue     bool
+	// DeviceID is the cloud device id the till joined with ("" for a row
+	// enrolled before migration 118, or by a till that sent none).
+	DeviceID string
 }
 
 // Till roles (ut-docs#2781): the values tills.role and
@@ -131,7 +134,7 @@ func (r *TillsRepo) UpdateName(ctx context.Context, id, name string) (bool, erro
 // ListTills returns enrolled tills, newest first.
 func (r *TillsRepo) ListTills(ctx context.Context) ([]TillRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role
+SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role, COALESCE(device_id, '')
 FROM tills ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list tills: %w", err)
@@ -140,7 +143,7 @@ FROM tills ORDER BY enrolled_at DESC`)
 	var out []TillRow
 	for rows.Next() {
 		var t TillRow
-		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role, &t.DeviceID); err != nil {
 			return nil, fmt.Errorf("scan till: %w", err)
 		}
 		out = append(out, t)
@@ -287,6 +290,39 @@ UPDATE tills SET device_id = ? WHERE id = ?
 		return fmt.Errorf("set till device id: %w", err)
 	}
 	return nil
+}
+
+// ReplaceEnrolmentDevice moves a till row's device id to the new device after a
+// manager approved "replace this old entry" (ut-docs#7098). It is used ONLY in
+// that approved branch (a self-asserted id never reaches it) and returns the
+// id it replaced so the register link can keep it as superseded_by. An id held
+// by another row is refused and nothing changes.
+func (r *TillsRepo) ReplaceEnrolmentDevice(ctx context.Context, id, newDeviceID string) (oldDeviceID string, err error) {
+	if newDeviceID == "" {
+		return "", nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("replace till device id: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(device_id, '') FROM tills WHERE id = ?`, id).Scan(&oldDeviceID); err != nil {
+		return "", fmt.Errorf("replace till device id: %w", err)
+	}
+	var held int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tills WHERE device_id = ? AND id <> ?`, newDeviceID, id).Scan(&held); err != nil {
+		return "", fmt.Errorf("replace till device id: %w", err)
+	}
+	if held > 0 {
+		return "", fmt.Errorf("replace till device id: held by another till")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tills SET device_id = ? WHERE id = ?`, newDeviceID, id); err != nil {
+		return "", fmt.Errorf("replace till device id: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("replace till device id: %w", err)
+	}
+	return oldDeviceID, nil
 }
 
 // ErrTillStillLive: the till to replace was seen too recently to be gone.

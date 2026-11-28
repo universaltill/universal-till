@@ -19,7 +19,7 @@ import (
 )
 
 // Upload of the main till's neutral delivery signals (ut-docs#6583, S7a, till
-// side; migration 124 delivery_signals). Each queued availability.set /
+// side; migration 133 delivery_signals). Each queued availability.set /
 // service.set goes to
 //
 //	POST <endpoint>/v1/stores/channel/delivery-signals

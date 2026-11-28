@@ -547,6 +547,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/diag/reload-reason": true,
 	// Raw settings key/value editor: takes any key, URL/host settings included.
 	"POST /api/settings/upsert": true,
+	// ut-docs#7098: a demo till has no shop list and keeps its registers.
+	"POST /api/sync/tills/cloud-remove": true,
+	"POST /registers/auto-retire":       true,
 }
 
 // demoAllowedRoutes are the only routes a demo till serves (ADR-0113 §1.4).

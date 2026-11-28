@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// 123 / 124 (ADR-0215, ut-docs#6581 / #6583): delivery columns on the channel
+// 132 / 133 (ADR-0215, ut-docs#6581 / #6583): delivery columns on the channel
 // order tables, the delivery actions in channel_order_actions, items.
 // unavailable_until and the delivery_signals outbox.
 

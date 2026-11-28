@@ -409,6 +409,7 @@ var nonAdminTables = map[string]string{
 	"plugin_record_inbox":  "the main till's ledger of plugin records it already applied (dedupe) — till-local, never synced (ut-docs#3697)",
 	"plugin_snapshot":      "a plugin's main-owned snapshot values — NOT a generic admin table: they travel as the bundle's additive plugin_snapshots section (AdminBundle.PluginSnapshots), replaced wholesale on a replica, with their own generation triggers (migration 120, ut-docs#3697)",
 	// Already named in this var's own top comment above.
+	"register_devices":        "which device each register belongs to (ut-docs#7098): this till's own link table, rebuilt by enrolment on each till, never synced",
 	"cloud_notices":           "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
 	"sessions":                "till-local login sessions — meaningless off the issuing till",
 	"item_images":             "item photos — files don't travel over this bundle (D2 limit)",
@@ -837,6 +838,10 @@ var PerTillSettingPrefixes = []string{
 	// till records delivery orders and sends their signals, so no other till
 	// holds or syncs them.
 	"delivery.",
+	// ut-docs#7098: the auto-retire sweep of ghost registers runs on THIS till.
+	"registers.auto_retire_", "registers.retired_auto_notice",
+	// ut-docs#7098: whether THIS main till offers "Remove from the list" (default off).
+	"tills.cloud_remove_enabled",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
