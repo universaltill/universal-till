@@ -1879,5 +1879,6 @@
   "tender.tip.total_with_tip": {"description": "Payment panel, tip row: the bill plus the chosen tip, shown before the cashier taps a payment method.", "review": "standard", "placeholders": ["bill total plus tip, formatted as money"]},
   "tender.tip.too_large": {"description": "Payment panel, tip row: shown when the typed tip is more than the whole bill. Nothing is charged until it is corrected.", "review": "standard"},
   "tender.tip.pill": {"description": "Split tab: note on a pending payment line showing the part of it that is a tip.", "review": "standard", "placeholders": ["tip amount, formatted as money"], "max_length": 30},
-  "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"}
+  "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"},
+  "plugins.permissions.desc.records_sync": {"description": "Consent line on the plugin install and permissions screen for the records:sync permission: the plugin may copy its own records from a till to the main till of this shop, and publish small values (such as a staff list) that the shop's other tills read. Shown as a short sentence next to the permission name.", "review": "standard", "max_length": 80}
 }

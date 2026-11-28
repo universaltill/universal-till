@@ -151,6 +151,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/sales",
 		// ut-docs#3562: the replica push tick's no-sale journal.
 		"/api/sync/no-sales",
+		// ut-docs#3697: the same push tick's plugin-records batch.
+		"/api/sync/plugin-records",
 		// ut-docs#4711: the same push tick's cleared-basket journal.
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join's best-effort enrolment withdrawal.
@@ -506,5 +508,22 @@ func TestSalesMirrorManagerRoutesNeedASession(t *testing.T) {
 		if exempt(p) {
 			t.Errorf("%s is session-exempt; it is a manager route", p)
 		}
+	}
+}
+
+// ut-docs#3697: the plugin-records push is bearer-authed in its handler, so
+// the cookie middleware must let exactly that path through — no prefix, no
+// sibling path.
+func TestPluginRecordsPathIsExemptExactly_3697(t *testing.T) {
+	if !exempt("/api/sync/plugin-records") {
+		t.Fatal("/api/sync/plugin-records must be exempt: the replica sends only a bearer")
+	}
+	for _, p := range []string{"/api/sync/plugin-records/", "/api/sync/plugin-records/x", "/api/sync/plugin-recordsx", "/api/plugin-records"} {
+		if exempt(p) {
+			t.Errorf("%s must NOT be exempt", p)
+		}
+	}
+	if got := ExemptBodyLimit("/api/sync/plugin-records"); got != 3<<19 {
+		t.Fatalf("body limit = %d, want 1.5 MiB (20 records of 64 KiB)", got)
 	}
 }
