@@ -755,7 +755,7 @@
       "sha256": "58d07716742d30ebcb6ef8b072bdca8c911cbdcee7cfe19be4c9282bdde7652a"
     },
     "internal/pages/shoptemplate_apply.go": {
-      "sha256": "3275294ad6ab0312429e24be0a906a12734d14f7578d06e6781be7e4da243ee1"
+      "sha256": "336f3ca4fb651e43029dd7319918fdf23ce983cccedb0e8bcc88be4b4d50bb58"
     },
     "internal/pages/shoptemplate_catalog.go": {
       "sha256": "b57d11f7b01f64a8ffdbcb4138527d043676824ed24fd8f418967adb63bf8506"
