@@ -23,8 +23,11 @@ import (
 
 type sizeFake struct {
 	limit atomic.Int64
-	mu    sync.Mutex
-	reqs  [][]string // sale ids per POST /api/sync/sales
+	// before, when set, runs at the top of every /api/sync/sales request,
+	// before the answer (ut-docs#5922: a promote landing mid-request).
+	before func()
+	mu     sync.Mutex
+	reqs   [][]string // sale ids per POST /api/sync/sales
 }
 
 func (f *sizeFake) requests() [][]string {
@@ -46,6 +49,9 @@ func newSizeLimitedPrimary(t *testing.T, primary http.Handler) (*httptest.Server
 		if r.URL.Path != "/api/sync/sales" {
 			primary.ServeHTTP(w, r)
 			return
+		}
+		if f.before != nil {
+			f.before()
 		}
 		body, _ := io.ReadAll(r.Body)
 		var js []journalSale

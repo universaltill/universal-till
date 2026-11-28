@@ -756,12 +756,48 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	if primary == "" || bearer == "" {
 		return
 	}
-	syncPushSales(ctx, d, client, primary, bearer)
-	syncPushNoSales(ctx, d, client, primary, bearer)
-	syncPushClearedBaskets(ctx, d, client, primary, bearer)
+	// A step that finds this till promoted mid-tick returns true: the tick
+	// stops, so no later step POSTs to the old main (ut-docs#5922).
+	if syncPushSales(ctx, d, client, primary, bearer) {
+		return
+	}
+	if syncPushNoSales(ctx, d, client, primary, bearer) {
+		return
+	}
+	if syncPushClearedBaskets(ctx, d, client, primary, bearer) {
+		return
+	}
 	// ut-docs#5074 M7: this till's own day closes for the sales copy; a
 	// no-op (settings reads only) while the copy is off.
 	syncPushCloses(ctx, d, client, primary, bearer, lantls.PeerPinned)
+}
+
+// promotedMidPush logs the one INFO line of a push tick that a promote cut
+// short (ut-docs#5922). INFO, never WARN: nothing is wrong.
+func promotedMidPush() {
+	logging.L().Infof("sync push: skipped, this till was promoted to main till during the push")
+}
+
+// recordPushIfReplica writes kv plus sync.last_contact_at and
+// sync.last_push_at (both = at, RFC 3339 UTC) in one transaction, only while
+// this till still has a sync.primary_url. data.ErrNotReplica is returned as
+// is: nothing is written and the in-memory main contact is not marked. A real
+// DB failure is logged and the contact is still marked (the main till did
+// answer), as recordMainContactIfReplica does (ut-docs#5922).
+func recordPushIfReplica(ctx context.Context, d *common.Deps, at time.Time, kv map[string]string) error {
+	s := at.UTC().Format(time.RFC3339)
+	all := map[string]string{"sync.last_contact_at": s, "sync.last_push_at": s}
+	for k, v := range kv {
+		all[k] = v
+	}
+	if err := d.Settings.SetIfReplica(ctx, all); err != nil {
+		if errors.Is(err, data.ErrNotReplica) {
+			return err
+		}
+		logging.L().Warnf("sync push: record push: %v", err)
+	}
+	d.MarkMainContact(at)
+	return nil
 }
 
 // parseSalesPushCursor splits the stored sync.push_cursor, "<created_at>|<id>"
@@ -807,20 +843,23 @@ func countQueuedSales(ctx context.Context, repo *data.POSRepo, cursor string) (i
 
 // syncPushSales is syncPushTick's sales-journal step: push local sales past
 // sync.push_cursor to the primary and advance the cursor on a 200.
-func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
+//
+// It reports true when this till turned out to be promoted mid-step, so the
+// tick stops (ut-docs#5922).
+func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) bool {
 	repo := data.NewPOSRepo(d.Db)
 	cur, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
 	afterAt, afterID := parseSalesPushCursor(cur)
 	size := salesPushBatchSize(ctx, d)
 	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, size)
 	if err != nil || len(receipts) == 0 {
-		return
+		return false
 	}
 	var batch []journalSale
 	for _, rn := range receipts {
 		j, found, err := buildJournal(ctx, repo, rn)
 		if err != nil || !found {
-			return
+			return false
 		}
 		batch = append(batch, j)
 	}
@@ -860,11 +899,6 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	held = strings.TrimSpace(held)
 	contacted := false
 	onAccepted := func(sub []journalSale) error {
-		if !contacted {
-			contacted = true
-			now := recordMainContact(ctx, d, time.Now())
-			_ = d.Settings.Set(ctx, "sync.last_push_at", now)
-		}
 		// The batch is ordered by (created_at, id), so the settled sales are
 		// a prefix of it: once one is past the cutoff, every later one is.
 		newCursor := ""
@@ -873,34 +907,71 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 				newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
 			}
 		}
+		kv := map[string]string{}
 		if newCursor != "" {
-			_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+			kv["sync.push_cursor"] = newCursor
 		}
+		clearHeld := false
 		if held != "" {
 			for _, j := range sub {
 				if j.Sale.ID == held {
-					_ = d.Settings.Set(ctx, salesPushHeldKey, "")
-					logging.ResolveProblems(SalePushTooLargeProblemKey)
-					held = ""
+					kv[salesPushHeldKey] = ""
+					clearHeld = true
 					break
 				}
 			}
 		}
+		// One guarded write per accepted sub-batch; the first also carries
+		// the contact stamps. A promote mid-request is refused, nothing is
+		// written, and postSalesHalving hands the error back (ut-docs#5922).
+		var err error
+		switch {
+		case !contacted:
+			err = recordPushIfReplica(ctx, d, time.Now(), kv)
+		case len(kv) > 0:
+			err = d.Settings.SetIfReplica(ctx, kv)
+		}
+		if errors.Is(err, data.ErrNotReplica) {
+			return err
+		}
+		if err == nil {
+			contacted = true
+		}
+		if clearHeld && err == nil {
+			logging.ResolveProblems(SalePushTooLargeProblemKey)
+			held = ""
+		}
 		return nil
 	}
+	// Re-check just before the first POST: a promote earlier in the tick
+	// must not send to the old main. Narrows the race, cannot close it.
+	if !stillReplica(ctx, d) {
+		promotedMidPush()
+		return true
+	}
 	sent, finalSize, big, err := postSalesHalving(batch, size, salesPushMaxRequests, post, onAccepted)
+	if errors.Is(err, data.ErrNotReplica) {
+		promotedMidPush()
+		return true
+	}
 	if big != nil {
-		holdOversizedSale(ctx, d, repo, big.Sale.ID, big.Sale.ReceiptNo)
+		if errors.Is(holdOversizedSale(ctx, d, repo, big.Sale.ID, big.Sale.ReceiptNo), data.ErrNotReplica) {
+			promotedMidPush()
+			return true
+		}
 	}
 	// A 413 earlier in the tick still shrinks the learned size when a later
 	// request fails otherwise (review O2), so the next tick does not re-send
 	// the refused body; only a fully accepted tick grows it.
-	storeSalesPushBatchSize(ctx, d, size, finalSize, err == nil && sent == len(batch) && big == nil)
+	if errors.Is(storeSalesPushBatchSize(ctx, d, size, finalSize, err == nil && sent == len(batch) && big == nil), data.ErrNotReplica) {
+		promotedMidPush()
+		return true
+	}
 	if err != nil {
-		return
+		return false
 	}
 	if big != nil || sent < len(batch) {
-		return // held or capped: the normal tick retries; no rekick on a 413
+		return false // held or capped: the normal tick retries; no rekick on a 413
 	}
 	// A sale held inside the settle window is already on the primary but
 	// still counts as queued; wake the push loop once the window has passed
@@ -914,4 +985,5 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 		salesPushRekick(d, salesPushSettle+time.Second)
 	}
 	logging.L().Infof("sync push: %d sale(s) journaled to the primary", sent)
+	return false
 }

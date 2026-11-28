@@ -164,6 +164,10 @@ func TestReplicaPushToReplacedMainTillKeepsItsSalesQueued(t *testing.T) {
 	markReplacedForTest(t, primary.Settings)
 
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	// A real replica has a sync.primary_url; the push steps check it (ut-docs#5922).
+	if err := replica.Settings.Set(context.Background(), "sync.primary_url", srv.URL); err != nil {
+		t.Fatal(err)
+	}
 	seedLocalSale(t, replica, "sale-5058-a", "T2-000000001", "2026-10-26T09:00:00Z")
 	syncPushSales(context.Background(), replica, srv.Client(), srv.URL, bearer)
 	if cur, _, _ := replica.Settings.Get(context.Background(), "sync.push_cursor"); cur != "" {

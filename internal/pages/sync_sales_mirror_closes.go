@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -107,22 +108,22 @@ func parseClosePushCursor(v string) data.MirrorCloseCursor {
 // satellite keeps no closes for the shop (ADR-0086) and sends nothing. A
 // close the main till would refuse as malformed is skipped here with a
 // warning, so one bad row never stops every later close (M7 review F1).
-func syncPushCloses(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string, pinned func(context.Context) bool) {
+func syncPushCloses(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string, pinned func(context.Context) bool) bool {
 	if !salesMirrorGate(ctx, d) || !pinned(ctx) {
-		return
+		return false
 	}
 	if role, _, _ := d.Settings.Get(ctx, "sync.till_role"); strings.TrimSpace(role) == data.TillRoleSatellite {
-		return
+		return false
 	}
 	repo := data.NewSalesMirrorRepo(d.Db)
 	cur, _, _ := d.Settings.Get(ctx, salesMirrorClosePushCursorKey)
 	closes, err := repo.OwnClosesAfter(ctx, parseClosePushCursor(strings.TrimSpace(cur)), salesMirrorClosesBatch)
 	if err != nil {
 		logging.L().Warnf("sales mirror: read this till's closes to push: %v", err)
-		return
+		return false
 	}
 	if len(closes) == 0 {
-		return
+		return false
 	}
 	last := closes[len(closes)-1]
 	send := closes[:0:0]
@@ -133,30 +134,45 @@ func syncPushCloses(ctx context.Context, d *common.Deps, client *http.Client, pr
 			logging.L().Warnf("sales mirror: day close %s cannot be sent to the main till (malformed) and is skipped", c.ID)
 		}
 	}
-	advance := func() { _ = d.Settings.Set(ctx, salesMirrorClosePushCursorKey, last.CreatedAt+"|"+last.ID) }
+	// The cursor write is refused (data.ErrNotReplica) once this till has
+	// been promoted, so a promote mid-request never resurrects it (#5922).
+	advance := func() error {
+		return d.Settings.SetIfReplica(ctx, map[string]string{salesMirrorClosePushCursorKey: last.CreatedAt + "|" + last.ID})
+	}
 	if len(send) == 0 {
-		advance()
-		return
+		if errors.Is(advance(), data.ErrNotReplica) {
+			promotedMidPush()
+			return true
+		}
+		return false
+	}
+	if !stillReplica(ctx, d) {
+		promotedMidPush()
+		return true
 	}
 	raw, _ := json.Marshal(send)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(primary, "/")+"/api/sync/closes", bytes.NewReader(raw))
 	if err != nil {
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		advance()
+		if errors.Is(advance(), data.ErrNotReplica) {
+			promotedMidPush()
+			return true
+		}
 	case http.StatusConflict, http.StatusForbidden:
 		// Off on the main till, or this till is a satellite / not on pinned
 		// TLS there: nothing to do until that changes; not an error.
 	default:
 		logging.L().Infof("sales mirror: closes push refused: %s — will retry", resp.Status)
 	}
+	return false
 }
