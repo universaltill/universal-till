@@ -38,6 +38,7 @@
 {{- else if eq .Type "wizard_step" }}{{ template "pluginview_wizard_step" . }}
 {{- else if eq .Type "chat" }}{{ template "pluginview_chat" (dict "Route" $route "Target" $target "C" .Chat "Poll" nil "RO" $ro) }}
 {{- else if and (eq .Type "confirm") (not $ro) }}{{ template "pluginview_confirm" .Confirm }}
+{{- else if and (eq .Type "suggestions") (not $ro) }}{{ template "pluginview_overlay_suggestions" . }}
 {{- else if and (eq .Type "item_list") (not $ro) }}{{ template "pluginview_item_list" .ItemList }}
 {{- else if eq .Type "list" }}<ul class="card plugin-view-list">{{ range .Items }}<li><bdi>{{ . }}</bdi></li>{{ end }}</ul>
 {{- else if eq .Type "empty_state" }}
@@ -127,3 +128,24 @@
 {{- else if .PageFailed }}<div class="plugin-view-notice warn">{{ T "plugin.view.page_failed" }}</div>
 {{- else if .Failed }}<div class="plugin-view-notice warn">{{ T "plugin.view.action_failed" }}</div>
 {{- end }}</div>{{ end }}
+
+{{/* Basket suggestions of a sell-screen overlay view (ADR-0121 amendment
+     2026-11-28, ut-docs#7206). One button per add_to_basket candidate; each
+     carries core's signature for exactly (plugin, sku, qty, ref) and posts to
+     core's own pick route, which adds the line through the scan handler.
+     Every value is a plain string html/template escapes. The overlay stays
+     open: the cashier may add several lines. */}}
+{{ define "pluginview_overlay_suggestions" }}
+{{- if .Suggestions }}
+<div class="ai-identify-results plugin-overlay-suggestions">
+  {{- range .Suggestions }}{{ if .Sig }}
+  <button type="button" class="btn ai-match" title="{{ T "suggest.add" }}"
+          hx-post="/api/pos/plugin-view/pick" hx-vals='{{ jsonVals "plugin" .Plugin "sku" .SKU "qty" .Qty "ref" .Ref "sig" .Sig }}'
+          hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+    <span class="ai-match-text"><span class="ai-match-label">{{ .Label }}</span>
+    {{- if .Detail }}<span class="ai-match-detail">{{ .Detail }}</span>{{ end }}</span>
+  </button>
+  {{- end }}{{ end }}
+</div>
+{{- end }}
+{{ end }}

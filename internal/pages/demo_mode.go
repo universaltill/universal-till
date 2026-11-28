@@ -328,6 +328,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/pos/identify/plugin": true,
 	// Its pick (ut-docs#4006): stores a photo; no job to pick from in a demo.
 	"POST /api/pos/identify/plugin/pick": true,
+	// A sell-screen overlay view's basket suggestion (ut-docs#7206): a demo has no plugin view to pick from.
+	"POST /api/pos/plugin-view/pick": true,
 	// Its suggestion thumbnails (ut-docs#3957): a plugin's blob store.
 	"GET /api/pos/identify/plugin/thumb": true,
 	// Cloud enrolment, registration, telemetry and LAN

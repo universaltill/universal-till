@@ -39,6 +39,10 @@ type SnapshotLine struct {
 	// exactly the money bug the flag exists to prevent.
 	QtyFromCode bool `json:"qty_from_code,omitempty"`
 	NoMerge     bool `json:"no_merge,omitempty"`
+	// PluginRef / PluginRefBy (ut-docs#7206): see BasketLine. A held basket
+	// must keep them or the plugin would never see its ref on the sale.
+	PluginRef   string `json:"plugin_ref,omitempty"`
+	PluginRefBy string `json:"plugin_ref_by,omitempty"`
 	// OrderType (ut-docs#1181, ADR-0073) is this line's own consumption
 	// mode. omitempty: absent on every pre-ADR-0073 payload, where Restore
 	// falls back to the header (a legacy "takeaway" header meant EVERY line
@@ -315,6 +319,7 @@ func (s *Service) snapshotLocked() BasketSnapshot {
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
+			PluginRef: l.PluginRef, PluginRefBy: l.PluginRefBy,
 			OrderType:      l.OrderType,
 			KitchenSentQty: l.KitchenSentQty,
 			AgeRestricted:  l.AgeRestricted,
@@ -387,6 +392,7 @@ func (s *Service) restoreHeldLocked(snap BasketSnapshot, origin HeldOrigin) Pend
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
+			PluginRef: l.PluginRef, PluginRefBy: l.PluginRefBy,
 			OrderType:      lineMode,
 			KitchenSentQty: l.KitchenSentQty,
 			AgeRestricted:  l.AgeRestricted,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -36,7 +37,23 @@ const (
 	// SeamItemForm: the item form's "suggest details" (follow-up
 	// ut-docs#3956) — apply_fields effects only.
 	SeamItemForm Seam = "item.form"
+	// SeamSellOverlay: a page view opened over the sell screen by a button
+	// with opens_view (ADR-0121 amendment 2026-11-28, ut-docs#7206). A full
+	// page, plus suggestions with add_to_basket (and an opaque per-line ref)
+	// only; the answering plugin must hold view:sales.
+	SeamSellOverlay Seam = "sell.overlay"
 )
+
+// MaxSuggestionRefBytes caps a basket line's opaque ref.
+const MaxSuggestionRefBytes = 64
+
+// suggestionRefRe: a ref is an id, never prose: no space, no @, so a name or
+// an email address cannot ride in it by accident.
+var suggestionRefRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+// restricted reports whether s limits a document to text, notice and
+// suggestions (the overlay is a full page, so it is not).
+func (s Seam) restricted() bool { return s != "" && s != SeamSellOverlay }
 
 // Caps on a suggestions component.
 const (
@@ -68,7 +85,7 @@ var seamComponents = map[string]bool{"text": true, "notice": true, "suggestions"
 // knownSeam reports whether s is a seam this till has.
 func knownSeam(s Seam) bool {
 	switch s {
-	case "", SeamSellIdentify, SeamItemForm:
+	case "", SeamSellIdentify, SeamItemForm, SeamSellOverlay:
 		return true
 	}
 	return false
@@ -97,6 +114,9 @@ type Effect struct {
 type AddToBasket struct {
 	SKU string          `json:"sku"`
 	Qty json.RawMessage `json:"qty,omitempty"`
+	// Ref (ut-docs#7206): opaque per-line id, overlay seam only. A pointer
+	// so an explicit "" is refused rather than read as absent.
+	Ref *string `json:"ref,omitempty"`
 }
 
 // ViewSuggestion is one prepared candidate: SKU/Qty for add_to_basket,
@@ -108,7 +128,11 @@ type ViewSuggestion struct {
 	Thumbnail     string
 	SKU           string
 	Qty           int
-	Fields        map[string]any
+	Ref           string // add_to_basket per-line ref (overlay seam); "" = none
+	// Plugin and Sig are filled by core for the overlay seam: the answering
+	// plugin and core's signature over (plugin, sku, qty, ref).
+	Plugin, Sig string
+	Fields      map[string]any
 }
 
 // checkSeamAnswer refuses a redirect or job answer in a seam: the seam has
@@ -117,7 +141,7 @@ func checkSeamAnswer(c Context, a answer) error {
 	switch {
 	case !knownSeam(c.Seam):
 		return fmt.Errorf("unknown seam %q", c.Seam)
-	case c.Seam == "":
+	case !c.Seam.restricted():
 		return nil
 	case a.Redirect != nil:
 		return fmt.Errorf("a redirect is not allowed in the %s seam", c.Seam)
@@ -133,7 +157,7 @@ func (v *validator) seamComponent(where, typ string) {
 		v.fail("%s: unknown seam %q", where, v.c.Seam)
 		return
 	}
-	if v.c.Seam != "" && !seamComponents[typ] {
+	if v.c.Seam.restricted() && !seamComponents[typ] {
 		v.fail("%s: a %s component is not allowed in the %s seam (text, notice and suggestions only)", where, typ, v.c.Seam)
 	}
 }
@@ -161,8 +185,11 @@ func (v *validator) suggestions(where string, s *Suggestions) {
 			continue
 		}
 		if e.AddToBasket != nil {
-			if v.c.Seam != SeamSellIdentify {
+			if v.c.Seam != SeamSellIdentify && v.c.Seam != SeamSellOverlay {
 				v.fail("%s.effect add_to_basket is not allowed in the %s seam", w, v.c.Seam)
+			}
+			if v.c.Seam == SeamSellOverlay && !v.c.ViewSales {
+				v.fail("%s.effect add_to_basket from the overlay needs the view:sales permission", w)
 			}
 			v.addToBasket(w+".effect.add_to_basket", e.AddToBasket)
 			continue
@@ -192,6 +219,14 @@ func (v *validator) addToBasket(where string, a *AddToBasket) {
 	}
 	if _, ok := suggestionQty(a.Qty); !ok {
 		v.fail("%s qty must be an integer 1..%d", where, MaxSuggestionQty)
+	}
+	if a.Ref != nil {
+		switch {
+		case v.c.Seam != SeamSellOverlay:
+			v.fail("%s ref is only allowed in the sell.overlay seam", where)
+		case !suggestionRefRe.MatchString(*a.Ref):
+			v.fail("%s ref must be 1..%d characters of A-Z a-z 0-9 . _ : -", where, MaxSuggestionRefBytes)
+		}
 	}
 }
 
@@ -265,6 +300,9 @@ func prepareSuggestions(s *Suggestions, t func(Text) string) []ViewSuggestion {
 		if a := it.Effect.AddToBasket; a != nil {
 			vs.SKU = a.SKU
 			vs.Qty, _ = suggestionQty(a.Qty)
+			if a.Ref != nil {
+				vs.Ref = *a.Ref
+			}
 		}
 		if f := it.Effect.ApplyFields; f != nil {
 			vs.Fields = make(map[string]any, len(f))
