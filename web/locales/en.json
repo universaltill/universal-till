@@ -2371,6 +2371,7 @@
   "reports.eod.day_x.since": "Since the last day close at %s",
   "reports.eod.day_x.since_first": "Since the start: this till has no day close yet",
   "reports.eod.day_x.empty": "Nothing sold since the last day close.",
+  "reports.eod.stripe_fee": "Stripe fees (card payments)",
   "reports.eod.day_x.paper_label": "Preview of the printed report",
   "reports.eod.day_x.print": "Print day so far",
   "reports.eod.day_x.printing": "Printing…",
