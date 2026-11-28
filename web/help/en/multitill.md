@@ -5,7 +5,7 @@ section: Connecting & extending
 order: 310
 public: true
 summary: "Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically."
-routes: [/ui/tills/section, /ui/tills/tab, /ui/tills/pending-pairings, /registers, /sync-quarantine]
+routes: [/tills, /ui/tills/section, /ui/tills/tab, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 # /registers and /sync-quarantine are never screenshotted (docs-shots only
 # captures routes[0]) — accepted gap, see e2e/tests-docs/lib.js's
 # routedTopics() comment (ut-docs#900).
