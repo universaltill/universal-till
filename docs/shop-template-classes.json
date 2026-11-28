@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "protected_keys": [
+    "payments.default_method",
+    "payments.tip_presets",
+    "payments.tips_enabled",
+    "shop.type",
+    "store.currency",
+    "store.currency_display",
+    "store.locale",
+    "store.name",
+    "store.report_retention_mode"
+  ],
+  "shop_types": {
+    "cafe": {
+      "template": "cafe",
+      "version": 1,
+      "rarely_needed_cards": [
+        "settings-about",
+        "settings-invoice",
+        "settings-kiosk-idle-reset",
+        "settings-kiosk-payment-mode",
+        "settings-notices"
+      ],
+      "rarely_needed_keys": [
+        "invoice.seller_address",
+        "invoice.seller_name",
+        "invoice.seller_vat_no",
+        "kiosk.idle_reset_seconds",
+        "kiosk.payment_mode",
+        "notices.enabled"
+      ]
+    },
+    "hospitality": {
+      "template": "hospitality",
+      "version": 1,
+      "rarely_needed_cards": [
+        "settings-about",
+        "settings-invoice",
+        "settings-kiosk-idle-reset",
+        "settings-kiosk-payment-mode",
+        "settings-notices"
+      ],
+      "rarely_needed_keys": [
+        "invoice.seller_address",
+        "invoice.seller_name",
+        "invoice.seller_vat_no",
+        "kiosk.idle_reset_seconds",
+        "kiosk.payment_mode",
+        "notices.enabled"
+      ]
+    },
+    "market_stall": {
+      "template": "market_stall",
+      "version": 1,
+      "rarely_needed_cards": [
+        "settings-about",
+        "settings-idle-lock",
+        "settings-invoice",
+        "settings-kiosk-idle-reset",
+        "settings-kiosk-payment-mode",
+        "settings-notices",
+        "settings-order-no",
+        "settings-order-type-prompt",
+        "settings-printer",
+        "settings-sell-screen",
+        "settings-staff-languages",
+        "settings-staff-links",
+        "settings-tills"
+      ],
+      "rarely_needed_keys": [
+        "auth.idle_lock_minutes",
+        "invoice.seller_address",
+        "invoice.seller_name",
+        "invoice.seller_vat_no",
+        "kiosk.idle_reset_seconds",
+        "kiosk.payment_mode",
+        "notices.enabled",
+        "printer.receipt_policy",
+        "receipt.footer",
+        "receipt.header1",
+        "receipt.header2",
+        "receipt.header3",
+        "sale.browsing_mode",
+        "sale.display_no_scheme",
+        "sale.order_type_prompt",
+        "store.staff_locales"
+      ]
+    },
+    "other": {
+      "template": "other",
+      "version": 1,
+      "rarely_needed_cards": [],
+      "rarely_needed_keys": []
+    },
+    "retail": {
+      "template": "retail",
+      "version": 1,
+      "rarely_needed_cards": [
+        "settings-about",
+        "settings-kiosk-idle-reset",
+        "settings-kiosk-payment-mode",
+        "settings-notices",
+        "settings-order-no",
+        "settings-order-type-prompt"
+      ],
+      "rarely_needed_keys": [
+        "kiosk.idle_reset_seconds",
+        "kiosk.payment_mode",
+        "notices.enabled",
+        "sale.display_no_scheme",
+        "sale.order_type_prompt"
+      ]
+    },
+    "service": {
+      "template": "service",
+      "version": 1,
+      "rarely_needed_cards": [
+        "settings-about",
+        "settings-kiosk-idle-reset",
+        "settings-kiosk-payment-mode",
+        "settings-notices",
+        "settings-order-no",
+        "settings-order-type-prompt",
+        "settings-sell-screen",
+        "settings-stock-tracking"
+      ],
+      "rarely_needed_keys": [
+        "kiosk.idle_reset_seconds",
+        "kiosk.payment_mode",
+        "notices.enabled",
+        "pos.allow_negative_inventory",
+        "sale.browsing_mode",
+        "sale.display_no_scheme",
+        "sale.order_type_prompt"
+      ]
+    }
+  }
+}

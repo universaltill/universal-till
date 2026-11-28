@@ -40,15 +40,25 @@ func (a templateSettingsStore) SetPerTill(ctx context.Context, k, v string) erro
 }
 
 // applyShopTemplate seeds the shop type's apply-once defaults (ADR-0190,
-// S6). Main or single till only (a till that follows a main till gets the
-// ledger and values through the admin bundle and writes nothing); local and
+// S6). Main or single till writes the ledger and shop-wide values; a till
+// that follows a main till gets those through the admin bundle and seeds only
+// its own per-till theme; local and
 // offline; failure is logged and never blocks setup or a sale.
 func applyShopTemplate(ctx context.Context, d *common.Deps, shopType string) {
-	if d == nil || d.Settings == nil || tillFollowsMain(ctx, d) {
+	if d == nil || d.Settings == nil {
 		return
 	}
 	r := shopTemplateFor(d, shopType)
 	if r == nil {
+		return
+	}
+	if tillFollowsMain(ctx, d) {
+		// A satellite never writes shop-wide keys or the ledger (the main till
+		// owns them); it seeds only its own per-till theme (design section 3
+		// point 4).
+		if err := shoptemplate.ApplyPerTill(ctx, templateSettingsStore{d}, r); err != nil {
+			logging.L().Warnf("setup: seed per-till theme for shop_type %q: %v", shopType, err)
+		}
 		return
 	}
 	if err := shoptemplate.Apply(ctx, templateSettingsStore{d}, r); err != nil {

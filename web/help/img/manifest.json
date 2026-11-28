@@ -81,7 +81,7 @@
       "tr": "c61225d2aac91d349f1c1434d7cc08122e29528b50ea8eda5c96cf5130aab4bf"
     },
     "display": {
-      "en": "037a6470eab299e0a1c3f6f2ba47e3b0308be221a5a355d8ea88a44731c54647",
+      "en": "8ecf74044fbcd6214a2e33a3b0ad315ae5274c838a9a58d22acfa6a1bf932c2d",
       "fa": "ef1e520d4e2494e7c88abb6f416df6c900f026243c2090d43a030f388b96c89c",
       "ar": "2dbfe8fc7883699c5a123da99a41b3a01e6423645b311081f1635395acfcee84",
       "tr": "c20220a5fe885de6f3158093143bca2b2ed2a7187085d91c3a6660d2985b3035"
@@ -117,7 +117,7 @@
       "tr": "413942b454fb145eddf1ee3e7aae04e6b2a99da91995a275dd8e7ea6821d461d"
     },
     "menu": {
-      "en": "9f238782fcfd2bfe6ad11930d4da7b5d7cce41b102172e0e955de27d9d6b4450",
+      "en": "ce6114ac3696de63ae9f294849333a30b78775e781a6f2c174bc289ed69f7936",
       "fa": "91f8943d7122c4a3d933474e1f812222e42166e2e260d5b43b5d6e5a2ec2275f",
       "ar": "1ab5ce5eccc8fbe95b2dc2b5dc5009fd23185ec8a5a8550256aa0f0e8e261b47",
       "tr": "9a722300e0306185dd96169c801d5d674e2fe5941139781f1467b136574e38e5"
@@ -240,6 +240,13 @@
   "shots": {
     "backups": [
       "backups-card"
+    ],
+    "choose-shop-type": [
+      "choose-shop-type-card",
+      "choose-shop-type-home",
+      "choose-shop-type-preview",
+      "choose-shop-type-tiles",
+      "choose-shop-type-undo"
     ],
     "data-management": [
       "data-management-card"
@@ -748,7 +755,7 @@
       "sha256": "58d07716742d30ebcb6ef8b072bdca8c911cbdcee7cfe19be4c9282bdde7652a"
     },
     "internal/pages/shoptemplate_apply.go": {
-      "sha256": "c782afd2cc17b8b1ce405388f61053aa994879e289e2eb66cac01e3862443820"
+      "sha256": "2ce74179fd426a5728d8d005e2de2f6ed9231768ac1224c4a1ebaa590fd2f9f7"
     },
     "internal/pages/shoptemplate_catalog.go": {
       "sha256": "b57d11f7b01f64a8ffdbcb4138527d043676824ed24fd8f418967adb63bf8506"

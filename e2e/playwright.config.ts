@@ -90,7 +90,7 @@ export const LAYOUT_ONLY_SPECS = /template-menu-service-legacy-6332\.spec\.ts$/;
 // gets its own server + project. The satellite spec needs a till that follows
 // a main till (type locked), so it gets another. Ports are overridable for
 // local runs beside other sessions: UT_E2E_TEMPLATES_PORT (satellite = +1).
-export const TEMPLATES_ONLY_SPECS = /template-matrix-6332\.spec\.ts$/;
+export const TEMPLATES_ONLY_SPECS = /template-matrix(-flows|-ui)?-6332\.spec\.ts$/;
 export const TEMPLATES_SATELLITE_ONLY_SPECS = /template-satellite-6332\.spec\.ts$/;
 export const TEMPLATES_PORT = Number(process.env.UT_E2E_TEMPLATES_PORT) || 8106;
 
