@@ -32,7 +32,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/settingsnav"
-	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
@@ -201,15 +200,28 @@ func settingsActorID(r *http.Request) string {
 // state renders an empty 200 body, the same "swap the block away" contract
 // the dismiss endpoint already has.
 func renderTSEProvisioningBlock(w http.ResponseWriter, r *http.Request, st *tseProvisioningState) {
+	renderTSEProvisioningBlockStatus(w, r, st, http.StatusOK, "", tseBusinessIdentity{})
+}
+
+// renderTSEProvisioningBlockStatus is renderTSEProvisioningBlock with an
+// optional non-200 status and the identity form's error key + entered values
+// (ut-docs#7050: the 422 re-render keeps what the manager typed).
+func renderTSEProvisioningBlockStatus(w http.ResponseWriter, r *http.Request, st *tseProvisioningState, status int, errKey string, entered tseBusinessIdentity) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	view := tseProvisioningViewFor(st)
 	if view == nil {
 		return
 	}
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
 	httpx.RenderPartial("ui/partials/tse_provisioning_block.html", map[string]any{
-		"tseProvisioning": view,
-		"tseRetryable":    tseProvisioningRetryable(st),
-		"tseCanDismiss":   !tseProvisioningDismissBlocked(st),
+		"tseProvisioning":  view,
+		"tseRetryable":     tseProvisioningRetryable(st),
+		"tseCanDismiss":    !tseProvisioningDismissBlocked(st),
+		"tseNeedsIdentity": tseNeedsIdentity(st),
+		"tseIdentityErr":   errKey,
+		"tseIdentity":      entered,
 	})(w, r)
 }
 
@@ -899,8 +911,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#3208: same gates as GET /users and GET /users/permissions.
 		canManageUsers := canPerform(d, r, "user_management")
 		canEditPermissions := canPerform(d, r, lockoutAction)
+		// ut-docs#6332 (ADR-0190): the shop-type template's classes demote
+		// rows to More settings; nil (unset type / legacy mode) = as before.
+		tmpl := settingsTemplateResolved(r.Context(), d)
 		settingsNav := filterSettingsNavForRender(
-			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
+			settingsnav.ResolveClassed(locale, d.SettingsAmendmentsSnapshot(), settingsTemplateClassFunc(tmpl)),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 			canManageUsers || canEditPermissions,
 		)
@@ -1022,6 +1037,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"languageSwitchPending":  all[common.KeyLocaleSwitchPending] != "", // ut-docs#4477, with installableLangs
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
+			"tseNeedsIdentity":       tseNeedsIdentity(tseState),
+			"tseIdentity":            tseBusinessIdentity{},
+			"tseIdentityErr":         "",
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
 			"tseFollowsMain":         tseRequireMainTill(r.Context(), d) != nil,
 			"missingFiscalSigner":    missingSigner,
@@ -1056,8 +1074,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// — see settingsnav's own doc comment for why this resolves the
 			// sidebar and its categories only, not the on-page card
 			// content/order.
-			"settingsNav":    settingsNav,
-			"pluginSections": pluginSections,
+			"settingsNav":  settingsNav,
+			"settingsTmpl": settingsTemplateViewFor(locale, shopType, isManager, tmpl != nil),
+			// S7: the Shop type card body, the 7 day undo banner, the status line after an undo.
+			"shopTypePanel":      shopTypePanelFor(r.Context(), d, r, locale),
+			"shopTypeBanner":     shopTypeUndoBannerFor(d, r, locale),
+			"templateOffer":      templateOfferFor(r, d, locale),
+			"shopTypeUndoneNote": shopTypeUndoneNotice(r.Context(), d, r, locale),
+			"pluginSections":     pluginSections,
 			// ut-docs#3090: the landing grid's category tiles, built from
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.
@@ -2644,60 +2668,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// Shop type (ut-docs#539, taxonomy per ADR-0026) — editable after setup.
-	// Manager-only, same gate as the other store-level settings.
-	mux.HandleFunc("POST /api/settings/shop-type", func(w http.ResponseWriter, r *http.Request) {
-		// Validate BEFORE the elevation gate (ut-docs#557 convention) — a
-		// bad shop type 400s without burning an approver's live PIN entry.
-		_ = r.ParseForm()
-		v := strings.TrimSpace(r.Form.Get("shop_type"))
-		if v != "" && !isValidShopType(v) {
-			http.Error(w, "unknown shop type", http.StatusBadRequest)
-			return
-		}
-		// Mutating + audit-writing (ut-docs#796): in-place PIN re-auth
-		// instead of the flat 403.
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			locale := httpx.ResolveLocale(w, r)
-			// Same label the picker itself shows; "—" mirrors the
-			// template's own empty (clear) option.
-			label := "—"
-			if v != "" {
-				label = httpx.T(locale, "setup.shop_type."+v)
-			}
-			renderElevationPrompt(w, r, "/api/settings/shop-type", "#shop-type-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.shop_type"), label),
-				[]elevationHiddenField{{Name: "shop_type", Value: v}}, elev)
-			return
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyShopType: v}); err != nil {
-			if !respondSettingsSyncError(w, r, err) {
-				http.Error(w, "could not save", http.StatusInternalServerError)
-			}
-			return
-		}
-		// ut-docs#1902: shop_type=service activates the builtin Salon layout
-		// (ADR-0088); any other value (including clearing it back to "")
-		// deactivates it if it was active. Best-effort — a failure here must
-		// never block a shop-type save over a cosmetic menu personalization.
-		// ut-docs#2006: reload unless it's a genuine no-op (no error,
-		// nothing changed) — an error still reloads, since a failed
-		// reinstall can leave the DB changed (removeBuiltin succeeded) even
-		// though Sync itself returned an error.
-		changed, syncErr := builtinlayouts.Sync(r.Context(), d.Db, v)
-		if syncErr != nil {
-			logging.L().Warnf("settings: could not sync builtin layout for shop_type %q: %v", v, syncErr)
-		}
-		if syncErr != nil || changed {
-			if err := d.ReloadPlugins(r.Context()); err != nil {
-				logging.L().Warnf("settings: could not reload plugins after shop_type layout sync: %v", err)
-			}
-		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
-			map[string]any{"shop_type": v})
-		settingsRespondSaved(w, r, elev)
-	})
+	// Shop type (ut-docs#539, taxonomy per ADR-0026): pick, preview,
+	// PIN-confirm and 7 day undo (ADR-0190, S7) live in shop_type_change.go.
+	registerShopTypeChange(mux, d, posRepo)
 
 	// Shop name (ut-docs#3115): store.name, editable after the setup
 	// wizard. Shop-wide, so an additional till forwards it to the main till
@@ -3214,7 +3187,34 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
 			return
 		}
-		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r))
+		var entered *tseBusinessIdentity
+		if r.PostFormValue("tse_identity_form") == "1" {
+			cur, lerr := loadTSEProvisioningState(r.Context(), d)
+			if lerr != nil {
+				http.Error(w, "could not load state", http.StatusInternalServerError)
+				return
+			}
+			// The form is only for a record that still needs the identity
+			// (credential_missing); otherwise fall through to Retry's own
+			// answer (409 nothing_to_retry), never a 422 for a form the
+			// block no longer shows.
+			if tseNeedsIdentity(cur) {
+				country := tseProvisionCountry
+				if cur.Country != "" {
+					country = cur.Country
+				}
+				id, errKey := parseTSEIdentityForm(country, r.PostFormValue)
+				if errKey == "" && !id.isComplete() {
+					errKey = "setup.error.tse_identity_incomplete" // all-blank is "skip" in the wizard, not here
+				}
+				if errKey != "" {
+					renderTSEProvisioningBlockStatus(w, r, cur, http.StatusUnprocessableEntity, errKey, id)
+					return
+				}
+				entered = &id
+			}
+		}
+		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r), entered)
 		if errors.Is(err, errNoTSERetry) {
 			locale := httpx.ResolveLocale(w, r)
 			httpx.RefuseText(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
@@ -3783,6 +3783,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// for anyone — no role can ever make this key settable here.
 			http.Error(w, "fiscal.signing_device_failing_since is not settable via this endpoint", http.StatusBadRequest)
 			return
+		case tseCredentialHeldKey:
+			// ut-docs#7050: bookkeeping written only by TSE provisioning and
+			// the boot check, and cleared as a side effect of a manual
+			// configured write below; a free-text edit could forge or erase
+			// the very record the restore check reads.
+			http.Error(w, tseCredentialHeldKey+" is not settable via this endpoint", http.StatusBadRequest)
+			return
 		}
 		// Mutating + audit-writing (ut-docs#796): this replaces ONLY the
 		// old flat `if !canPerform(d, r, "settings") { 403 }` outer gate —
@@ -3879,6 +3886,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// additional till; a refusal writes nothing and skips every side
 		// effect below.
 		kv := map[string]string{storageKey: value}
+		// ut-docs#7050: a manual configured write means the shop's signing
+		// device is no longer (only) the cloud-provisioned one (a real change of
+		// the flag only, not a no-op re-save), so the
+		// "credential must be on disk" marker is stale. An additional till
+		// never writes it (its main till does, in sync_settings.go).
+		if logicalKey == wireKeySigningDeviceConfigured && prevFiscalValue != value && !tillFollowsMain(r.Context(), d) {
+			kv[tseCredentialHeldKey] = "false"
+		}
 		// ut-docs#2791 review: keys this write implies travel in the SAME
 		// batch, so the main till applies them in one transaction -- a
 		// second round-trip could land the currency without its

@@ -145,8 +145,8 @@ func TestEveryShippedManifestStillParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk plugins/: %v", err)
 	}
-	if len(files) < 2 {
-		t.Fatalf("found %d plugins/**/plugin.json, want at least 2 (layout-salon, tax-tr): %v", len(files), files)
+	if len(files) < 1 {
+		t.Fatalf("found %d plugins/**/plugin.json, want at least 1 (tax-tr): %v", len(files), files)
 	}
 	// The signed marketplace fixtures (testdata/*.json) — never edited to
 	// fit the validator: their permissions are covered by the signature.

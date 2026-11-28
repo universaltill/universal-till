@@ -322,7 +322,13 @@ func TestCanRecover(t *testing.T) {
 		reason string
 	}{
 		{name: "ready", want: true},
-		{name: "no key", setup: func(t *testing.T, _ *config.Config, _ *countingKV) { paths.Init(t.TempDir()) }, reason: CanRecoverNoProof},
+		// Stop and wait for Init's approval-key reporter before the dir
+		// switch: a report still running would create a fresh key in the
+		// empty dir (ut-docs#7164).
+		{name: "no key", setup: func(t *testing.T, _ *config.Config, _ *countingKV) {
+			resetApprovalReport()
+			paths.Init(t.TempDir())
+		}, reason: CanRecoverNoProof},
 		{name: "stopped", setup: func(_ *testing.T, _ *config.Config, kv *countingKV) { _ = kv.Set(ctx, KeyStopped, "true") }, reason: CanRecoverStopped},
 		{name: "env pinned token", mutate: func(c *config.Config) { c.Marketplace.MerchantToken = "env-pinned-token-0001" }, reason: CanRecoverPinned},
 		{name: "demo", mutate: func(c *config.Config) { c.Demo = true }, reason: CanRecoverDemo},

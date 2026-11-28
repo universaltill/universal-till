@@ -33,4 +33,6 @@ export UT_DATA_DIR="$DATA_DIR" UT_LISTEN_ADDR=127.0.0.1:8092
 BIN="$DATA_DIR/.ut-e2e-auth-bin"
 go build -o "$BIN" "$ROOT"
 cd "$DATA_DIR"
-exec "$BIN"
+# shellcheck source=e2e/run-till-lib.sh
+source "$ROOT/e2e/run-till-lib.sh"
+ut_e2e_serve "$BIN"

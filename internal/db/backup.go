@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/restoredsecrets"
 )
 
 const (
@@ -467,7 +468,18 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	clearRestoreSwap(dbPath)
+	noteRestoredSecrets(dbPath)
 	return true, nil
+}
+
+// noteRestoredSecrets owes the "these plugin secrets must be entered again"
+// scan (design-B S7): the sealing key file is never in a snapshot, so every
+// sealed plugin secret of a restored or joined DB reads "not configured".
+// Best effort: a marker that cannot be written only loses the owner's hint.
+func noteRestoredSecrets(dbPath string) {
+	if err := restoredsecrets.MarkPending(dbPath); err != nil {
+		logging.L().Warnf("restore: could not record the restored-secrets scan: %v", err)
+	}
 }
 
 // restoreSwapName is the journal ApplyPendingRestore leaves next to the DB
@@ -544,6 +556,7 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 			return false, fmt.Errorf("finish interrupted restore: %w", err)
 		}
 		clearRestoreSwap(dbPath)
+		noteRestoredSecrets(dbPath)
 		logging.L().Warnf("restore: finished a restore interrupted between its two file moves")
 		return true, nil
 	}

@@ -1,5 +1,6 @@
 {{ define "content" }}
 <h1>{{ T "plugins.manage.title" }}</h1>
+{{ template "restored_secrets_banner.html" . }}
 
 <div class="card" style="margin-bottom:1rem; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:1rem">
   <form method="get" action="/plugins" style="display:flex; gap:.5rem; flex:1 1 16rem; min-width:0">
