@@ -405,6 +405,8 @@ It is not a day close. Nothing is closed, reset or archived, it has no end-of-da
 3. Tap **Print day so far** to print it. The till reads the figures again at that moment, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, a red "Print failed" message next to the button tells you to check the printer and tap Print day so far again, and nothing is recorded.
 4. Tap **Hide day so far** to clear the figures from the screen before you step away from a till customers can see.
 
+**Stripe fees (card payments).** When your shop takes Stripe card payments and the cloud has the day's Stripe settlement figures, one extra line appears under the paper: **Stripe fees (card payments)** and the amount Stripe reported for the day. The till only shows that figure; it does not work it out. The line is on screen only: it is not on the printout, the end-of-day report or the receipt. With cash, other card providers, your own Stripe key, no settlement figures yet, or no connection, no line appears and nothing else changes.
+
 Who can use it: the section is shown to roles with Reports access. Roles with the **End-of-day reports** permission use it directly; a role with Reports access but without that permission is asked for a manager PIN in the same dialog the till uses for other approvals, for viewing and again for printing. Roles without Reports access do not see the Day-end tab; with sign-in turned off there is no PIN. Viewing leaves no audit entry; printing does (who printed it, and who approved). Checkout is never held up while you look, and it works with no internet connection.
 
 ## Counting the drawer at close: skim & new float
