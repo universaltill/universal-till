@@ -3,6 +3,7 @@ package plugins
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -956,7 +957,11 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		// time.Sleep would busy-spin a CPU core until the deadline passed.
 		WithSysWalltime().
 		WithSysNanotime().
-		WithSysNanosleep()
+		WithSysNanosleep().
+		// Real entropy for WASI random_get (ut-docs#7280). wazero's default is
+		// a deterministic source: every fresh instance drew the same bytes, so
+		// guest ids, tokens and nonces collided across events.
+		WithRandSource(rand.Reader)
 
 	_, runErr := rt.InstantiateModule(cctx, compiled, cfg)
 	if out := strings.TrimSpace(stderr.String()); out != "" {

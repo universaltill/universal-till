@@ -11,7 +11,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -178,6 +180,8 @@ func handle(ev plugin.Event) (any, error) {
 		return runHTTPRetryThenRepeat(p.URL)
 	case "clock":
 		return nil, runClock()
+	case "random":
+		return nil, runRandom()
 	case "secret_set":
 		val := []byte(p.Value)
 		if p.Size > 0 {
@@ -372,6 +376,17 @@ func runClock() error {
 		"wall_unix_nano": wall,
 		"elapsed_nano":   elapsed.Nanoseconds(),
 	})
+	return store(results)
+}
+
+// runRandom draws from WASI random_get (crypto/rand) and records the hex
+// (ut-docs#7280).
+func runRandom() error {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	results, _ := json.Marshal(map[string]any{"random_hex": hex.EncodeToString(b)})
 	return store(results)
 }
 
