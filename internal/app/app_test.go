@@ -130,7 +130,13 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 	// whatever the boot time (a regression measured 19.9s — under this
 	// bound — and failed on the log). The wall-clock bound only catches a
 	// shutdown that hangs well past every drain.
-	const bootAllowance = 10 * time.Second
+	//
+	// Boot grew with the migration chain (124-134 and more): main and PR
+	// runs of the race job now measure 24-25s of boot with five packages in
+	// parallel on 4 cores (PR #2790 11:02, #2805 11:33), with no drain
+	// timeout logged. The allowance is raised to 30s: still well under a
+	// real hang, and the log check above remains the regression signal.
+	const bootAllowance = 30 * time.Second
 
 	t.Setenv("UT_DATA_DIR", t.TempDir())
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
