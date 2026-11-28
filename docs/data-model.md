@@ -965,7 +965,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   till value meanwhile (no `ApplierVersion` bump: a re-pull without those
   marks would reset till values). A replica never marks, so
   `POST /api/sync/promote` re-runs that mark-and-seed step for each promoted
-  field (`data.promotedUploadFields`, ut-docs#6240). `icon` (item and category) is mastered
+  field (`data.promotedUploadFields`, ut-docs#6240), after it has dropped the
+  open marks the replica inherited from its main till (ut-docs#6242, below), so
+  the icon marks are opened fresh. `icon` (item and category) is mastered
   since contract 1.2.0 (ut-docs#6071, migration 103): its value is the raw
   stored icon id, applied as served on a create, a mastered change or clear,
   and kept on a linked row while its upload is pending.
@@ -1133,6 +1135,16 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   the column) and marks each linked row whose local icon is set, where the
   trigger would mark; applier-3 links without a base get the same from
   `seedBases`.
+  A replica holds a byte copy of the main till's `cloud_outbox` and push hashes
+  from the join (it never marks or pushes). `POST /api/sync/promote`
+  (`SettingsRepo.PromoteReplica`, ut-docs#6242) deletes the open marks (the
+  main uploads those itself; kept they would freeze drifted fields and upload
+  a stale before/after), keeps the sealed ones (replayed idempotently by
+  `change_id`) and drops `cloudsync.snapshot_hash` and
+  `cloudsync.order_tracking_hash`, only when `sync.primary_url` was set.
+  `cloud_links` and the `cloudsync.catalog.*` cursor are kept. Trade-off: an
+  edit the main made offline and never uploaded before it died goes with its
+  mark; recovering it is ut-docs#6241.
 - **Marks are written by triggers** on `items`, `item_barcodes`,
   `categories` and `tax_codes` (insert, delete, update of an uploadable
   column), in the same transaction as the write, whatever path wrote it.

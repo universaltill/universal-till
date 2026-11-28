@@ -455,8 +455,10 @@ func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 }
 
 // clearReplicaIdentity is ClearReplicaIdentity; a non-nil inTx runs after the
-// sync.% delete and before the commit, in the same transaction.
-func (r *SettingsRepo) clearReplicaIdentity(ctx context.Context, inTx func(context.Context, SyncQuerier) error) error {
+// sync.% delete and before the commit, in the same transaction. wasReplica is
+// whether sync.primary_url was non-blank when the transaction read it, before
+// the delete.
+func (r *SettingsRepo) clearReplicaIdentity(ctx context.Context, inTx func(ctx context.Context, tx SyncQuerier, wasReplica bool) error) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
 	defer func() { done(err) }()
@@ -466,6 +468,16 @@ func (r *SettingsRepo) clearReplicaIdentity(ctx context.Context, inTx func(conte
 		return settingsObs.wrap("clear_replica_identity", err)
 	}
 	defer tx.Rollback()
+
+	var primaryURL string
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(TRIM(value), '') FROM settings WHERE key = 'sync.primary_url'`).Scan(&primaryURL)
+	if err != nil && err != sql.ErrNoRows {
+		return settingsObs.wrapf("clear_replica_identity", "read sync.primary_url", err)
+	}
+	if err == sql.ErrNoRows {
+		err = nil
+	}
+	wasReplica := primaryURL != ""
 
 	var tillName string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'sync.till_name'`).Scan(&tillName)
@@ -518,8 +530,8 @@ ON CONFLICT(key) DO UPDATE SET
 		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
 	}
 	if inTx != nil {
-		if err = inTx(ctx, tx); err != nil {
-			return settingsObs.wrapf("clear_replica_identity", "mark unsent promoted fields", err)
+		if err = inTx(ctx, tx, wasReplica); err != nil {
+			return settingsObs.wrapf("clear_replica_identity", "promotion bookkeeping", err)
 		}
 	}
 
