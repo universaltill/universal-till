@@ -133,7 +133,7 @@ var (
 	moveHooks  MoveHooks
 	moveCapMu  sync.Mutex
 	moveCapFor string
-	moveCapOK  bool
+	moveCapV   cloudCapabilities
 	moveCapAt  time.Time
 	// moveCapTTL bounds how long a /version answer is trusted.
 	moveCapTTL = 5 * time.Minute
@@ -163,7 +163,7 @@ func resetMoveState() {
 	ended = map[string]EndedMove{}
 	movesMu.Unlock()
 	moveCapMu.Lock()
-	moveCapFor, moveCapOK, moveCapAt = "", false, time.Time{}
+	moveCapFor, moveCapV, moveCapAt = "", cloudCapabilities{}, time.Time{}
 	moveCapMu.Unlock()
 }
 
@@ -223,52 +223,73 @@ type MoveResult struct {
 
 // --- capability -------------------------------------------------------------
 
+// cloudCapabilities is what GET /version advertises that pairing reads: one
+// request, one cache (any failure leaves both false).
+type cloudCapabilities struct {
+	move   bool // pair_move = "approval-v1"
+	rejoin bool // rejoin = "v1" (ADR-0222 §9, ut-docs#7098)
+}
+
 // MoveCapable reports whether the cloud behind endpoint offers moving a till
 // with the till's own approval (GET /version pair_move = "approval-v1").
 // Answers are cached for moveCapTTL; any failure means "no".
 func MoveCapable(ctx context.Context, endpoint string) bool {
+	return cloudCaps(ctx, endpoint).move
+}
+
+// rejoinCapable reports whether the cloud behind endpoint accepts the
+// same-device rejoin proof on /pair (GET /version rejoin = "v1"). The till
+// sends the proof only then: a cloud that ignores it would answer a code of
+// another shop with a 200 under the till's old id. Cached with MoveCapable.
+func rejoinCapable(ctx context.Context, endpoint string) bool {
+	return cloudCaps(ctx, endpoint).rejoin
+}
+
+func cloudCaps(ctx context.Context, endpoint string) cloudCapabilities {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
-		return false
+		return cloudCapabilities{}
 	}
 	moveCapMu.Lock()
 	if moveCapFor == endpoint && moveNow().Sub(moveCapAt) < moveCapTTL {
-		ok := moveCapOK
+		v := moveCapV
 		moveCapMu.Unlock()
-		return ok
+		return v
 	}
 	moveCapMu.Unlock()
 
-	ok := fetchMoveCapability(ctx, endpoint)
+	v := fetchCapabilities(ctx, endpoint)
 	moveCapMu.Lock()
-	moveCapFor, moveCapOK, moveCapAt = endpoint, ok, moveNow()
+	moveCapFor, moveCapV, moveCapAt = endpoint, v, moveNow()
 	moveCapMu.Unlock()
-	return ok
+	return v
 }
 
-func fetchMoveCapability(ctx context.Context, endpoint string) bool {
+func fetchCapabilities(ctx context.Context, endpoint string) cloudCapabilities {
+	none := cloudCapabilities{}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, WebBase(endpoint)+"/version", nil)
 	if err != nil {
-		return false
+		return none
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return false
+		return none
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		return false
+		return none
 	}
 	var v struct {
 		PairMove string `json:"pair_move"`
+		Rejoin   string `json:"rejoin"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&v) != nil {
-		return false
+		return none
 	}
-	return v.PairMove == pairMoveCapability
+	return cloudCapabilities{move: v.PairMove == pairMoveCapability, rejoin: v.Rejoin == rejoinCapability}
 }
 
 // moveCandidate is the identity a move proves itself with: a main or

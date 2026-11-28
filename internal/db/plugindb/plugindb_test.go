@@ -199,7 +199,7 @@ func TestPathTraversalIDsRejected(t *testing.T) {
 		if _, err := m.Open(ctx, id, Options{}); !errors.Is(err, ErrInvalidID) {
 			t.Errorf("Open(%q) err = %v, want ErrInvalidID", id, err)
 		}
-		if _, err := m.Uninstall(id, 0); !errors.Is(err, ErrInvalidID) {
+		if _, err := m.UninstallRetained(id, 0, ""); !errors.Is(err, ErrInvalidID) {
 			t.Errorf("Uninstall(%q) err = %v, want ErrInvalidID", id, err)
 		}
 	}
@@ -302,7 +302,8 @@ func TestTwoPluginsCannotSeeEachOthersData(t *testing.T) {
 	if a.Path() == b.Path() {
 		t.Fatal("two plugins share one file")
 	}
-	if filepath.Dir(a.Path()) != filepath.Join(m.root, "plugin-a") {
+	rr, _ := filepath.EvalSymlinks(m.root)
+	if filepath.Dir(a.Path()) != filepath.Join(rr, "plugin-a") {
 		t.Fatalf("db path = %s", a.Path())
 	}
 }
@@ -370,7 +371,7 @@ func TestUninstallSoftDeletesAndNeverDeletesEarly(t *testing.T) {
 	m, clock := newMgr(t)
 	s, _ := m.Open(ctx, "p", Options{Migrations: migs()})
 	_, _ = s.Exec(ctx, `INSERT INTO log(note) VALUES('keep me')`)
-	dst, err := m.Uninstall("p", 0)
+	dst, err := m.UninstallRetained("p", 0, "")
 	if err != nil || dst == "" {
 		t.Fatalf("Uninstall = %q, %v", dst, err)
 	}
@@ -399,7 +400,7 @@ func TestReinstallWithinThirtyDaysRestoresData(t *testing.T) {
 	m, _ := newMgr(t)
 	s, _ := m.Open(ctx, "p", Options{Migrations: migs()})
 	_, _ = s.Exec(ctx, `INSERT INTO log(note) VALUES('kept')`)
-	if _, err := m.Uninstall("p", 0); err != nil {
+	if _, err := m.UninstallRetained("p", 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Restore("p"); err != nil {
@@ -424,7 +425,7 @@ func TestRetentionPeriodBlocksDeleteNowAndPrune(t *testing.T) {
 	if _, err := m.Open(ctx, "tax", Options{Migrations: migs()}); err != nil {
 		t.Fatal(err)
 	}
-	dst, err := m.Uninstall("tax", 10)
+	dst, err := m.UninstallRetained("tax", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +448,7 @@ func TestRetentionPeriodBlocksDeleteNowAndPrune(t *testing.T) {
 func TestDeleteNowWorksForOrdinaryPlugin(t *testing.T) {
 	m, _ := newMgr(t)
 	_, _ = m.Open(ctx, "p", Options{})
-	dst, _ := m.Uninstall("p", 0)
+	dst, _ := m.UninstallRetained("p", 0, "")
 	if err := m.DeleteNow("p"); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +469,7 @@ func TestPruneLeavesForeignDirectoriesAndOtherPluginsAlone(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(rd, "stray-file"), nil, 0o600)
 	_, _ = m.Open(ctx, "old", Options{})
-	if _, err := m.Uninstall("old", 0); err != nil {
+	if _, err := m.UninstallRetained("old", 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	*clock = clock.AddDate(0, 0, 60)
@@ -489,7 +490,7 @@ func TestSameDayUninstallTwiceKeepsBoth(t *testing.T) {
 		if _, err := m.Open(ctx, "p", Options{}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := m.Uninstall("p", 0); err != nil {
+		if _, err := m.UninstallRetained("p", 0, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -501,7 +502,7 @@ func TestSameDayUninstallTwiceKeepsBoth(t *testing.T) {
 
 func TestUninstallOfPluginWithoutDataIsNoop(t *testing.T) {
 	m, _ := newMgr(t)
-	if dst, err := m.Uninstall("never-used", 0); err != nil || dst != "" {
+	if dst, err := m.UninstallRetained("never-used", 0, ""); err != nil || dst != "" {
 		t.Fatalf("= %q, %v", dst, err)
 	}
 }

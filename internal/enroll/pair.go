@@ -25,19 +25,23 @@ import (
 //
 // The owner's my. "Pair a till" / "Pair again" mints a short, single-use pairing
 // code bound to the store. On the till, Settings → Till registration → "Pair with a
-// shop" (Pair) clears exactly this till's cloud identity — the credential
-// and device keys of db.TillCloudIdentityPrefixes (its own wipe list below;
-// the unpaid check-in markers stay, and Pair's own check-in re-records
-// them), plus store_id / merchant_id on a main
-// or standalone till; never the pinned signing key (ADR-0006) or the
-// store-level preferences — mints a fresh device id and posts the code to
-// POST /v1/stores/pair — unauthenticated, the code is the only credential —
-// directly to the cloud over TLS. The cloud answers with store_id,
-// merchant_id and this device's own credential, adopted through the same
-// path as a D4 rotation (adoptOwnCredential). A replica, whose store
-// identity comes from its main till's admin bundle, refuses an answer for
-// any other store. Neither the code nor the token is logged, in any branch
-// below.
+// shop" (Pair) posts the code to POST /v1/stores/pair — unauthenticated, the
+// code is the only credential — directly to the cloud over TLS. When the cloud
+// advertises it and the till has a usable approval key, the till first asks to
+// keep its device id (ADR-0222 §9, ut-docs#7098: the same device is one
+// register for life); a cloud that cannot vouch for it, and a till with no
+// key, pair as a new device with a fresh id and the same code. The cloud answers with
+// store_id, merchant_id and this device's own credential. Only then does the
+// till clear exactly its own cloud identity — the credential and device keys
+// of db.TillCloudIdentityPrefixes (its own wipe list below; the unpaid check-in
+// markers stay, and Pair's own check-in re-records them), plus store_id /
+// merchant_id on a main or standalone till; never the pinned signing key
+// (ADR-0006) or the store-level preferences — and adopt the answer through the
+// same path as a D4 rotation (adoptOwnCredential). A refused, failed or
+// mismatched pairing changes nothing (ADR-0222 §9 supersedes ADR-0116 D5's
+// reset-first order). A replica, whose store identity comes from its main
+// till's admin bundle, refuses an answer for any other store. Neither the
+// code, its hash, the proof nor the token is logged, in any branch below.
 
 // ErrPairStoreMismatch: on a replica, the pairing code belongs to a store
 // other than its main till's. Exported so the Settings handler can show
@@ -102,25 +106,55 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 		}
 	}
 
-	// 1+2. Clear exactly this till's cloud identity and take a fresh device
-	// id (ADR-0116 D5).
-	newID := "till-" + uuid.NewString()
-	oldStore := resetIdentityForPair(ctx, kv, replica, newID)
-
-	// 3. Pair.
-	storeID, merchantID, token, err := postPair(ctx, m.EndpointURL, code, newID, DeviceName(ctx, kv), buildinfo.Version)
-	if err != nil {
-		log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0116 D5)", err)
+	// 1. Same device first (ADR-0222 §9): with a usable approval key and a
+	// cloud that advertises it, ask to keep the current device id. Nothing is
+	// written until a 200.
+	name := DeviceName(ctx, kv)
+	curID := currentDeviceID(ctx, kv)
+	var a pairAnswer
+	id := ""
+	if rj := rejoinProof(curID, code); rj != nil && rejoinCapable(ctx, m.EndpointURL) {
+		a, err = postPairOpts(ctx, m.EndpointURL, code, curID, name, buildinfo.Version, pairOpts{rejoin: rj})
+		switch {
+		case err == nil:
+			id = curID
+		case rejoinFallsBack(err):
+			// The code is unspent: pair as a new device (B6: a removed,
+			// replaced or moved till is never lifted).
+			log.Infof("enrolment: the shop cannot take this till back as device %s; pairing it as a new device (ADR-0222 §9)", curID)
+		default:
+			log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0222 §9)", err)
+			return CurrentStatus(), err
+		}
+	}
+	// 2. A new device: a fresh device id and the same code.
+	if id == "" {
+		newID := "till-" + uuid.NewString()
+		a, err = postPairOpts(ctx, m.EndpointURL, code, newID, name, buildinfo.Version, pairOpts{})
+		if err != nil {
+			log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0222 §9)", err)
+			return CurrentStatus(), err
+		}
+		id = newID
+	}
+	// ADR-0222 §5: never adopt an answer naming another device. A cloud that
+	// names none (older) is accepted.
+	if a.deviceID != "" && a.deviceID != id {
+		err := fmt.Errorf("%w: answered for another device", errPairAnswerRejected)
+		log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0222 §5)", err)
 		return CurrentStatus(), err
 	}
+	storeID, merchantID, token := a.storeID, a.merchantID, a.token
 	if replica && storeID != own {
 		log.Warnf("enrolment: the pairing code belongs to store %q, but this replica's main till is in store %q; not adopting it (ADR-0116 D5)", storeID, own)
 		return CurrentStatus(), ErrPairStoreMismatch
 	}
-	adoptPaired(ctx, kv, replica, newID, storeID, merchantID, token)
+	// 3. Only now clear the old identity and adopt the answer.
+	oldStore := resetIdentityForPair(ctx, kv, replica, id)
+	adoptPaired(ctx, kv, replica, id, storeID, merchantID, token)
 	storeLeft(oldStore, storeID)
 	logging.ResolveProblems(ProblemKeyPairFailed)
-	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0116 D5)", storeID, newID)
+	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0222 §9)", storeID, id)
 	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return CurrentStatus(), nil
 }
@@ -212,11 +246,10 @@ func storeLeft(oldStore, newStore string) {
 }
 
 // resetIdentityForPair clears exactly this till's cloud identity (ADR-0116
-// D5) and gives it the fresh device id newID. The credential being
-// replaced carries nothing worth keeping: this flow runs on a till that is
-// unpaired, revoked or retired, so a refused code leaves it cleanly
-// unregistered rather than half-old. newID is the fresh device id. Caller
-// holds the attempt slot.
+// D5) and gives it the device id newID: a fresh one, or the till's own when
+// the cloud took it back (ADR-0222 §9). Callers run it only after the cloud
+// answered 200, so a refused or failed pairing never leaves a half-old
+// identity (ADR-0222 §9 first bullet). Caller holds the attempt slot.
 func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) (oldStore string) {
 	log := logging.L()
 	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID, keyRegisterRearms, keyInUseElsewhere}
@@ -239,7 +272,7 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 	if err := kv.Set(ctx, keyRestoredAt, ""); err != nil {
 		log.Warnf("enrolment: pair: clear %s: %v", keyRestoredAt, err)
 	}
-	// A fresh device id: re-pairing is always as a new device.
+	// The device id: fresh, or the same one after a rejoin.
 	if err := kv.Set(ctx, keyDeviceID, newID); err != nil {
 		log.Warnf("enrolment: pair: persist device_id: %v", err)
 	}
@@ -295,19 +328,11 @@ func adoptPaired(ctx context.Context, kv Settings, replica bool, newID, storeID,
 	}
 }
 
-// postPair calls POST /v1/stores/pair and returns the store, merchant and
-// device token the cloud answers with, accepted only when all three are
-// present and the token is well-formed. No Authorization header: the code
-// is the credential. Errors never carry the code or the token.
-func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version string) (storeID, merchantID, token string, err error) {
-	a, err := postPairFull(ctx, endpoint, code, deviceID, deviceName, version, false, "")
-	return a.storeID, a.merchantID, a.token, err
-}
-
 // pairAnswer is a successful /pair answer: the credential plus, from a
 // cloud that knows ADR-0166, the store profile block (nil otherwise).
 type pairAnswer struct {
 	storeID, merchantID, token string
+	deviceID                   string // data.device_id, "" from a cloud that names none
 	store                      *PairProfile
 	replaced                   *ReplacedTill // a confirmed replace's old till (ut-docs#5058)
 }
@@ -418,12 +443,103 @@ type ReplacedTill struct {
 // answer. replaceDeviceID confirms a replace code (sent only with
 // firstTill).
 func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, version string, firstTill bool, replaceDeviceID string) (pairAnswer, error) {
+	return postPairOpts(ctx, endpoint, code, deviceID, deviceName, version, pairOpts{firstTill: firstTill, replaceDeviceID: replaceDeviceID})
+}
+
+// pairOpts are the optional parts of a /pair request.
+type pairOpts struct {
+	firstTill       bool
+	replaceDeviceID string // only with firstTill
+	rejoin          *rejoinBlock
+}
+
+// rejoinBlock is the request's "rejoin" object (ADR-0222 §9; ut-cloud
+// paircontract.RejoinField): the same-device proof. The cloud checks
+// public_key and sig; kid is informational.
+type rejoinBlock struct {
+	DeviceID    string `json:"device_id"`
+	ApprovalKey struct {
+		KID       string `json:"kid"`
+		PublicKey string `json:"public_key"`
+	} `json:"approval_key"`
+	Sig string `json:"sig"`
+}
+
+// Wire names of the same-device pairing, mirroring ut-cloud's
+// internal/paircontract (ut-docs#7098).
+const (
+	rejoinField       = "rejoin"         // paircontract.RejoinField
+	rejoinRefusedCode = "rejoin_refused" // paircontract.RejoinRefusedCode
+	deviceRevokedCode = "device_revoked" // 409, the code is unspent
+	rejoinCapability  = "v1"             // GET /version "rejoin" (paircontract.RejoinCapabilityVersion)
+	maxPairDeviceID   = 200              // the cloud's maxDeviceIDLen
+)
+
+// currentDeviceID is the device id this till holds now: the live identity,
+// else the persisted one.
+func currentDeviceID(ctx context.Context, kv Settings) string {
+	mu.RLock()
+	id := cur.DeviceID
+	mu.RUnlock()
+	if id = strings.TrimSpace(id); id != "" {
+		return id
+	}
+	id, _, _ = kv.Get(ctx, keyDeviceID)
+	return strings.TrimSpace(id)
+}
+
+// rejoinProof builds the §9 block for deviceID and code, or nil when the
+// till cannot prove itself: no or unusable device id, a code the cloud
+// cannot normalise, or no usable approval key (SignRejoin never creates
+// one). It never logs the code, its hash or the signature.
+func rejoinProof(deviceID, code string) *rejoinBlock {
+	if deviceID == "" || len(deviceID) > maxPairDeviceID || strings.ContainsAny(deviceID, "\n\r") {
+		return nil
+	}
+	hash, ok := approvalkey.RejoinCodeHash(code)
+	if !ok {
+		return nil
+	}
+	kid, pub, sig, err := approvalkey.Shared().SignRejoin(deviceID, hash)
+	if err != nil {
+		return nil
+	}
+	rj := &rejoinBlock{DeviceID: deviceID, Sig: sig}
+	rj.ApprovalKey.KID, rj.ApprovalKey.PublicKey = kid, pub
+	return rj
+}
+
+// rejoinFallsBack reports a refusal of the rejoin attempt that leaves the
+// code unspent and means "pair as a new device": 409 rejoin_refused,
+// device_exists or device_revoked. Anything else goes back to the operator.
+func rejoinFallsBack(err error) bool {
+	var he *RegisterHTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusConflict {
+		return false
+	}
+	switch he.Code {
+	case rejoinRefusedCode, deviceExistsCode, deviceRevokedCode:
+		return true
+	}
+	return false
+}
+
+// postPairOpts is postPair with the optional first_till flag, the rejoin
+// proof and the whole answer.
+func postPairOpts(ctx context.Context, endpoint, code, deviceID, deviceName, version string, o pairOpts) (pairAnswer, error) {
 	none := pairAnswer{}
+	firstTill, replaceDeviceID := o.firstTill, o.replaceDeviceID
+	if o.rejoin != nil && o.rejoin.DeviceID != deviceID {
+		return none, errors.New("pair: the rejoin proof is for another device")
+	}
 	body := map[string]any{"code": code, "device_id": deviceID, "device_name": deviceName, "version": version}
 	// ut-docs#5127: the cloud pins the till's approval key in the transaction
 	// that mints the credential. No key (unusable file) never blocks pairing.
 	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
 		body["approval_key"] = ak
+	}
+	if o.rejoin != nil {
+		body[rejoinField] = o.rejoin
 	}
 	if firstTill {
 		body["first_till"] = true
@@ -494,6 +610,7 @@ func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, ver
 		Data struct {
 			StoreID     string        `json:"store_id"`
 			MerchantID  string        `json:"merchant_id"`
+			DeviceID    string        `json:"device_id"`
 			DeviceToken string        `json:"device_token"`
 			Store       *PairProfile  `json:"store"`
 			Replaced    *ReplacedTill `json:"replaced"`
@@ -511,7 +628,7 @@ func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, ver
 	case !validRotatedToken(d.DeviceToken):
 		return none, fmt.Errorf("%w: malformed credential (length %d)", errPairAnswerRejected, len(d.DeviceToken))
 	}
-	a := pairAnswer{storeID: d.StoreID, merchantID: d.MerchantID, token: d.DeviceToken, store: d.Store}
+	a := pairAnswer{storeID: d.StoreID, merchantID: d.MerchantID, deviceID: strings.TrimSpace(d.DeviceID), token: d.DeviceToken, store: d.Store}
 	if r := d.Replaced; r != nil && strings.TrimSpace(r.DeviceID) != "" {
 		a.replaced = &ReplacedTill{DeviceID: clampText(r.DeviceID, maxReplaceDeviceID), Name: clampText(r.Name, 80)}
 	}

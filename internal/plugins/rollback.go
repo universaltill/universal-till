@@ -419,8 +419,24 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		}
 	}
 
+	// Move the plugin's own data back to what the target version expects
+	// (ADR-0121 §4, ut-docs#3157), also before commit so a refusal leaves
+	// the DB half rolled back by the deferred tx.Rollback().
+	undoData, err := rm.prepareDataForRollback(ctx, pluginID, targetVersion, targetPath, manifest)
+	if err != nil {
+		if needRestore {
+			_ = os.RemoveAll(liveTargetDir)
+		}
+		return fmt.Errorf("rollback to %s refused: plugin data: %w", targetVersion, err)
+	}
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
+		if undoData != nil {
+			if uerr := undoData(); uerr != nil {
+				log.Warnf("[Rollback] Failed to undo data rollback for plugin %s: %v", pluginID, uerr)
+			}
+		}
 		if needRestore {
 			// The DB half didn't take, so don't leave the just-restored live
 			// dir behind either — best-effort, matching every other cleanup
@@ -754,6 +770,15 @@ func (rm *RollbackManager) cleanupOldVersions(pluginID string, keep ...string) e
 	var realEntries []os.DirEntry
 	for _, entry := range entries {
 		if !entry.IsDir() || isTempVersionDirName(entry.Name()) {
+			continue
+		}
+		// Strict: only a semver-named snapshot dir is ever a prune
+		// candidate (ADR-0121 / ut-docs#3157). Anything else under
+		// versions/ (an operator's notes, a stray plugin-data dir, "1.2")
+		// is left alone and logged. entry.IsDir() is false for a symlink
+		// (ReadDir does not follow), so symlinks never reach this point.
+		if !parseStrictSemver(entry.Name()) {
+			logging.L().Warnf("[Rollback] Leaving non-version entry %q in %s alone", entry.Name(), versionsDir)
 			continue
 		}
 		realEntries = append(realEntries, entry)

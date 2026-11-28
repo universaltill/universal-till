@@ -472,6 +472,24 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)
 	}
 
+	// Own-database migrations (ADR-0121 4) run from the verified extract tree
+	// (its archive digest was checked above) before the live dir is touched:
+	// a failure leaves the old version and its DB exactly as they were.
+	fromVersion, _, fvErr := data.NewPluginRepo(i.db).GetInstalledPluginVersion(ctx, manifest.ID)
+	if fvErr != nil {
+		fromVersion = ""
+	}
+	dataUpgrade, err := migrateDataForInstall(ctx, manifest, extractDir, fromVersion)
+	if err != nil {
+		return nil, err
+	}
+	installOK := false
+	defer func() {
+		if !installOK {
+			undoDataMigration(dataUpgrade, manifest.ID)
+		}
+	}()
+
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(finalDir); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("clean existing plugin dir: %w", err)
@@ -548,6 +566,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// follows installGrantsPermission (ut-docs#4145, ADR-0153 Decision 5).
 	GrantDeclaredPermissions(ctx, i.db, manifest, previouslyDeclared, prevErr)
 
+	installOK = true
 	return &MarketplaceInstallResult{
 		PluginID: manifest.ID,
 		Name:     manifest.Name,

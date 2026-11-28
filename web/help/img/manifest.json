@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "5c743b3191749f168a08a3cb685aeeafbe49f1119bb1e977744adc2c693066ce",
+      "en": "da1948244e6cfbcdb80ba120a75fc845d5542b3ce384f0c81b93ffd22131259d",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -458,7 +458,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "a45e6fdf1f7b871804b15ea17e8624c28d962aa2b61b88f6e1440dc7fd959295"
+      "sha256": "e2474165a1d242c8f3e38bbd828b55944db8b5f3800660309381f3f49aa7a0ac"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
