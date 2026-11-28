@@ -107,6 +107,9 @@ func TestCloudApplyDelivery_UnknownPolicyValueFailsClosedToReject(t *testing.T) 
 }
 
 func TestCloudApplyDelivery_LateCancelRaisesAProblemAndIsNeverRefused(t *testing.T) {
+	// The Problems ring is process-global: start clean so another test's
+	// Problem (any order, -shuffle) is never read as this one's.
+	logging.ResetRecent()
 	dp := deliveryHookDeps(t)
 	o := deliveryHookOrder(t, false)
 	o.Status = "preparing"
@@ -140,6 +143,9 @@ func TestCloudApplyDelivery_LateCancelRaisesAProblemAndIsNeverRefused(t *testing
 }
 
 func TestCloudApplyDelivery_NoteIsNeverLogged(t *testing.T) {
+	// The Problems ring is process-global: start clean so another test's
+	// Problem (any order, -shuffle) is never read as this one's.
+	logging.ResetRecent()
 	dp := deliveryHookDeps(t)
 	o := deliveryHookOrder(t, true)
 	o.Note = "SECRETNOTE severe peanut allergy"

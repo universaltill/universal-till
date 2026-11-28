@@ -51,7 +51,7 @@
       "tr": "5daf126e70908a4d3ffbc9b5c4e628a4760d59a2d690ab7b511ae9eb9ec096aa"
     },
     "channel-orders": {
-      "en": "e74696a0d8e799a458271931feffcc7295513d209498bfc2f827bc171d8640c1",
+      "en": "821264b301ec10c5c6973372a176942d026623e2c93a9087164bf36983b5838e",
       "fa": "da11fe5647ad32546e7a9c622409a13f37d31b9668b76b906cd3d0c229d4df4f",
       "ar": "85895691062fe4424e9b4ef5eb6cec1b57fc949abc77dc7c19a4acf841959767",
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
@@ -338,7 +338,7 @@
       "sha256": "9c463068f11ff0c8a21439a65053732af7b7012554a0c3087bee14a50c7ea668"
     },
     "internal/pages/channel_orders_page.go": {
-      "sha256": "0f248cd3fc40f0354b446933806524f78d56b7dd0b23d50790bbefd1be2aba6e"
+      "sha256": "a6377d35671617fcf99451719c5fabe1da32f02b28a98d88be851034fe5b8262"
     },
     "internal/pages/charge_hook.go": {
       "sha256": "bc8a991fcd334a4bd94ca0d79c76a586724da7b867eb8dba8074af2d42d2caa4"
@@ -347,7 +347,7 @@
       "sha256": "1359f709471a5e626452faf0ddff576f43bb12ae098c8f5dd46e15656521333f"
     },
     "internal/pages/cloud_channel_order.go": {
-      "sha256": "dc1e643730d9adbe17c4d61ce6e8006a1c38d97062ccb74e50d05d8ab7b6ec9a"
+      "sha256": "09c3d90f6498dff46a9bb5bdb14a958e82aa2ead8b01f263ea0da4a1da459f3b"
     },
     "internal/pages/cloud_heal_chip.go": {
       "sha256": "a80b640d102abd211df21e5161a627a797b9e746c2478bee64e8e6724ad54ea4"
@@ -458,7 +458,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "0d8d0ffda7fbc6ca1f4be53a77684617ac50c54d9202b93e37e638047d40a440"
+      "sha256": "a45e6fdf1f7b871804b15ea17e8624c28d962aa2b61b88f6e1440dc7fd959295"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -542,7 +542,7 @@
       "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
-      "sha256": "8ffa0ea45308e049a1d1dd66fde7f032cbcf803f86ea4b6e0f77c13bb17b8f24"
+      "sha256": "d426edfd6b2559dc9f9aecea581bb739600450421c561363e705e15e2ab562a5"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -1661,7 +1661,7 @@
       "sha256": "c67c670cc85ff0a31726555314027d7015999d63cd73e38d594866ae3bbb6809"
     },
     "web/ui/pages/channel_order_detail.html": {
-      "sha256": "6350c2048921bb032bc2bd695af436da0235d5fb585ac72d2528f69175532a98"
+      "sha256": "cce4855623307c93d4dd1ce3d04e47bd82e995eb1d4dc041008dcdfdd32f151e"
     },
     "web/ui/pages/channel_orders.html": {
       "sha256": "58d4bc8ea3bdc4d99cbbb4809a26d5fa4814490489342cc828ae3aa9a3e2f412"
