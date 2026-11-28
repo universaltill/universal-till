@@ -46,6 +46,9 @@ type fakePrimary struct {
 	// prevHash is the previous bearer hash of a pending rotation
 	// (ut-docs#5198); "" = none, so no prev_proof is sent.
 	prevHash string
+	// beforeReply, when set, runs in the proof handler after the request is
+	// decoded and before the reply (a promote landing mid-proof, ut-docs#7209).
+	beforeReply func()
 }
 
 func newFakePrimary(t *testing.T, primaryID, bearerHash string) *fakePrimary {
@@ -64,6 +67,9 @@ func newFakePrimary(t *testing.T, primaryID, bearerHash string) *fakePrimary {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TillID != testTillID {
 			http.NotFound(w, r)
 			return
+		}
+		if f.beforeReply != nil {
+			f.beforeReply()
 		}
 		resp := ProofResponse{
 			PrimaryTillID: f.primaryID,
@@ -466,6 +472,8 @@ type tlsFakePrimary struct {
 	sawBearer   atomic.Bool  // a proof request carried an Authorization header
 	other       atomic.Int32 // non-proof requests, over verified TLS
 	otherBearer atomic.Bool
+	// beforeReply: as fakePrimary's (ut-docs#7209).
+	beforeReply func()
 }
 
 func newTLSFakePrimary(t *testing.T, primaryID, bearerHash string) *tlsFakePrimary {
@@ -498,6 +506,9 @@ func newTLSFakePrimary(t *testing.T, primaryID, bearerHash string) *tlsFakePrima
 		if r.URL.Path != ProofPath || json.NewDecoder(r.Body).Decode(&req) != nil || req.TillID != testTillID {
 			http.NotFound(w, r)
 			return
+		}
+		if f.beforeReply != nil {
+			f.beforeReply()
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": ProofResponse{
 			PrimaryTillID: primaryID,

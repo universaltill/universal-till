@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
@@ -185,11 +186,20 @@ func HashBearer(bearer string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// WatchSettings is the settings surface PrimaryWatch needs — satisfied by
+// WatchSettings is the settings surface JoinWatch needs — satisfied by
 // both *data.SettingsRepo and *settings.Store.
 type WatchSettings interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string) error
+}
+
+// PrimaryWatchSettings is the settings surface PrimaryWatch needs — satisfied
+// by *data.SettingsRepo and *settings.Store. It has no plain Set: every write
+// PrimaryWatch makes is replica-only (ut-docs#7209), so a promote that lands
+// during a browse or proof is never undone.
+type PrimaryWatchSettings interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	SetIfReplica(ctx context.Context, values map[string]string) error
 }
 
 // FailureOutcome tells the pull loop what a failed contact led to.
@@ -209,7 +219,7 @@ type FailureOutcome struct {
 // concurrent use: the pull loop records contacts while the status chip
 // handler reads Unreachable.
 type PrimaryWatch struct {
-	settings WatchSettings
+	settings PrimaryWatchSettings
 	client   *http.Client
 
 	// Seams for tests.
@@ -242,7 +252,7 @@ type BrowseFunc func(ctx context.Context, timeout time.Duration) ([]Candidate, e
 
 // NewPrimaryWatch builds a watch over settings that looks for a moved main
 // till with browse (production passes Browse).
-func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
+func NewPrimaryWatch(settings PrimaryWatchSettings, browse BrowseFunc) *PrimaryWatch {
 	client := netaccess.NewClient(5 * time.Second)
 	// A candidate must answer itself; a redirect could bounce the challenge
 	// somewhere else entirely.
@@ -306,30 +316,28 @@ func (w *PrimaryWatch) ContactOK(ctx context.Context) {
 		logging.L().Infof("sync: could not learn the main till's id or pin from %s (%v) — re-discovery will fall back to the synced discovery id", primaryURL, err)
 		return
 	}
-	_ = w.settings.Set(ctx, PrimaryTillIDSettingKey, id)
-	w.storePin(ctx, pin)
+	kv := map[string]string{PrimaryTillIDSettingKey: id}
+	w.pinWrites(ctx, kv, pin)
+	if err := w.settings.SetIfReplica(ctx, kv); err != nil {
+		if errors.Is(err, data.ErrNotReplica) {
+			logging.L().Infof("sync: this till was promoted while it learned the main till's id — not storing it")
+		}
+		return
+	}
 }
 
-// storePin keeps the pin a valid proof covered. A proof over plain HTTP
-// covers none and never clears one already held. A different pin drops a
-// held next pin (ut-docs#4409) first, so a power cut in between leaves only
-// the old pin, never a stale next pin beside the new one.
-func (w *PrimaryWatch) storePin(ctx context.Context, pin string) {
+// pinWrites adds to kv the writes that keep pin, the pin a valid proof
+// covered: none for "" (plain HTTP covers no pin and never clears a held
+// one) or for the pin already held; otherwise the pin and an empty next pin
+// (ut-docs#4409: a next pin belongs to the pin it was announced under). One
+// SetIfReplica carries them with the caller's other writes, so the old
+// "clear next first" power-cut ordering is no longer needed.
+func (w *PrimaryWatch) pinWrites(ctx context.Context, kv map[string]string, pin string) {
 	if pin == "" || pin == w.get(ctx, PrimaryCertPinSettingKey) {
 		return
 	}
-	if err := w.clearNextPin(ctx); err != nil {
-		return
-	}
-	_ = w.settings.Set(ctx, PrimaryCertPinSettingKey, pin)
-}
-
-// clearNextPin drops a held next pin (ut-docs#4409).
-func (w *PrimaryWatch) clearNextPin(ctx context.Context) error {
-	if w.get(ctx, PrimaryCertNextPinSettingKey) == "" {
-		return nil
-	}
-	return w.settings.Set(ctx, PrimaryCertNextPinSettingKey, "")
+	kv[PrimaryCertPinSettingKey] = pin
+	kv[PrimaryCertNextPinSettingKey] = ""
 }
 
 var errReproofCooldown = errors.New("re-proof refused a moment ago — not trying again yet")
@@ -342,7 +350,8 @@ var errReproofCooldown = errors.New("re-proof refused a moment ago — not tryin
 // A refused proof keeps the old pin (the request then fails like an
 // unreachable main till: banner, re-discovery, selling offline) and starts
 // ReproofCooldown. nil with the pin unchanged means another caller already
-// re-proved, or the till was re-paired, since the request was made.
+// re-proved, the till was re-paired, or it was promoted, since the request
+// was made.
 func (w *PrimaryWatch) Reproof(ctx context.Context, primaryURL, heldPin string) error {
 	w.reproofMu.Lock()
 	defer w.reproofMu.Unlock()
@@ -384,14 +393,17 @@ func (w *PrimaryWatch) Reproof(ctx context.Context, primaryURL, heldPin string) 
 	if w.get(pctx, "sync.primary_url") != cur || w.get(pctx, PrimaryCertPinSettingKey) != curPin {
 		return nil
 	}
-	if err := w.clearNextPin(pctx); err != nil {
-		return err
-	}
-	if err := w.settings.Set(pctx, PrimaryCertPinSettingKey, pin); err != nil {
-		return err
-	}
+	kv := map[string]string{}
+	w.pinWrites(pctx, kv, pin) // pin != curPin here, so always pin + empty next pin
 	if w.get(pctx, PrimaryTillIDSettingKey) == "" {
-		_ = w.settings.Set(pctx, PrimaryTillIDSettingKey, id)
+		kv[PrimaryTillIDSettingKey] = id
+	}
+	if err := w.settings.SetIfReplica(pctx, kv); err != nil {
+		if errors.Is(err, data.ErrNotReplica) {
+			logging.L().Infof("sync: this till was promoted while it re-proved the main till at %s — not adopting the new pin", cur)
+			return nil
+		}
+		return err
 	}
 	w.lastReproofFail, w.reproofWarned = time.Time{}, false
 	logging.L().Infof("sync: the main till at %s proved itself with a new certificate — new pin adopted, pairing kept", cur)
@@ -421,6 +433,10 @@ func (w *PrimaryWatch) ContactFailed(ctx context.Context) FailureOutcome {
 		return out
 	}
 	oldURL, newURL, err := w.rediscover(ctx)
+	if errors.Is(err, data.ErrNotReplica) {
+		logging.L().Infof("sync: this till was promoted while it looked for the main till — not relinking")
+		return FailureOutcome{}
+	}
 	if err != nil {
 		logging.L().Infof("sync: main till not found on this network (%v) — still selling offline, will look again in %s", err, MinBrowseInterval)
 		return out
@@ -535,11 +551,11 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 			}
 			continue
 		}
-		if err := w.settings.Set(ctx, "sync.primary_url", c.BaseURL); err != nil {
-			return oldURL, "", err
+		kv := map[string]string{"sync.primary_url": c.BaseURL, PrimaryTillIDSettingKey: id}
+		w.pinWrites(ctx, kv, pin)
+		if err := w.settings.SetIfReplica(ctx, kv); err != nil {
+			return oldURL, "", err // ErrNotReplica included: no further candidate
 		}
-		_ = w.settings.Set(ctx, PrimaryTillIDSettingKey, id)
-		w.storePin(ctx, pin)
 		logging.L().Infof("sync: main till found again at %s (was %s, main till id %s) — pairing kept, syncing resumes", c.BaseURL, oldURL, id)
 		return oldURL, c.BaseURL, nil
 	}
