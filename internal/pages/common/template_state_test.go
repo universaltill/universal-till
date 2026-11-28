@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/shoptemplate"
 	"github.com/universaltill/universal-till/internal/shoptemplate/shoptemplatetest"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -239,5 +240,45 @@ func TestLegacyLayoutOff_SilencesLegacyUntilAccepted(t *testing.T) {
 	d.ReloadTemplate(ctx)
 	if got := d.TemplateState(ctx); got.Mode != TemplateActive || got.Effective() == nil {
 		t.Errorf("accepted template must be active, got %+v", got)
+	}
+}
+
+// core.template ranks LOWEST: through the real rebuild (template state +
+// plugin pool), the template's amendments sit before every plugin amendment
+// of the same slot, so a plugin's label wins while the template still supplies
+// what the plugin left alone (ADR-0190).
+func TestRebuildLayout_TemplateRanksBelowPluginAmendments(t *testing.T) {
+	ctx := context.Background()
+	d := depsWithTemplates(t, "retail", `{"id":"retail"}`)
+	d.Pm = &plugins.Manager{LayoutAmendments: []uislot.Amendment{
+		{PluginID: "com.example.layout", Slot: uislot.MenuSlot, Key: "/items", LabelKey: "plugin.items"},
+	}}
+	d.ReloadTemplate(ctx)
+
+	got := d.MenuAmendmentsSnapshot()
+	first, last := -1, -1
+	for i, a := range got {
+		if a.PluginID == shoptemplate.PluginID && first < 0 {
+			first = i
+		}
+		if a.PluginID == shoptemplate.PluginID {
+			last = i
+		}
+	}
+	if first < 0 {
+		t.Fatalf("no core.template amendment in %+v", got)
+	}
+	for i, a := range got {
+		if a.PluginID != shoptemplate.PluginID && i < last {
+			t.Fatalf("plugin amendment at %d precedes a core.template one (last at %d): %+v", i, last, got)
+		}
+	}
+	items, _ := uislot.CoreMenuEntry("/items")
+	r := uislot.Resolve([]uislot.Entry{items}, got)
+	if r[0].LabelKey != "plugin.items" {
+		t.Errorf("label = %q, want the plugin's plugin.items over the template's tmpl.items", r[0].LabelKey)
+	}
+	if r[0].Order != 50 {
+		t.Errorf("order = %d, want the template's 50 (the plugin left it alone)", r[0].Order)
 	}
 }
