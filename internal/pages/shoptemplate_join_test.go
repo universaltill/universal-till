@@ -1,7 +1,10 @@
 package pages
 
 import (
+	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -85,5 +88,33 @@ func TestSeedJoinedTillTemplateMainTillAndNoTypeWriteNothing(t *testing.T) {
 	seedJoinedTillTemplate(t.Context(), d2)
 	if got := getSetting(t, d2, "theme"); got != "" {
 		t.Fatalf("typeless joined till theme = %q, want unset", got)
+	}
+}
+
+// The 30 s reconcile tick is what lands a shop type pulled from the admin on a
+// joined till: drive the real StartTemplateStateReconcile and expect the theme.
+func TestTemplateStateReconcileTickSeedsJoinedTillTheme(t *testing.T) {
+	useThemeTemplate(t)
+	_, _, d := newFullAuthDeps(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	for k, v := range map[string]string{"sync.primary_url": "http://primary.example", common.KeyShopType: "retail"} {
+		if err := d.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prev := templateStateInterval
+	templateStateInterval = 10 * time.Millisecond
+	t.Cleanup(func() { templateStateInterval = prev })
+
+	var wg sync.WaitGroup
+	StartTemplateStateReconcile(ctx, d, &wg)
+	deadline := time.Now().Add(5 * time.Second)
+	for getSetting(t, d, "theme") != "dark" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	wg.Wait()
+	if got := getSetting(t, d, "theme"); got != "dark" {
+		t.Fatalf("theme after reconcile tick = %q, want dark", got)
 	}
 }
