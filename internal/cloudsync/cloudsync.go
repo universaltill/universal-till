@@ -126,9 +126,17 @@ type Hooks struct {
 	// added it ignores the field and writes unconditionally, so the cloud
 	// must not rely on it below the registry's RegistryMinTillVersion.
 	SetTillSetting func(ctx context.Context, key, value string, expect *string) (string, error)
-	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
-	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
-	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
+	// SetTillSettingCond is SetTillSetting plus the per-field version
+	// fields of the shop-config design (design-B 4.2): when non-nil it is
+	// used instead of SetTillSetting for every set_till_setting directive.
+	// A conflict, a stale version or a tier mismatch comes back as a
+	// *ReasonError (key conflict | stale_version | tier_mismatch), nothing
+	// written. An older cloud sends none of the fields: the zero
+	// TillSettingCond means today's unconditional write.
+	SetTillSettingCond func(ctx context.Context, key, value string, expect *string, cond TillSettingCond) (string, error)
+	InstallPlugin      func(ctx context.Context, listingID string) (string, error)
+	RemovePlugin       func(ctx context.Context, pluginID string) (string, error)
+	SetPrice           func(ctx context.Context, itemID string, priceMinor int64) (string, error)
 	// AdjustStock handles "adjust_stock" {item_id, qty_delta, reason,
 	// location_id?, variant_id?}; variantID/locationID are "" when absent
 	// (an older cloud) — the till then picks the location as before
@@ -518,7 +526,10 @@ type ModifierGroupOption struct {
 // no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
 	// ut-docs#5058: a replaced till records it on the first such answer.
-	defer func() { recordReplaced(ctx, db, err) }()
+	defer func() {
+		recordReplaced(ctx, db, err)
+		reportTickRefusal(err, contacted)
+	}()
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
 	// this used to sit at the tail of Tick (see the pull side, still there),
@@ -904,7 +915,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		}
 		msg, err = hooks.SetSetting(ctx, key, str("value"))
 	case "set_till_setting":
-		if hooks.SetTillSetting == nil {
+		if hooks.SetTillSetting == nil && hooks.SetTillSettingCond == nil {
 			return "failed", "set_till_setting is not supported on this till"
 		}
 		key := str("key")
@@ -918,6 +929,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 				return "failed", "expect must be a string"
 			}
 			expect = &e
+		}
+		if hooks.SetTillSettingCond != nil {
+			cond, ok := tillSettingCondFrom(d.Payload)
+			if !ok {
+				return "failed", "ver and base_ver must be whole numbers of at least 1, tier a string"
+			}
+			msg, err = hooks.SetTillSettingCond(ctx, key, str("value"), expect, cond)
+			noteReason(ctx, err)
+			break
 		}
 		msg, err = hooks.SetTillSetting(ctx, key, str("value"), expect)
 	case "install_plugin":
@@ -1365,12 +1385,17 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		if !img.Clear {
-			fetch, sum := hooks.fetchCatalogImage, img.SHA256
-			img.Fetch = func(ctx context.Context) ([]byte, error) {
-				if fetch == nil {
+			fetchOne := func(ctx context.Context, sum string) ([]byte, error) {
+				if hooks.fetchCatalogImage == nil {
 					return nil, errors.New("this till cannot download images right now; save the image again to retry")
 				}
-				return fetch(ctx, sum)
+				return hooks.fetchCatalogImage(ctx, sum)
+			}
+			sum := img.SHA256
+			img.Fetch = func(ctx context.Context) ([]byte, error) { return fetchOne(ctx, sum) }
+			for i := range img.Images {
+				s := img.Images[i].SHA256
+				img.Images[i].Fetch = func(ctx context.Context) ([]byte, error) { return fetchOne(ctx, s) }
 			}
 		}
 		msg, err = hooks.SetCatalogImage(ctx, img)
@@ -2418,8 +2443,15 @@ func postBody(ctx context.Context, cfg *config.Config, path string, payload []by
 		}
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
-			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
-			se.Replaced = parseReplacedSignal(buf.Bytes())
+			se.applyBody(buf.Bytes())
+			noteRefusal(path, resp.StatusCode, se.Code, se.Reason)
+			if path != syncPath {
+				// The sync POST is the tick's own call: the tick reports it.
+				reportRefusalFull("post "+path, resp.StatusCode, se.Code, se.Reason, se.Detail, se.Recover)
+			}
+		case http.StatusForbidden:
+			code, _ := parseCloudErrorEnvelope(buf.Bytes())
+			noteRefusal(path, resp.StatusCode, code, "")
 		case http.StatusPaymentRequired:
 			se.Entitlement = planRequiredEntitlement(buf.Bytes())
 		}
@@ -2471,6 +2503,11 @@ type statusError struct {
 	// replaced_at, replaced_by} (ut-docs#5058, design C6): the owner
 	// replaced this till as the shop's main till. nil for any other 401.
 	Replaced *ReplacedSignal
+	// Reason, Recover and Detail are a 401 device_revoked's data.reason,
+	// data.recover and the display text of replaced_by / moved_to
+	// (ADR-0222 §2.3); empty for any other answer.
+	Reason, Detail string
+	Recover        bool
 }
 
 func (e *statusError) Error() string {

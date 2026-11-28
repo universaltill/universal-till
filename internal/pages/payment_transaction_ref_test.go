@@ -33,8 +33,19 @@ type refCardRig struct {
 
 func newRefCardRig(t *testing.T, refFor func(n int) string, extra string) *refCardRig {
 	t.Helper()
+	return newRefCardRigAuth(t, refFor, extra, false)
+}
+
+// newRefCardRigAuth is newRefCardRig with authentication optionally ON for the
+// refund routes (registerRefund reads UT_AUTH at registration, so it must be
+// switched before that call; newFiscalSignDeps forces it off).
+func newRefCardRigAuth(t *testing.T, refFor func(n int) string, extra string, authOn bool) *refCardRig {
+	t.Helper()
 	mux, dp := newFiscalSignDeps(t)
 	dp.AuthSvc = auth.NewService(dp.Db)
+	if authOn {
+		t.Setenv("UT_AUTH", "")
+	}
 	registerRefund(mux, dp)
 	if _, err := dp.Db.Exec(`UPDATE inventory SET quantity = 100000 WHERE id = 'inv1'`); err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/devicepay"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -40,13 +42,46 @@ const tapCloudTTL = 10 * time.Second
 // entry. The form carries no permission name (no generic grant surface).
 var tapGrantPermissions = []string{plugins.TapDevicePermission, plugins.BrokerNetPermission}
 
+// tapConnectBase is the fixed host of the Connect onboarding page (ut-docs#6463).
+// The link is built from this constant, the shop's own store id and the UI
+// locale only: no host or path ever comes from a request. Always opened in
+// the system browser (target=_blank; the desktop shell and the native apps
+// hand a new-window navigation to the default browser).
+const tapConnectBase = "https://my.universaltill.com"
+
+// tapConnectURL is the page the Connect button opens, or "" without a store id.
+func tapConnectURL(storeID, tillLocale string) string {
+	storeID = strings.TrimSpace(storeID)
+	if storeID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("store", storeID)
+	q.Set("from", "app")
+	return tapConnectBase + "/" + enroll.CloudLocale(tillLocale) + "/card-payments?" + q.Encode()
+}
+
+// tapConnect is the account step's Connect onboarding button (ut-docs#6458,
+// ux-spec section 5). Show: a live link; Offline: the same place, disabled,
+// with its reason; neither: hidden (own key, ready, store build, not a manager).
+type tapConnect struct {
+	Show     bool
+	Offline  bool
+	Continue bool // the account exists: "Continue" instead of "Set up"
+	URL      string
+}
+
 // tapCloud is what the panel reads from the broker's onboarding_status.
 type tapCloud struct {
 	Known  bool // the cloud answered
 	Ready  bool
 	Source string // own | connect
-	Live   bool
-	Reason string
+	// Connected / DetailsSubmitted: the Connect account exists / the owner
+	// has sent Stripe the details (so a not-ready answer means "more needed").
+	Connected        bool
+	DetailsSubmitted bool
+	Live             bool
+	Reason           string
 	// ErrCode is the stable code of a failed broker call (Known is false);
 	// shown to support under "Details", never as prose.
 	ErrCode string
@@ -89,6 +124,7 @@ type tapSettingsView struct {
 	DoneNotice   bool // the last Setup finished
 	AlreadyMsg   bool
 	StoreBuild   bool
+	Connect      tapConnect
 }
 
 // tapSetupRun is the one Setup in flight (or the last one that finished).
@@ -105,6 +141,9 @@ type tapSettingsCtl struct {
 	setup   tapSetupRun
 	cloud   tapCloud
 	cloudAt time.Time
+	// lastSource is the source of the last answer that named one, so an
+	// offline till does not offer Connect to a shop that uses its own key.
+	lastSource string
 }
 
 // tapSettingsAvailable reports whether the panel (and its nav link) is offered:
@@ -200,17 +239,23 @@ func (c *tapSettingsCtl) readCloud(ctx context.Context, fresh bool) tapCloud {
 	if err == nil {
 		got = tapCloud{ErrCode: "failed"}
 		var a struct {
-			Ready    bool   `json:"ready"`
-			Source   string `json:"source"`
-			Livemode bool   `json:"livemode"`
-			Reason   string `json:"reason"`
+			Ready            bool   `json:"ready"`
+			Source           string `json:"source"`
+			Livemode         bool   `json:"livemode"`
+			Reason           string `json:"reason"`
+			Connected        bool   `json:"connected"`
+			DetailsSubmitted bool   `json:"details_submitted"`
 		}
 		if json.Unmarshal(out, &a) == nil {
-			got = tapCloud{Known: true, Ready: a.Ready, Source: a.Source, Live: a.Livemode, Reason: a.Reason}
+			got = tapCloud{Known: true, Ready: a.Ready, Source: a.Source, Live: a.Livemode, Reason: a.Reason,
+				Connected: a.Connected, DetailsSubmitted: a.DetailsSubmitted}
 		}
 	}
 	c.mu.Lock()
 	c.cloud, c.cloudAt = got, time.Now()
+	if got.Known && got.Source != "" {
+		c.lastSource = got.Source
+	}
 	c.mu.Unlock()
 	return got
 }
@@ -250,6 +295,30 @@ func tapStripeLine(c tapCloud, storeBuild bool) (key string, done, unknown bool,
 		return "tap.settings.source.not_configured_store", false, false, ""
 	}
 	return "tap.settings.source.not_configured", false, false, ""
+}
+
+// tapConnectState decides the Connect button of the account step. Only a
+// manager (canGrant) on a build that may link out sees it, never for a shop
+// on its own key (ADR-0203: exactly one source), and never once the account
+// is ready. Offline it stays in place, disabled (never a silent no-op).
+func tapConnectState(c tapCloud, lastSource string, storeBuild, canGrant bool) tapConnect {
+	if storeBuild || !canGrant {
+		return tapConnect{}
+	}
+	if !c.Known {
+		if tapReasonKey(tapNativeReason(c.ErrCode), "") == "tap.settings.reason.offline" && lastSource != "own" {
+			return tapConnect{Offline: true}
+		}
+		return tapConnect{}
+	}
+	if c.Source == "own" || c.Ready {
+		return tapConnect{}
+	}
+	switch c.Reason {
+	case "", "not_configured":
+		return tapConnect{Show: true, Continue: c.Connected || c.DetailsSubmitted}
+	}
+	return tapConnect{}
 }
 
 // tapPermissionsGranted reports whether every permission of the grant
@@ -318,6 +387,13 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh, canGrant bool) tapSet
 	cloud := c.readCloud(ctx, fresh)
 	v.Test = cloud.Known && cloud.Ready && !cloud.Live
 	stripeKey, stripeDone, stripeUnknown, stripeDetail := tapStripeLine(cloud, v.StoreBuild)
+	c.mu.Lock()
+	lastSource := c.lastSource
+	c.mu.Unlock()
+	v.Connect = tapConnectState(cloud, lastSource, v.StoreBuild, canGrant)
+	if v.Connect.Show && v.Connect.Continue {
+		stripeKey = "tap.settings.connect.due"
+	}
 	pluginID := tapProviderPlugin(ctx, d, devicepay.ProviderStripe)
 	allowed := tapPermissionsGranted(ctx, d, pluginID)
 
@@ -428,7 +504,21 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh, canGrant bool) tapSet
 	return v
 }
 
+// withConnectURL fills the Connect link (locale-specific, so it needs the
+// request). Without a store id the button cannot lead anywhere: hidden.
+func (c *tapSettingsCtl) withConnectURL(w http.ResponseWriter, r *http.Request, v tapSettingsView) tapSettingsView {
+	if !v.Connect.Show {
+		return v
+	}
+	v.Connect.URL = tapConnectURL(enroll.Effective(c.d.Cfg).Marketplace.StoreID, httpx.ResolveLocale(w, r))
+	if v.Connect.URL == "" {
+		v.Connect = tapConnect{}
+	}
+	return v
+}
+
 func (c *tapSettingsCtl) renderBody(w http.ResponseWriter, r *http.Request, status int, v tapSettingsView) {
+	v = c.withConnectURL(w, r, v)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	httpx.RenderPartial("ui/partials/tap_settings_body.html", v)(w, r)
@@ -477,7 +567,7 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 			"title":     httpx.T(locale, "page.title.tap_settings"),
 			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
-			"tap":       c.build(r.Context(), true, canPerform(d, r, "plugin_management")),
+			"tap":       c.withConnectURL(w, r, c.build(r.Context(), true, canPerform(d, r, "plugin_management"))),
 		})(w, r)
 	})
 
@@ -485,7 +575,8 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 		if readerSettingsDenied(d, w, r) {
 			return
 		}
-		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), false, canPerform(d, r, "plugin_management")))
+		// "Check status" after the owner finished on my.: read the cloud fresh.
+		c.renderBody(w, r, http.StatusOK, c.build(r.Context(), r.URL.Query().Get("check") == "1", canPerform(d, r, "plugin_management")))
 	})
 
 	mux.HandleFunc("POST /settings/tap-to-pay/setup", func(w http.ResponseWriter, r *http.Request) {

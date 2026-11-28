@@ -1,6 +1,9 @@
 package enroll
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Test-only views of the approval-report state. ApprovalKeyConflict becomes
 // an exported accessor with its first caller (the Settings > Cloud conflict
@@ -12,6 +15,18 @@ import "time"
 func ApprovalKeyConflict() bool { return approvalConflict.Load() }
 
 func resetApprovalReport() {
+	// Stop and wait for every report goroutine first, including untracked
+	// ones (ut-docs#7153). Not under approvalReport's mutex: the goroutine's
+	// defer takes it.
+	approvalBG.Lock()
+	if approvalBG.end != nil {
+		approvalBG.end()
+	}
+	approvalBG.Unlock()
+	approvalBG.wg.Wait()
+	approvalBG.Lock()
+	approvalBG.stop, approvalBG.end = context.WithCancel(context.Background())
+	approvalBG.Unlock()
 	approvalReport.Lock()
 	approvalReport.done, approvalReport.inflight = nil, nil
 	approvalReport.Unlock()
@@ -30,6 +45,19 @@ func setApprovalRetryDelays(t interface{ Cleanup(func()) }, d []time.Duration) {
 	t.Cleanup(func() {
 		approvalReport.Lock()
 		approvalRetryDelays = old
+		approvalReport.Unlock()
+	})
+}
+
+// setApprovalRetryTail swaps the wait between attempts after the listed ones.
+func setApprovalRetryTail(t interface{ Cleanup(func()) }, d time.Duration) {
+	approvalReport.Lock()
+	old := approvalRetryTail
+	approvalRetryTail = d
+	approvalReport.Unlock()
+	t.Cleanup(func() {
+		approvalReport.Lock()
+		approvalRetryTail = old
 		approvalReport.Unlock()
 	})
 }

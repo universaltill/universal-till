@@ -586,7 +586,7 @@ func TestOffsite_CardCredentialRefusalSaysWhatToDo(t *testing.T) {
 	_ = d.Settings.Set(ctx, data.OffsiteFailingSinceKey, time.Now().UTC().Format(time.RFC3339))
 	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "true")
 	b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
-	if !strings.Contains(b, `data-state="refused"`) || !strings.Contains(b, "no longer accepts this till") ||
+	if !strings.Contains(b, `data-state="refused"`) || !strings.Contains(b, "not connected to your shop") ||
 		!strings.Contains(b, `data-testid="backup-cloud-reason-link"`) || !strings.Contains(b, `href="/settings#registration"`) ||
 		!strings.Contains(b, `class="set-row set-below"><a class="btn secondary"`) {
 		t.Fatalf("owned store card: %s", b)
@@ -595,7 +595,7 @@ func TestOffsite_CardCredentialRefusalSaysWhatToDo(t *testing.T) {
 		t.Fatalf("falls back to the restore line: %s", b)
 	}
 	_ = d.Settings.Set(ctx, entitlement.KeyStoreClaimed, "false")
-	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); !strings.Contains(b, "Reconnect the till") {
+	if b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String(); !strings.Contains(b, "Reconnect it in Settings") {
 		t.Fatalf("anonymous store card: %s", b)
 	}
 	// A replaced till has no card.
@@ -623,5 +623,54 @@ func TestOffsite_CloudFailingChipHiddenWhenNotMainReplacedOrRefused(t *testing.T
 				t.Fatalf("chip shown: %s", b)
 			}
 		})
+	}
+}
+
+// ut-docs#7171: the card's key forms swap outerHTML into #backup-cloud-card, so
+// a PIN prompt whose hint lands there REPLACES the card; the dialog's retry
+// then has no target and never fires ("Confirm does nothing"). The prompt
+// must land in the card's message span, and only the finished answer (the
+// card) may replace the card.
+func TestOffsite_KeyFlowsPromptLandsInMessageSpanAndAnswerReplacesCard(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	withManagerPIN(t, d)
+	svc := offsitebackup.Shared(d.Cfg, d.Db)
+	if _, _, err := svc.Uploader.Keys.Generate("st_1"); err != nil {
+		t.Fatal(err)
+	}
+	flows := []struct {
+		path string
+		form url.Values
+	}{
+		{"/api/offsite/key/choice", url.Values{"choice": {"on"}}},
+		{"/api/offsite/key/new", url.Values{}},
+		{"/api/offsite/key/enter", url.Values{"saved_key": {"UTK1-NOPE"}}},
+	}
+	for _, f := range flows {
+		rec := postAs(mux, f.path, f.form, &mgrUser)
+		body := rec.Body.String()
+		if !strings.Contains(body, "override_pin") {
+			t.Fatalf("%s: no prompt: %s", f.path, body)
+		}
+		if got := rec.Header().Get("HX-Retarget"); got != "#backup-cloud-msg" {
+			t.Errorf("%s prompt HX-Retarget = %q, want #backup-cloud-msg", f.path, got)
+		}
+		if got := rec.Header().Get("HX-Reswap"); got != "innerHTML" {
+			t.Errorf("%s prompt HX-Reswap = %q, want innerHTML", f.path, got)
+		}
+		if !strings.Contains(body, `hx-target="#backup-cloud-msg"`) {
+			t.Errorf("%s: the dialog's own request must target the message span: %s", f.path, body)
+		}
+		f.form.Set("override_pin", offsitePIN)
+		rec = postAs(mux, f.path, f.form, &mgrUser)
+		if got := rec.Header().Get("HX-Retarget"); got != "#backup-cloud-card" {
+			t.Errorf("%s answer HX-Retarget = %q, want #backup-cloud-card", f.path, got)
+		}
+		if got := rec.Header().Get("HX-Reswap"); got != "outerHTML" {
+			t.Errorf("%s answer HX-Reswap = %q, want outerHTML", f.path, got)
+		}
+		if !strings.Contains(rec.Body.String(), `id="backup-cloud-card"`) {
+			t.Errorf("%s answer is not the card: %s", f.path, rec.Body.String())
+		}
 	}
 }

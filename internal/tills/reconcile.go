@@ -39,6 +39,10 @@ const (
 	StateCloudOnly State = "cloud_only"
 	// StateRoleMismatch: both lists know it, with different roles.
 	StateRoleMismatch State = "role_mismatch"
+	// StateOldEntry: enrolled here, not in the account, and either the account
+	// removed that till or it has not been seen for OldEntryAfter. Safe to
+	// remove with one tap (ut-docs#7097).
+	StateOldEntry State = "old_entry"
 	// StateReplaced: this till (the old main) was replaced.
 	StateReplaced State = "replaced"
 )
@@ -48,6 +52,10 @@ type Action string
 
 // ActionRemove revokes the local enrolment (POST /api/sync/tills/{id}/revoke).
 const ActionRemove Action = "remove"
+
+// OldEntryAfter is how long a till not in the account must have been unseen
+// to count as an old entry.
+const OldEntryAfter = 30 * 24 * time.Hour
 
 // SelfInfo is this till.
 type SelfInfo struct{ ID, Name, Role string }
@@ -59,6 +67,9 @@ type Source struct {
 	Local    []data.TillRow
 	Self     SelfInfo
 	Replaced *enroll.Replaced
+	// RemovedTillIDs are till ids the account lists as removed (the cloud's
+	// removed_tills); nil while the cloud does not send them.
+	RemovedTillIDs map[string]bool
 }
 
 // Row is one till in the merged list.
@@ -147,6 +158,10 @@ func Merge(s Source, now time.Time, staleAfter time.Duration) []Row {
 				seen = l.EnrolledAt
 			}
 			r.LongUnseen = unseenFor(seen, now) >= staleAfter
+			if s.RemovedTillIDs[l.ID] || (seen != "" && unseenFor(seen, now) >= OldEntryAfter) {
+				r.State = StateOldEntry
+				r.LongUnseen = true
+			}
 			r.Actions = []Action{ActionRemove}
 		}
 		add(r)

@@ -110,6 +110,17 @@ func (r *InstallStatusRepo) List(ctx context.Context) ([]InstallStatusRow, error
 	return out, rows.Err()
 }
 
+// DeleteForListing removes one listing's record, only while it still names pluginID
+// (compare-and-delete: a concurrent re-key/reinstall to another plugin is kept). ut-docs#7034.
+func (r *InstallStatusRepo) DeleteForListing(ctx context.Context, listingID, pluginID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM plugin_install_status WHERE listing_id = ? AND plugin_id = ?`, listingID, pluginID)
+	if err != nil {
+		return fmt.Errorf("delete install status for listing: %w", err)
+	}
+	return nil
+}
+
 // DeleteForPlugin removes records for a plugin id (records are keyed by
 // listing id; uninstall clears by the installed plugin's id).
 func (r *InstallStatusRepo) DeleteForPlugin(ctx context.Context, pluginID string) error {

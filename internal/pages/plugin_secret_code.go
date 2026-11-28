@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -9,12 +10,13 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pluginsecretapply"
 )
 
 // The till side of the one-time key delivery code (ut-docs#6960, ADR-0213
 // Decision 9): a plugin's settings page whose plugin has an allow-listed
-// secret (pluginsecretapply) offers "Scan code" / "Type code". The code is
+// secret (declared in the plugin manifest, pluginsecretapply.SecretKeysFor) offers "Scan code" / "Type code". The code is
 // posted to the cloud through the main till's device credential; the key
 // then arrives as an ordinary set_plugin_secret directive. The code is never
 // stored, logged or echoed; every refusal is the same answer.
@@ -29,8 +31,27 @@ type secretCodeView struct {
 	KeySet    bool // a key is already stored (never its value)
 }
 
+// secretKeyOf is the one declared global secret setting of a plugin the key
+// delivery code can fill: from the installed manifest (display only; the
+// delivery itself is applied against the VERIFIED manifest). A plugin that
+// declares none, or several, offers no code entry.
+func secretKeyOf(r *http.Request, d *common.Deps, pluginID string) (string, bool) {
+	seam := pluginsecretapply.ManifestFunc(func(ctx context.Context, id string) (pluginsecretapply.Declared, error) {
+		m, installed, err := plugins.InstalledManifest(ctx, d.Db, id)
+		if err != nil || !installed {
+			return pluginsecretapply.Declared{}, err
+		}
+		return pluginsecretapply.DeclaredFrom(m), nil
+	})
+	keys := pluginsecretapply.SecretKeysFor(r.Context(), seam, pluginID)
+	if len(keys) != 1 {
+		return "", false
+	}
+	return keys[0], true
+}
+
 func secretCodeRow(r *http.Request, d *common.Deps, repo *data.PluginRepo, pluginID string) secretCodeView {
-	key, ok := pluginsecretapply.SecretKeyFor(pluginID)
+	key, ok := secretKeyOf(r, d, pluginID)
 	if !ok {
 		return secretCodeView{}
 	}
@@ -54,7 +75,7 @@ func registerPluginSecretCode(mux *http.ServeMux, d *common.Deps, repo *data.Plu
 			writeSecretCode(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		if _, ok := pluginsecretapply.SecretKeyFor(r.PathValue("id")); !ok {
+		if _, ok := secretKeyOf(r, d, r.PathValue("id")); !ok {
 			writeSecretCode(w, http.StatusNotFound, "not_found")
 			return
 		}
@@ -105,7 +126,7 @@ func registerPluginSecretCode(mux *http.ServeMux, d *common.Deps, repo *data.Plu
 			writeSecretCode(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		key, ok := pluginsecretapply.SecretKeyFor(r.PathValue("id"))
+		key, ok := secretKeyOf(r, d, r.PathValue("id"))
 		if !ok {
 			writeSecretCode(w, http.StatusNotFound, "not_found")
 			return

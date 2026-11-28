@@ -1582,7 +1582,14 @@ func saleStatusTransitionAllowed(from, to string) bool {
 	}
 }
 
-// UpdateSaleStatus updates sale.status and writes audit_log. Status expected:
+// SaleStatusTransitionAllowed reports whether a sale may move from -> to; the
+// status handler asks it before a manager approval is prompted or spent, so
+// an impossible move answers 409 without touching a PIN or a token.
+func SaleStatusTransitionAllowed(from, to string) bool {
+	return saleStatusTransitionAllowed(from, to)
+}
+
+// UpdateSaleStatusFrom updates sale.status and writes audit_log. Status expected:
 // open|parked|voided|refunded|completed, and the move must be allowed from the
 // sale's current status (saleStatusTransitionAllowed) — otherwise
 // ErrSaleStatusTransition, with nothing changed and no audit row.
@@ -1611,7 +1618,12 @@ func saleStatusTransitionAllowed(from, to string) bool {
 // behaviour is unchanged. additionalTill is the till's current role, not
 // where the sale was made: a till whose sync.primary_url were cleared would
 // void its old voucher sales again (no code clears it today).
-func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string, additionalTill bool) error {
+//
+// expectedFrom is the status the caller's gate saw (ut-docs#7140): when it is
+// not "" and the in-tx status differs → ErrSaleStatusTransition, nothing
+// written. A manager approval is bound to that status, so it cannot be spent
+// on a sale that changed since the prompt. "" skips the check.
+func UpdateSaleStatusFrom(ctx context.Context, sqlDB *sql.DB, saleID, expectedFrom, status, actorID, blockedActorID, reason string, additionalTill bool) error {
 	if saleID == "" {
 		return errors.New("saleID required")
 	}
@@ -1630,6 +1642,9 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 		from, err := repo.SaleStatus(ctx, tx, saleID)
 		if err != nil {
 			return err
+		}
+		if expectedFrom != "" && from != expectedFrom {
+			return fmt.Errorf("%w: %s changed to %s", ErrSaleStatusTransition, expectedFrom, from)
 		}
 		if !saleStatusTransitionAllowed(from, status) {
 			return fmt.Errorf("%w: %s -> %s", ErrSaleStatusTransition, from, status)

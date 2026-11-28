@@ -25,7 +25,10 @@ grep -q 'Authorization: Bearer SECRET-TOKEN-VALUE' "$hdr" || { echo "no auth hea
 case "$args" in *"X-Seller-Account-Id: 1234567"*) ;; *) echo "no seller header" >>"$MOCK_LOG";; esac
 case "$args" in *blob.core.windows.net*) printf '%s' "${MOCK_BLOB:-blob-bytes}" >"$out"; printf 200; exit 0;; esac
 case "$args" in *"/status"*) echo '{"responseData":{"isReady":true}}' >"$out";; *) echo '{}' >"$out";; esac
-if [ -n "${MOCK_FAIL_ON:-}" ] && [[ "$args" == *"$MOCK_FAIL_ON"* ]]; then printf 500; else printf 200; fi
+if [ -n "${MOCK_FAIL_ON:-}" ] && [[ "$args" == *"$MOCK_FAIL_ON"* ]]; then
+  [ -n "${MOCK_ERR_BODY+x}" ] && printf '%s' "$MOCK_ERR_BODY" >"$out"
+  printf '%s' "${MOCK_FAIL_CODE:-500}"
+else printf 200; fi
 C
 chmod +x "$W/bin/"*
 D=6d98e8b6420256639e35f3b5e821e1b564efc124a5c842a9b91f490ea6efd663
@@ -80,6 +83,31 @@ MOCK_FAIL_ON="-X PUT" t 1 "a non-2xx update fails closed"
 MOCK_FAIL_ON="/packages/commit" COMMIT=true t 1 "a non-2xx commit fails closed"
 MSSTORE_APP_ID="bad id" t 1 "refuses a malformed app id"
 MSSTORE_TOKEN_FILE="$W/none" t 1 "refuses a missing token file"
+# --- diagnosability: a non-2xx prints the code + a sanitised body, and the token's non-secret claims ---
+b64u() { printf '%s' "$1" | base64 | tr -d '=\n' | tr '/+' '_-'; }
+JWT="$(b64u '{"alg":"RS256"}').$(b64u '{"aud":"https://api.store.microsoft.com","iss":"https://sts.windows.net/T-1/","tid":"T-1","appid":"APP-1","oid":"OID-1","roles":["R1"],"exp":1893456000,"secretish":"LEAK-ME"}').SIGNATURE-PART-LEAK"
+printf '%s' "$JWT" >"$W/jwt"
+ERR='{"error":{"code":"Forbidden","message":"seller not linked","correlationId":"abc-123"},"junk":"EXTRA-FIELD-LEAK"}'
+MSSTORE_TOKEN_FILE="$W/jwt" MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY="$ERR" t 1 "403 with a JSON error body fails closed"
+grep -q 'HTTP 403' "$W/out" && grep -q 'Forbidden' "$W/out" && grep -q 'seller not linked' "$W/out" && grep -q 'abc-123' "$W/out" && echo "ok   - 403 prints code, error code, message, correlation id" || { echo "FAIL - 403 body not shown" >&2; cat "$W/out" >&2; fails=$((fails+1)); }
+! grep -q 'EXTRA-FIELD-LEAK' "$W/out" && echo "ok   - only the whitelisted error fields are printed" || { echo "FAIL - unlisted field printed" >&2; fails=$((fails+1)); }
+grep -q 'T-1' "$W/out" && grep -q 'APP-1' "$W/out" && grep -q 'OID-1' "$W/out" && grep -q 'api.store.microsoft.com' "$W/out" && grep -q 'R1' "$W/out" && echo "ok   - non-secret token claims printed (aud, tid, appid, oid, roles)" || { echo "FAIL - claims not shown" >&2; cat "$W/out" >&2; fails=$((fails+1)); }
+! grep -qF -e "$JWT" -e 'SIGNATURE-PART-LEAK' -e 'LEAK-ME' -e "$(printf '%s' "$JWT" | cut -d. -f2)" "$W/out" && echo "ok   - the token and its unlisted claims are never printed" || { echo "FAIL - token material printed" >&2; fails=$((fails+1)); }
+MSSTORE_TOKEN_FILE="$W/jwt" MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY='<html>not json eyJhbGciOi.secret.sig '"$JWT"'</html>' t 1 "403 with a non-JSON body fails closed"
+grep -q 'HTTP 403' "$W/out" && ! grep -qF -e "$JWT" -e 'eyJhbGciOi' -e 'SIGNATURE-PART-LEAK' "$W/out" && echo "ok   - non-JSON body is safe (token-shaped text scrubbed)" || { echo "FAIL - non-JSON body unsafe" >&2; cat "$W/out" >&2; fails=$((fails+1)); }
+MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY='' t 1 "403 with an empty body fails closed"
+grep -q 'HTTP 403' "$W/out" && grep -qi 'empty' "$W/out" && echo "ok   - empty body reported" || { echo "FAIL - empty body" >&2; fails=$((fails+1)); }
+MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY="$(head -c 5000 /dev/zero | tr '\0' 'x')" t 1 "a huge body fails closed"
+[ "$(wc -c <"$W/out")" -lt 3000 ] && echo "ok   - output is length-capped" || { echo "FAIL - not capped" >&2; fails=$((fails+1)); }
+MSSTORE_TOKEN_FILE="$W/jwt" MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY="$(printf '{"message":"split %s"}' "$(cut -d. -f3 "$W/jwt")")" t 1 "a signature echoed alone fails closed"
+! grep -q 'SIGNATURE-PART-LEAK' "$W/out" && echo "ok   - echoed signature segment scrubbed" || { echo "FAIL - signature leaked" >&2; fails=$((fails+1)); }
+MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY='{"x":1}' t 1 "JSON without error fields fails closed"
+grep -q 'without a known error field' "$W/out" && echo "ok   - unknown JSON shape reported" || { echo "FAIL - fallback" >&2; fails=$((fails+1)); }
+MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY='{"message":"line1\n::error::injected"}' t 1 "workflow-command injection in a body fails closed"
+! grep -q '^::error::injected' "$W/out" && echo "ok   - body cannot inject workflow commands" || { echo "FAIL - injection" >&2; fails=$((fails+1)); }
+MOCK_FAIL_ON="/packages" MOCK_FAIL_CODE=403 MOCK_ERR_BODY='{"message":"echo SECRET-TOKEN-VALUE and Authorization: Bearer OTHER-OPAQUE-1"}' t 1 "an opaque token echoed in a body fails closed"
+grep -qi 'not a decodable JWT' "$W/out" && ! grep -q 'SECRET-TOKEN-VALUE\|OTHER-OPAQUE-1' "$W/out" && echo "ok   - opaque token handled, echoed token and Bearer value scrubbed" || { echo "FAIL - opaque token" >&2; fails=$((fails+1)); }
+DRY_RUN=false MOCK_FAIL_ON="-X PUT" MOCK_FAIL_CODE=403 MOCK_ERR_BODY="$ERR" t 1 "a 403 on the write path still fails closed"
 DRY_RUN=maybe t 1 "refuses a DRY_RUN that is not true/false"
 [ "$fails" = 0 ] || exit 1
 echo "✓ msstore-submit_test: all cases passed"

@@ -94,6 +94,7 @@
       "namespaces": [
         "about",
         "settings",
+        "layout",
         "admin",
         "nav",
         "menu",
@@ -126,6 +127,7 @@
       "description": "First-run setup, the guided tour, demo data and onboarding notices.",
       "namespaces": [
         "setup",
+        "shoptemplate",
         "tour",
         "demo",
         "shop_name_notice",

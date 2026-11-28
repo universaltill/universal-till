@@ -28,8 +28,10 @@ const (
 	lanModeAuto  = "auto"
 	lanModeOn    = "on"
 	lanModeOff   = "off"
-	lanPolicyTTL = 2 * time.Second
 )
+
+// lanPolicyTTL is a var only as a test seam (ut-docs#7091).
+var lanPolicyTTL = 2 * time.Second
 
 // lanAllowed is the lanaccess policy. It is read once per incoming
 // connection, so the answer is cached briefly: a port scan must not become a

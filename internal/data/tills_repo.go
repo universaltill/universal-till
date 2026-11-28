@@ -250,6 +250,45 @@ func (r *TillsRepo) TillByName(ctx context.Context, name string) (TillRow, bool,
 	return TillRow{}, false, nil
 }
 
+// TillByDeviceID finds the enrolled till that joined with deviceID (ut-docs#7097,
+// migration 118). An empty id never matches (rows enrolled earlier hold "").
+func (r *TillsRepo) TillByDeviceID(ctx context.Context, deviceID string) (TillRow, bool, error) {
+	if deviceID == "" {
+		return TillRow{}, false, nil
+	}
+	var id string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM tills WHERE device_id = ? LIMIT 1`, deviceID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return TillRow{}, false, nil
+	}
+	if err != nil {
+		return TillRow{}, false, fmt.Errorf("till by device id: %w", err)
+	}
+	list, err := r.ListTills(ctx)
+	if err != nil {
+		return TillRow{}, false, fmt.Errorf("till by device id: %w", err)
+	}
+	for _, t := range list {
+		if t.ID == id {
+			return t, true, nil
+		}
+	}
+	return TillRow{}, false, nil
+}
+
+// SetDeviceID records the device id a till joined with. One device id belongs to
+// one till row, the first to claim it: a later row asserting the same id gets
+// none, so a lookup by device id is never ambiguous and a self-asserted id never
+// moves a device id off the till that really holds it (ut-docs#7097 review).
+func (r *TillsRepo) SetDeviceID(ctx context.Context, id, deviceID string) error {
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE tills SET device_id = ? WHERE id = ?
+  AND NOT EXISTS (SELECT 1 FROM tills WHERE device_id = ? AND id <> ?)`, deviceID, id, deviceID, id); err != nil {
+		return fmt.Errorf("set till device id: %w", err)
+	}
+	return nil
+}
+
 // ErrTillStillLive: the till to replace was seen too recently to be gone.
 var ErrTillStillLive = errors.New("till is still live")
 

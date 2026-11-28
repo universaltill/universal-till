@@ -49,7 +49,7 @@ func TestCloudAuthChip_EmptyBeforeTheThird401(t *testing.T) {
 func TestCloudAuthChip_RendersEachVariantVerbatim(t *testing.T) {
 	const (
 		revoked  = "Removed from the shop&#39;s cloud account"
-		repair   = "This till needs pairing again"
+		repair   = "Needs a code to reconnect"
 		register = "Cloud sign-in lost"
 	)
 	all := []string{revoked, repair, register}
@@ -153,7 +153,7 @@ func TestStoreHasOwner(t *testing.T) {
 // ut-docs#5157: a till whose data was restored onto a new device shows a
 // "connect again" chip until it is registered or paired again.
 func TestCloudAuthChip_RestoredVariantAndGating(t *testing.T) {
-	const label = "Restored on a new device — connect again"
+	const label = "Restored on a new device"
 	for _, c := range []struct {
 		name     string
 		restored bool

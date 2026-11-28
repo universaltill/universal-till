@@ -32,7 +32,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pairingpush"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
@@ -334,14 +333,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	shellChannel := common.NewShellChannel(state.WindowMode)
 	windowCtl := newWindowController(shellChannel, piKioskServiceInstalled(), runtime.GOOS)
 
+	shopTemplates, tmplErr := loadShopTemplates(i18n)
+	if tmplErr != nil {
+		// No templates: every shop renders as it did before them.
+		log.Errorf("shop-type templates did not load, running without them: %v", tmplErr)
+	}
 	dp := &common.Deps{
-		Cfg:      cfg,
-		Pm:       pm,
-		Db:       db,
-		Settings: setStore,
-		State:    state,
-		BaseMenu: baseMenu,
-		Menu:     common.BuildMenu(baseMenu, pm),
+		ShopTemplates: shopTemplates,
+		Cfg:           cfg,
+		Pm:            pm,
+		Db:            db,
+		Settings:      setStore,
+		State:         state,
+		BaseMenu:      baseMenu,
+		Menu:          common.BuildMenu(baseMenu, pm),
 		// ADR-0088: the layout amendments in force, read once here and
 		// again on every ReloadPlugins — never per render.
 		MenuAmendments: common.BuildMenuAmendments(pm, common.RestoredMenuKeys(ctx, setStore)),
@@ -407,33 +412,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
 
-	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
-	// finding 4): builtinlayouts.Sync was previously only called from the
-	// two write handlers that set common.KeyShopType (setup_page.go,
-	// settings_page.go's shop-type API) — a shop that already had
-	// shop_type=service persisted before this wiring existed (or after a
-	// DB restore, or a manual plugin uninstall) got nothing until an
-	// operator happened to re-save the same dropdown value. Reconcile once
-	// here, on every boot, so an existing shop_type converges without
-	// needing a no-op Settings save. Same best-effort, non-fatal stance as
-	// setup_page.go's call: a boot must never be blocked over a cosmetic
-	// menu personalization.
-	// ut-docs#2006: reload unless it's a genuine no-op (no error, nothing
-	// changed) — an error still reloads, since a failed reinstall can leave
-	// the DB changed (removeBuiltin succeeded) even though Sync itself
-	// returned an error.
-	if shopType, _, err := setStore.Get(ctx, common.KeyShopType); err != nil {
-		log.Warnf("boot: could not read shop_type for builtin layout reconciliation: %v", err)
+	// ADR-0190 (ut-docs#6332): the salon layout plugin earlier builds
+	// installed for every service shop is gone — the service template carries
+	// its layout. Remove a leftover copy once, then build the template
+	// amendments for the shop's type (a plugin reload already does).
+	// Never without the templates: a failed template load must not also take
+	// the salon layout away from a service shop (nothing would replay it).
+	if shopTemplates != nil && removeRetiredLayoutPlugins(ctx, db, dp.Settings) {
+		if err := dp.ReloadPlugins(ctx); err != nil {
+			log.Warnf("boot: could not reload plugins after removing the retired layout plugin: %v", err)
+		}
 	} else {
-		changed, syncErr := builtinlayouts.Sync(ctx, db, shopType)
-		if syncErr != nil {
-			log.Warnf("boot: could not sync builtin layout for shop_type %q: %v", shopType, syncErr)
-		}
-		if syncErr != nil || changed {
-			if err := dp.ReloadPlugins(ctx); err != nil {
-				log.Warnf("boot: could not reload plugins after shop_type layout sync: %v", err)
-			}
-		}
+		dp.ReloadTemplate(ctx)
 	}
 
 	// Boot-time release-all (ut-docs#1712), then boot re-claim (ut-docs#1704)
@@ -674,7 +664,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("main-till link client", func() { StartSyncLinkClient(bgCtx, dp, wg) })                    // replica side of the main-till link (ADR-0114); joined by app.Run's drain
 	netaccess.StartService("held-order table-claim re-affirm", func() { StartHeldOrderClaimReaffirm(bgCtx, dp, wg) }) // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)                                                                         // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
-	StartShopTypeLayoutReconcile(bgCtx, dp, wg)                                                                       // builtin layout follows a pulled/remote shop_type between sales (ut-docs#2793); joined by app.Run's drain
+	StartTemplateStateReconcile(bgCtx, dp, wg)                                                                        // template layout follows a pulled/remote shop_type or ledger (ut-docs#2793, ADR-0190); joined by app.Run's drain
+	netaccess.StartService("cloud credential self-heal", func() { StartCredHeal(bgCtx, dp, wg) })                     // ADR-0222: a dead cloud credential is recovered by proving the approval key; joined by app.Run's drain
 	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain
@@ -688,6 +679,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	backfillRegionalLocaleFromCountry(ctx, dp)                                                                   // ut-docs#5751: unconfirmed same-language locale takes the country's region (en-US -> en-GB); before #1892's backfill and the base-plugin retry
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                      // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	bootTSECredentialCheck(ctx, dp)                                                                              // ut-docs#7050: backfill the held-credential marker, then flag a restored main till whose TSE credential did not travel (no network; never blocks boot)
 	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
 	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) }) // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser

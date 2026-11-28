@@ -437,3 +437,18 @@ func TestSyncSettingsApply_SameCountryIsNoChange(t *testing.T) {
 	}
 	wantPending(t, m.dp)
 }
+
+// ADR-0190 / ADR-0086: the shop type and the template ledger are changed on
+// the main till only (the preview and apply run there); a satellite on the
+// previous build that still forwards them is refused, so the type's template
+// never applies without a preview.
+func TestSyncSettingsApply_RefusesShopTypeAndTemplateKeys(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	for _, key := range []string{common.KeyShopType, "shop.template_applied", "shop.template_offer"} {
+		body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(key, "retail"), ActorID: "m-1"})
+		wantSyncSettingsError(t, postSyncSettingsApply(m.mux, body, syncSettingsBearer), http.StatusConflict, "main_till_only")
+		if mustSetting(t, m.dp, key) != "" {
+			t.Errorf("%s must not be written from a satellite", key)
+		}
+	}
+}

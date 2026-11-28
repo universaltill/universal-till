@@ -43,7 +43,7 @@
   <div id="card-reader-live" class="card-reader-live" aria-live="polite" role="status"
        data-announce="{{ T "card_reader.announce.changed" }}" data-auto-announce="{{ T "card_reader.pick.auto" }}"
        data-declined="{{ T "card_reader.external.declined_notice" }}"></div>
-  <form id="card-reader-form" class="card-reader-actions" novalidate hx-post="/api/pos/tender" hx-include="#offline-flag"
+  <form id="card-reader-form" class="card-reader-actions" novalidate hx-post="/api/pos/tender" hx-include="#offline-flag, #tip-bp, #tip-minor"
         hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
         data-after-request="ok no-error-toast close:payment-overlay">
     <input type="hidden" name="amount" value="0">

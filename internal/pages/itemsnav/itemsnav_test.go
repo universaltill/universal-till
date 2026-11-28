@@ -43,7 +43,7 @@ func TestResolve_RelabelAndReorderAmendment(t *testing.T) {
 	initRealI18n(t)
 	one := 1
 	got := Resolve("en", []uislot.Amendment{
-		{PluginID: "com.example.layout", Slot: uislot.ItemsSlot, Key: "/catalog", LabelKey: "layout.salon.services", Order: &one},
+		{PluginID: "com.example.layout", Slot: uislot.ItemsSlot, Key: "/catalog", LabelKey: "plugin.example.services", Order: &one},
 	})
 	if len(got) != len(uislot.CoreItems) {
 		t.Fatalf("a relabel/reorder must not drop or add rows, got %d", len(got))
@@ -51,8 +51,8 @@ func TestResolve_RelabelAndReorderAmendment(t *testing.T) {
 	if got[0].Href != "/catalog" {
 		t.Fatalf("the reordered row must now be first, got %+v", got[0])
 	}
-	// "layout.salon.services" has no English translation in core's own
-	// locales (it ships only in plugins/layout-salon/locales) — Decision G's
+	// "plugin.example.services" has no English translation in core's own
+	// locales (it would ship only in a plugin's locales) — Decision G's
 	// fallback must degrade to the CORE label key, not the raw plugin key.
 	if got[0].NameKey != "nav.catalog" {
 		t.Fatalf("missing translation must fall back to the core label key, got %q", got[0].NameKey)

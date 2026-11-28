@@ -80,6 +80,9 @@ func refuseShopWideDirectiveOnAdditionalTill(ctx context.Context, d *common.Deps
 
 func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 	logicalKey, _ := resolveFiscalPostureKey(d, key)
+	if logicalKey == tseCredentialHeldKey { // ut-docs#7050: restore-detection bookkeeping, never remote
+		return fmt.Errorf("%s is bookkeeping and cannot be set via a remote directive", logicalKey)
+	}
 	if logicalKey == wireKeySigningDeviceConfigured || logicalKey == wireKeySigningDeviceFailingSince {
 		return fmt.Errorf("fiscal posture (%s) is owner-only and cannot be set via a remote directive", logicalKey)
 	}
@@ -145,6 +148,17 @@ var reportedReadOnlyTillSettingKeys = func() []string {
 // or the write is refused with a "changed since"
 // message and nothing is written.
 func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string, expect *string) (string, error) {
+	return cloudSetTillSettingCond(ctx, d, rederive, key, value, expect, cloudsync.TillSettingCond{})
+}
+
+// cloudSetTillSettingCond is cloudSetTillSetting plus the shop-config version
+// rules (design-B 4.2/4.3): the tier the cloud believes the key has must be the
+// till's own (tier_mismatch), and ver/base_ver are checked against the key's
+// setting_meta -- base_ver older than the till's version is a conflict, a ver
+// not newer is stale -- both refusing with nothing written. The version check
+// repeats atomically inside the write (SettingsRepo.SetFromCloud). No fields =
+// an older cloud's unconditional write, as before.
+func cloudSetTillSettingCond(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string, expect *string, cond cloudsync.TillSettingCond) (string, error) {
 	if !allowedRemoteTillSettingKeys[key] {
 		return "", fmt.Errorf("%s is not a remote-configurable till setting", key)
 	}
@@ -152,6 +166,15 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		return "", err
 	}
 	entry, _ := data.LookupAgentSetting(key)
+	// The till's registry is the authority: a portal that is stale about a
+	// key's tier must not push it through a weaker (or different) gate.
+	if cond.Tier != "" && cond.Tier != entry.Tier {
+		return "", &cloudsync.ReasonError{Key: cloudsync.ReasonSettingTierMismatch,
+			Message: key + " has a different protection tier on this till; nothing was changed"}
+	}
+	if err := settingVersionRefusal(key, d.Settings.CheckCloudVersion(ctx, key, cond.Ver, cond.BaseVer)); err != nil {
+		return "", err
+	}
 	if expect != nil {
 		if err := checkExpectedTillSetting(ctx, d, entry, *expect); err != nil {
 			return "", err
@@ -231,6 +254,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		}
 		msg, err := cloudSetShopLocale(ctx, d, rederive, value)
 		if err == nil {
+			_ = d.Settings.MarkCloudApplied(ctx, key, cond.Ver) // the language is written with its companions, then versioned
 			auditRemoteTillSetting(ctx, d, key, oldValue, value)
 		}
 		return msg, err
@@ -257,7 +281,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		}
 	}
 	// settings-write:allow a cloud set_till_setting directive: a shop-wide key reaches this only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998); a per-till key is local by definition
-	if err := d.Settings.Set(ctx, key, value); err != nil {
+	if err := settingVersionRefusal(key, d.Settings.SetFromCloud(ctx, key, value, cond.Ver, cond.BaseVer)); err != nil {
 		return "", err
 	}
 	auditRemoteTillSetting(ctx, d, key, oldValue, value)
@@ -268,6 +292,54 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		rederive(ctx)
 	}
 	return key + " = " + value, nil
+}
+
+// settingVersionRefusal turns the repo's version errors into the reason codes
+// my. translates; any other error passes through.
+func settingVersionRefusal(key string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, data.ErrSettingConflict):
+		return &cloudsync.ReasonError{Key: cloudsync.ReasonSettingConflict, Cause: err,
+			Message: key + " was changed on this till after the edit was made; nothing was overwritten"}
+	case errors.Is(err, data.ErrSettingStaleVersion):
+		return &cloudsync.ReasonError{Key: cloudsync.ReasonSettingStale, Cause: err,
+			Message: key + " already has this version or a newer one; nothing was changed"}
+	}
+	return err
+}
+
+// settingMetaReport is one core setting's version in the check-in report.
+type settingMetaReport struct {
+	Ver    int64  `json:"ver"`
+	Origin string `json:"origin"`
+	At     string `json:"at,omitempty"` // RFC 3339, display only (ordering is by ver)
+}
+
+// remoteTillSettingsMetaReport is the version of every reported registry key
+// (design-B 4.3: the report reads the setting_meta rows, not a constant). A
+// key never versioned reads ver 1, origin till. Only registry keys are ever
+// reported and no value rides along, so a secret-tier key leaks nothing but
+// its version.
+func remoteTillSettingsMetaReport(ctx context.Context, d *common.Deps) map[string]settingMetaReport {
+	stored, _ := d.Settings.SettingMetaAll(ctx)
+	out := make(map[string]settingMetaReport, len(data.AgentSettings))
+	for _, s := range data.AgentSettings {
+		if s.Tier == data.SettingTierNever || !data.ValidSettingTier(s.Tier) {
+			continue
+		}
+		m, ok := stored[s.Key]
+		if !ok {
+			m = data.SettingMeta{Ver: 1, Origin: data.SettingOriginTill}
+		}
+		r := settingMetaReport{Ver: m.Ver, Origin: m.Origin}
+		if !m.At.IsZero() {
+			r.At = m.At.UTC().Format(time.RFC3339)
+		}
+		out[s.Key] = r
+	}
+	return out
 }
 
 // checkExpectedTillSetting is the compare-and-set of set_till_setting's
@@ -1278,6 +1350,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		SetTillSetting: func(ctx context.Context, key, value string, expect *string) (string, error) {
 			return cloudSetTillSetting(ctx, d, rederive, key, value, expect)
 		},
+		SetTillSettingCond: func(ctx context.Context, key, value string, expect *string, cond cloudsync.TillSettingCond) (string, error) {
+			return cloudSetTillSettingCond(ctx, d, rederive, key, value, expect, cond)
+		},
 		// rename_till (ut-docs#3272): the owner renamed this till in the
 		// cloud; Tick already checked it names this device. See
 		// cloudRenameTill.
@@ -1544,6 +1619,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// Shop-config design 4.3: the version of each of those
+				// keys (additive; an older cloud ignores it).
+				"till_settings_meta": remoteTillSettingsMetaReport(ctx, d),
 				// ut-docs#3390: the choices for the settings whose options
 				// only the till knows (its installed languages).
 				"till_setting_options": remoteTillSettingOptions(),

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -105,6 +106,10 @@ type pendingJoinState struct {
 func (s *pendingJoinState) code() string {
 	return derivedVerificationCode(s.commitment, s.primaryTillID, s.pin)
 }
+
+// pairRequestDeviceID is this till's own device id, sent with the pair request
+// (ut-docs#7097); a var so a test can set it.
+var pairRequestDeviceID = func() string { return enroll.CurrentStatus().DeviceID }
 
 // newPairPinnedClient builds the TLS client for one pairing call: learning
 // the pin (expectPin "") for the pair request, enforcing it for the polls.
@@ -406,7 +411,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		sum := sha256.Sum256([]byte(secret))
 		commitment := hex.EncodeToString(sum[:])
 
-		body, _ := json.Marshal(map[string]string{"device_name": name, "commitment": commitment, "role": role})
+		reqBody := map[string]string{"device_name": name, "commitment": commitment, "role": role}
+		if id := pairRequestDeviceID(); id != "" {
+			reqBody["device_id"] = id // ut-docs#7097: one pending request per device
+		}
+		body, _ := json.Marshal(reqBody)
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			baseURL+"/api/sync/pair-request", bytes.NewReader(body))
 		if err != nil {

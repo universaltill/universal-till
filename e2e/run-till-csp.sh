@@ -38,4 +38,6 @@ go run ./e2e/seed_demo
 BIN="$DATA_DIR/.ut-e2e-csp-bin"
 go build -o "$BIN" "$ROOT"
 cd "$DATA_DIR"
-exec "$BIN"
+# shellcheck source=e2e/run-till-lib.sh
+source "$ROOT/e2e/run-till-lib.sh"
+ut_e2e_serve "$BIN"

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // ut-docs#6960 (ADR-0213 Decision 9): the plugin settings page's "Get the
@@ -26,6 +29,20 @@ func seedKeyPlugin(t *testing.T, dp *common.Deps) {
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.Exec(`INSERT INTO plugins(id,name,version,entrypoint,is_active) VALUES('sumup','SumUp','1.0','entry',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// The code row follows the installed manifest: one declared global secret.
+	root := t.TempDir()
+	prev := paths.DataDir()
+	paths.Init(root)
+	t.Cleanup(func() { paths.Init(prev) })
+	dir := filepath.Join(root, "plugins", "sumup", "1.0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"sumup","name":"SumUp","version":"1.0","entrypoint":"./plugin.wasm","runtime":"wasm",
+"settings":[{"key":"sumup_api_key","type":"secret"},{"key":"sumup_merchant_code","type":"text"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -161,7 +178,7 @@ func TestPluginSecretCodeStatus(t *testing.T) {
 	}
 }
 
-func TestPluginSettingsPage_ShowsCodeRowOnlyForAllowListedPlugin(t *testing.T) {
+func TestPluginSettingsPage_ShowsCodeRowOnlyForAPluginDeclaringASecret(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedKeyPlugin(t, dp)
@@ -183,7 +200,7 @@ func TestPluginSettingsPage_ShowsCodeRowOnlyForAllowListedPlugin(t *testing.T) {
 		t.Fatal("no code row")
 	}
 	if strings.Contains(page("p1"), `data-secret-code`) {
-		t.Fatal("a plugin without an allow-listed secret must not get the row")
+		t.Fatal("a plugin that declares no secret must not get the row")
 	}
 	// Satellite: the buttons are replaced by the explanation.
 	if err := dp.Settings.Set(context.Background(), "sync.primary_url", "http://192.0.2.10:8080"); err != nil {

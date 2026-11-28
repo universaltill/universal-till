@@ -21,7 +21,7 @@ import (
 // install back.
 //
 // A vertical-flavoured layout plugin (layoutManifest — the shape
-// plugins/layout-salon ships) never sets role and must be completely
+// the retired salon layout was) never sets role and must be completely
 // unaffected (ADR-0106 Consequences).
 
 // layoutPresetManifest is layoutManifest plus the role marker. The role is

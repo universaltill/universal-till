@@ -84,13 +84,17 @@ func TestSaleStatus_VoidNeedsRefundPermission(t *testing.T) {
 	registerPOSAPI(mux, dp)
 	cashier := sessionUser(t, dp.Db, "cash1", "cashier")
 
-	// No PIN: refused, nothing changed.
+	// No PIN: refused, nothing changed; the refusal carries the approval token.
 	rec := postSaleStatus(t, mux, cashier, `{"saleId":"done2","status":"voided"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier void without PIN = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
+	tok := decodeVoidRefusal(t, rec).Error.Approval
+	if tok == "" {
+		t.Fatalf("refusal carries no approval token: %s", rec.Body.String())
+	}
 	// A cashier's own PIN is no manager approval.
-	rec = postSaleStatus(t, mux, cashier, `{"saleId":"done2","status":"voided","override_pin":"246800"}`)
+	rec = postSaleStatus(t, mux, cashier, `{"saleId":"done2","status":"voided","override_pin":"246800","approval":"`+tok+`"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier void with a cashier PIN = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
@@ -99,7 +103,7 @@ func TestSaleStatus_VoidNeedsRefundPermission(t *testing.T) {
 	}
 
 	// A manager's PIN approves it; the audit row names both.
-	rec = postSaleStatus(t, mux, cashier, `{"saleId":"done2","status":"voided","override_pin":"135790"}`)
+	rec = postSaleStatus(t, mux, cashier, `{"saleId":"done2","status":"voided","override_pin":"135790","approval":"`+tok+`"}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("cashier void with manager PIN = %d, want 204: %s", rec.Code, rec.Body.String())
 	}

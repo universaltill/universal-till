@@ -207,3 +207,33 @@ func TestMerge_CloudRowWithoutTillIDNeverMakesAStaleMark(t *testing.T) {
 		}
 	}
 }
+
+// T7 / AC15 (ut-docs#7097): a local row the account has removed, or one that is
+// not in the account and unseen for 30 days, is an "Old entry" with Remove.
+// A row unseen for less is still just local_only.
+func TestMerge_OldEntry(t *testing.T) {
+	self := SelfInfo{ID: "self", Name: "C", Role: RoleMain}
+	day := func(n int) string { return testNow.Add(-time.Duration(n) * 24 * time.Hour).Format(time.RFC3339) }
+	rows := Merge(Source{CloudOK: true, Self: self,
+		RemovedTillIDs: map[string]bool{"gone": true},
+		Local: []data.TillRow{
+			{ID: "gone", Name: "Gone", Role: data.TillRoleAdditional, LastSeenAt: day(0)},
+			{ID: "month", Name: "Month", Role: data.TillRoleAdditional, LastSeenAt: day(31)},
+			{ID: "week", Name: "Week", Role: data.TillRoleAdditional, LastSeenAt: day(7)},
+		}}, testNow, stale)
+	for id, want := range map[string]State{"gone": StateOldEntry, "month": StateOldEntry, "week": StateLocalOnly} {
+		got := rowByID(t, rows, id)
+		if got.State != want {
+			t.Errorf("%s: state %q, want %q", id, got.State, want)
+		}
+		if len(got.Actions) != 1 || got.Actions[0] != ActionRemove {
+			t.Errorf("%s: actions %v, want [remove]", id, got.Actions)
+		}
+	}
+	// An unavailable account list never marks anything old (ADR-0003).
+	rows = Merge(Source{CloudOK: false, Self: self, RemovedTillIDs: map[string]bool{"gone": true},
+		Local: []data.TillRow{{ID: "gone", Name: "Gone", Role: data.TillRoleAdditional, LastSeenAt: day(40)}}}, testNow, stale)
+	if got := rowByID(t, rows, "gone"); got.State != StateOK || len(got.Actions) != 0 {
+		t.Fatalf("account unavailable: %+v, want ok and no action", got)
+	}
+}

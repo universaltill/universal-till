@@ -81,6 +81,14 @@ enum TillServer {
         return try start()
     }
 
+    /// The app is in the foreground again: the till's cloud-credential
+    /// self-heal asks the cloud about the credential now instead of waiting for
+    /// a timer that did not run while the app was suspended (ut-docs#7097 T8).
+    /// Never blocks, never restarts anything; a no-op when the server is down.
+    static func notifyForeground() {
+        MobileResume()
+    }
+
     /// The Go side's own view: false once app.Run has returned (e.g. the
     /// listener died after iOS reclaimed its socket).
     static func isRunning() -> Bool {

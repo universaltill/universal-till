@@ -378,7 +378,10 @@ var adminTables = []adminTable{
 	//     main till's bearer-rotation state (migration 093, ut-docs#5198).
 	//     The previous hash is a sync-auth secret like bearer_hash; the two
 	//     timestamps are the main till's alone and would only go stale here.
-	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"}},
+	//   - device_id: the device id the till joined with (migration 118,
+	//     ut-docs#7097); the main till's own bookkeeping for rename-keeps-row,
+	//     never needed (or wanted) on a replica.
+	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at", "device_id"}},
 }
 
 // nonAdminTables is every OTHER table in the schema, one reason each for why
@@ -408,6 +411,7 @@ var nonAdminTables = map[string]string{
 	"payment_leg_journal":     "this till's own append-only journal of every electronic payment leg (ut-docs#6653, ADR-0136 Decision 9): written before the provider is asked, closed in the sale's own transaction, read at boot to return a capture that never became a sale; till-local, so no journal, snapshot, bundle or roster — it travels in a full backup only",
 	"card_readers":            "this till's own card reader registry (ut-docs#6566): provider reader ids are device specific, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
 	"card_reader_credentials": "the identity of a paired phone card reader (ut-docs#6538, ADR-0198 §6.3): the SHA-256 of its bearer and the TLS pin it was approved on; a credential of THIS till's own readers, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
+	"setting_meta":            "the version (ver, origin, time) of each typed-registry core setting on THIS till, the base of the cloud's conditional remote edit (shop-config design, migration 118); only the main till reports it and a replica never originates a shop-wide value, so the value syncs in `settings` and its version stays till-local; it travels in a full backup only",
 	"refund_leg_refunds":      "what each refund sent back to each original payment leg (ut-docs#6649): till-local netting state, written after the provider approved; a sale without rows falls back to netting the method's earlier refunds, so nothing needs to leave the till",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
@@ -835,6 +839,9 @@ var PerTillSettingPrefixes = []string{
 	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
 	// the two above; no other settings key starts with "theme".
 	ThemeSettingsKey,
+	// ADR-0190 (S6): marker that THIS till's theme was seeded by a shop-type
+	// template (the seed itself, theme, is per till above).
+	"template.",
 	// ut-docs#5479: when THIS till last looked for its built-in language's
 	// first-party bundle (a throttle; a replica takes the language from its main till).
 	"i18n.builtin_bundle_checked",

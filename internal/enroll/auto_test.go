@@ -638,3 +638,38 @@ func TestAutoRegisteredMarker(t *testing.T) {
 		}
 	})
 }
+
+// T4 (ut-docs#7097, AC9): a restored till (identity reset by a restore) must
+// never register itself as a NEW shop, neither by the loop nor by the lazy path.
+func TestAutoRegisterAllowed_RestoredNeverRegisters(t *testing.T) {
+	setReleaseVersion(t, "0.37.0")
+	resetState()
+	ctx := context.Background()
+	cfg := &config.Config{}
+	kv := readyKV(t)
+	_ = kv.Set(ctx, keyRestoredAt, time.Now().UTC().Format(time.RFC3339))
+	if ok, why := AutoRegisterAllowed(ctx, cfg, kv); ok || why != ReasonRestored {
+		t.Fatalf("restored till: allowed=%v why=%q, want not allowed (%s)", ok, why, ReasonRestored)
+	}
+	_ = kv.Set(ctx, keyRestoredAt, "")
+	if ok, why := AutoRegisterAllowed(ctx, cfg, kv); !ok {
+		t.Fatalf("after the restored state is cleared: not allowed (%s)", why)
+	}
+}
+
+func TestEnsureRegistered_RestoredMakesNoRegisterCall(t *testing.T) {
+	ctx := context.Background()
+	kv := readyKV(t)
+	rs := newRegisterServer(t, nil)
+	cfg := loopFixture(t, rs, kv)
+	_ = kv.Set(ctx, keyRestoredAt, time.Now().UTC().Format(time.RFC3339))
+	EnsureRegistered(ctx, cfg, kv)
+	if n := rs.hits.Load(); n != 0 {
+		t.Fatalf("restored till made %d register calls, want 0", n)
+	}
+	_ = kv.Set(ctx, keyRestoredAt, "")
+	EnsureRegistered(ctx, cfg, kv)
+	if n := rs.hits.Load(); n != 1 {
+		t.Fatalf("control (not restored) made %d register calls, want 1 (test would pass falsely)", n)
+	}
+}

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "hospitality",
+  "version": 1,
+  "shop_types": [
+    "hospitality"
+  ],
+  "extends": "cafe",
+  "label_key": "setup.shop_type.hospitality",
+  "summary_key": "shoptemplate.hospitality.summary",
+  "menu": {
+    "/tables": "essential",
+    "/kitchen-stations": "essential"
+  }
+}

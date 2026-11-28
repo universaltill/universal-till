@@ -41,7 +41,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		devices  = "Tills & devices"
 		look     = "Look & feel"
 		backup   = "Backup & updates"
-		advanced = "Advanced"
+		advanced = "More settings"
 	)
 	want := []Row{
 		{Key: "settings-store-name", Label: "Shop name", Group: shop, Cat: "shop"},
@@ -164,7 +164,7 @@ func TestCategories_OnlyNonEmptyCategoriesPlusAdvanced(t *testing.T) {
 }
 
 // A `layout` plugin's Settings-slot amendment (the mechanism plugins/
-// layout-salon demonstrates) reorders, re-labels and re-groups rows —
+// the retired salon layout demonstrated) reorders, re-labels and re-groups rows —
 // Resolve must apply it exactly as the Menu/Items slots' own paths do.
 func TestResolve_ReorderRelabelAndRegroupAmendment(t *testing.T) {
 	initRealI18n(t)

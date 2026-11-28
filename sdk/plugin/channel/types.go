@@ -23,6 +23,11 @@ type Listing struct {
 	CategoryPath []string  `json:"category_path,omitempty"`
 	Variants     []Variant `json:"variants,omitempty"`
 	Images       []Image   `json:"images,omitempty"`
+	// Kind is "product" (or empty) or "gift_card" (ut-docs#7099, ADR-0220).
+	Kind string `json:"kind,omitempty"`
+	// VariantImageIndex is the 0-based index into Images of the variant's own
+	// image of a single-variant listing (ut-docs#7101); nil = none.
+	VariantImageIndex *int `json:"variant_image_index,omitempty"`
 }
 
 // Variant is one sellable variant of a Listing.
@@ -36,7 +41,10 @@ type Variant struct {
 	Currency       string            `json:"currency"`
 	CompareAtMinor int64             `json:"compare_at_minor,omitempty"`
 	TaxIncluded    bool              `json:"tax_included,omitempty"`
-	Tracked        bool              `json:"tracked,omitempty"`
+	// Taxable is whether the channel taxes the variant (ut-docs#7099). nil =
+	// true (an older adapter). TaxIncluded is the shop's price basis, not this.
+	Taxable *bool `json:"taxable,omitempty"`
+	Tracked bool  `json:"tracked,omitempty"`
 }
 
 // Image is a product image reference.
@@ -44,6 +52,7 @@ type Image struct {
 	ExternalID string `json:"external_id"`
 	URL        string `json:"url"`
 	Position   int    `json:"position,omitempty"`
+	Alt        string `json:"alt,omitempty"`
 }
 
 // Category (record kind "category").
@@ -272,6 +281,31 @@ type WebhookResult struct {
 	// more than the host's 10,000 order ids; OrderIDs holds the first 10,000
 	// distinct ones (ut-docs#5002).
 	OrderIDsTruncated bool `json:"order_ids_truncated,omitempty"`
+}
+
+// WebhookRegisterInput is the AskWebhookRegister payload. CallbackURL is the
+// host's public hook address for this connection (it contains the
+// connection's opaque ref: an adapter never logs it). Topics are the
+// channel's own topic names from the manifest; Mode is WebhookModeEnsure or
+// WebhookModeRemove.
+type WebhookRegisterInput struct {
+	CallbackURL string   `json:"callback_url"`
+	Topics      []string `json:"topics"`
+	Mode        string   `json:"mode"`
+}
+
+// WebhookRegisterResult answers AskWebhookRegister: one TopicState per asked
+// topic. A failure is a stable Code, never the channel's own error text.
+type WebhookRegisterResult struct {
+	Topics map[string]TopicState `json:"topics"`
+}
+
+// TopicState is the outcome for one topic: State is a Topic* constant; Code is
+// set for TopicFailed and TopicUnsupported (scope_missing, topic_not_allowed,
+// throttled, shopify_error style stable codes).
+type TopicState struct {
+	State string `json:"state"`
+	Code  string `json:"code,omitempty"`
 }
 
 // ContactInput / ContactResult: AskContact returns an order's customer
