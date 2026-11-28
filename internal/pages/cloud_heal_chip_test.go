@@ -50,7 +50,7 @@ func TestCloudHealChip_EachStateRendersItsWordsAndExactlyOneButton(t *testing.T)
 		{"moved", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonMoved, Detail: "store-4d5df8a3"}, true,
 			"Moved to another shop", "This till now belongs to another shop. Its connection to the old shop has ended.", "Open Till registration", "/settings#registration"},
 		{"shop deleted", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonStoreDeleted}, true,
-			"Shop deleted from its account", "The owner can restore the shop on my.universaltill.com. This till then reconnects by itself within a day.", "", "/tills?tab=this"},
+			"Shop deleted from its account", "The owner can restore the shop on my.universaltill.com. This till then reconnects by itself within a day.", "Download your data", "/tills?tab=this"},
 		{"role conflict", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonRoleConflict}, true,
 			"Another till is the main till", "so this till can&#39;t reconnect as the main till.", "Join as an additional till", "/tills?tab=add&amp;need=join"},
 		{"in use elsewhere", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonInUseElsewhere}, true,

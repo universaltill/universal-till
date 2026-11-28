@@ -610,7 +610,7 @@ func healBackupKey(st credheal.Status, hasOwner bool) (key string, link, ok bool
 		return "backup.cloud.err.till_replaced", false, true
 	case credheal.ReasonMoved:
 		return "backup.cloud.err.till_moved", true, true
-	case credheal.ReasonStoreDeleted:
+	case credheal.ReasonStoreDeleted, credheal.ReasonStorePurged:
 		return "backup.cloud.err.shop_deleted", false, true
 	case credheal.ReasonRoleConflict:
 		return "backup.cloud.err.not_main_till", false, true

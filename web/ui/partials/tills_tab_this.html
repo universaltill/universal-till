@@ -13,7 +13,8 @@
 <div class="notice-block-warn" role="status" data-testid="tills-heal-banner" data-heal-reason="{{ .Reason }}">
   <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ .Short }}</strong>
   <p>{{ .Sentence }}</p>
-  {{ if .Button }}<a class="btn btn-touch" href="{{ .Href }}" data-testid="tills-heal-action">{{ .Button }}</a>{{ end }}
+  {{ if .Button }}<a class="btn btn-touch" href="{{ or .ButtonHref .Href }}" data-testid="tills-heal-action">{{ .Button }}</a>{{ end }}
+  {{ if .Button2 }}{{ if .Button2Href }}<a class="btn btn-touch secondary" href="{{ .Button2Href }}" data-testid="tills-heal-action2">{{ .Button2 }}</a>{{ else }}<form method="post" action="/api/cloud/heal/check-again" style="display:inline"><button class="btn btn-touch secondary" type="submit" data-testid="tills-heal-check-again">{{ .Button2 }}</button></form>{{ end }}{{ end }}
 </div>
 {{ end }}{{ end }}
 {{ if and .IsReplaced (not .Heal) }}

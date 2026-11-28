@@ -840,7 +840,7 @@ func (u *Uploader) ClearCredentialRefusal(ctx context.Context) bool {
 
 // finalRevokeReasons are the device_revoked reasons that cannot be undone:
 // the till was replaced, moved to another shop, or removed.
-var finalRevokeReasons = map[string]bool{"replaced": true, "moved": true, "removed": true}
+var finalRevokeReasons = map[string]bool{"replaced": true, "moved": true, "removed": true, "store_purged": true}
 
 func (u *Uploader) fail(ctx context.Context, now time.Time, err error) {
 	st := u.Settings

@@ -1,0 +1,4 @@
+# Review: till credheal store_purged + undo date (ut-docs#2630)
+Shipped: credheal `store_purged` (final, needs person); `restorable_until` carried in Detail; deleted-shop sentence with date; Download your data + Check again; en.json/en.meta.json only (legal draft).
+Reviewer: Opus 5.5 (independent). Findings: fixed-date guard (fixed, dates moved to 2031); chip Href changed (fixed: ButtonHref added, chip keeps /tills?tab=this); CheckAgain ran in waiting/healing (fixed: only needs_person+store_deleted); offline Check again drops banner (accepted); stale date on repeat signal / enroll.Recover path (accepted, falls back to old sentence); no sameOrigin check on POST (accepted, manager gated); help topic not updated (deferred, with legal wording OK).
+Tester (Sonnet, #2630): narrow tests pass. Pre-flight: narrow tests only, build/vet clean. Verdict: approved after fixes.

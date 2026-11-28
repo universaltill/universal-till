@@ -46,6 +46,8 @@ func parseRevokeSignal(body []byte) *RevokeSignal {
 			ReplacedAt string `json:"replaced_at"`
 			ReplacedBy string `json:"replaced_by"`
 			MovedTo    string `json:"moved_to"`
+			// ut-docs#2630: store_deleted says until when the owner can undo.
+			RestorableUntil string `json:"restorable_until"`
 		} `json:"data"`
 		Error struct {
 			Code string `json:"code"`
@@ -58,6 +60,8 @@ func parseRevokeSignal(body []byte) *RevokeSignal {
 	switch env.Data.Reason {
 	case "replaced":
 		sig.Detail = env.Data.ReplacedBy
+	case "store_deleted":
+		sig.Detail = env.Data.RestorableUntil // "" from a cloud that sends none
 	}
 	// moved_to is the target shop's external id, not a display name: it is
 	// never kept or shown (review 2026-11-27); the till says "another shop".

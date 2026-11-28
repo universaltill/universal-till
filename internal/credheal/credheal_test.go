@@ -711,3 +711,21 @@ func TestServerReasonIsClampedBeforeItIsSaved(t *testing.T) {
 		t.Fatalf("saved code %q is not clamped", got)
 	}
 }
+
+// ut-docs#2630: store_purged is terminal and needs a person; store_deleted
+// without recover stays the undo-window state.
+func TestClassify_StorePurgedIsFinalNeedsPerson(t *testing.T) {
+	v := classify(Signal{Code: "device_revoked", Reason: "store_purged"})
+	if v.kind != kindNeedsPerson || v.reason != ReasonStorePurged {
+		t.Fatalf("store_purged = %+v, want needs-person store_purged", v)
+	}
+	if !FinalReason(ReasonStorePurged) {
+		t.Error("store_purged must be final: no timer may leave it")
+	}
+	if FinalReason(ReasonStoreDeleted) {
+		t.Error("store_deleted is inside the undo window: not final")
+	}
+	if v := classify(Signal{Code: "device_revoked", Reason: "store_deleted"}); v.kind != kindNeedsPerson || v.reason != ReasonStoreDeleted {
+		t.Fatalf("store_deleted = %+v", v)
+	}
+}
