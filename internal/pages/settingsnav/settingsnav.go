@@ -40,7 +40,17 @@ type Row struct {
 	// (ut-docs#3090): a uislot.SettingsCategories Key, or "g-<group>" for a
 	// `layout` plugin's own group, which becomes a category of its own.
 	Cat string
+	// Sub marks a row drawn indented under the row above it (ut-docs#7173:
+	// Old entries under Other tills). Core-only: set from subRows, never
+	// from a plugin amendment, so the amendment schema is untouched.
+	Sub bool
+	// Badge is a short count tag drawn after the label ("" = none). The
+	// page fills it from local or cached data only (never a fetch).
+	Badge string
 }
+
+// subRows are the core rows drawn as a sub-row of the row before them.
+var subRows = map[string]bool{"settings-tills-old": true}
 
 // Category is one resolved tile of the /settings landing grid
 // (ut-docs#3090), already localized for this render.
@@ -86,7 +96,6 @@ func catOf(group string) (id string, rank int) {
 var emojiPrefix = map[string]string{
 	"settings-data":      "🧹 ",
 	"settings-retention": "🗄️ ",
-	"settings-tills":     "🔗 ",
 	"settings-invoice":   "🧾 ",
 }
 
@@ -129,6 +138,7 @@ func Resolve(locale string, amendments []uislot.Amendment) []Row {
 			Label: emojiPrefix[e.Key] + rowLabel(locale, e),
 			Group: group,
 			Cat:   cat,
+			Sub:   subRows[e.Key],
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Key] < rank[out[j].Key] })

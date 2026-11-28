@@ -1,5 +1,5 @@
 import { test, Page } from '@playwright/test';
-import { ensureOperator, openNewItemForm } from './helpers';
+import { ensureOperator, openNewItemForm, gotoTillsSection } from './helpers';
 
 // ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
 // scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
@@ -112,7 +112,7 @@ test.describe('admin pages redirect to /login on a session-expired 401 instead o
 
   test('tills.html discover-primaries redirects', async ({ page }) => {
     await ensureOperator(page);
-    await page.goto('/tills?tab=add&need=join');
+    await gotoTillsSection(page, 'add', '?need=join');
     await revokeSessionThenAssertRedirect(page, async () => {
       await page.locator('#discover-btn').click({ timeout: 2000 });
     });

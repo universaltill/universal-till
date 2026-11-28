@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, recordAlertAfterRequest } from './helpers';
+import { watchConsole, recordAlertAfterRequest, gotoTillsSection } from './helpers';
 
 // ut-docs#3308: renaming this till to a name another till in the shop
 // already uses comes back 422 with the translated reason, which shows next
@@ -16,12 +16,13 @@ test('settings: a till name already in use is refused inline', async ({ page }) 
     status: 422, contentType: 'text/plain; charset=utf-8', headers: { 'X-UT-Response': 'refused' }, body: reason + '\n',
   }));
   const alertHiddenAfter = await recordAlertAfterRequest(page, '/api/settings/till-name');
-  await page.goto('/tills?lang=en&tab=this');
+  await gotoTillsSection(page, 'this', '?lang=en');
   const tn = page.locator('#settings-till-name-region');
   await tn.locator('input[name="name"]').fill('Terrace 3308');
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/settings/till-name') && r.status() === 422),
-    tn.getByRole('button').click(),
+    // ut-docs#7173: ONE Save for name + register (it submits what changed).
+    page.getByTestId('tills-this-save').click(),
   ]);
   await expect(page.locator('#till-name-msg')).toContainText(reason);
   await expect(page.locator('#settings-save-error')).toBeHidden();

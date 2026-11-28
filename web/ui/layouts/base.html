@@ -1246,7 +1246,7 @@
       {{ if crossdevicelinkactionable }}
       <a class="sb-item sb-plugin-update" href="{{ maintillurl }}/plugins" target="_blank" rel="noopener" hx-boost="false" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span> {{ T "status.plugin_updates_from_main" }}&nbsp;({{ pluginupdatescount }})</a>
       {{ else }}
-      <a class="sb-item sb-plugin-update" href="/tills" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span> {{ T "status.plugin_updates_from_main" }}&nbsp;({{ pluginupdatescount }})</a>
+      <a class="sb-item sb-plugin-update" href="/settings#settings-tills-others" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span> {{ T "status.plugin_updates_from_main" }}&nbsp;({{ pluginupdatescount }})</a>
       {{ end }}
       {{ else }}
       <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>

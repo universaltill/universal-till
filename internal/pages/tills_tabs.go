@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -17,12 +18,30 @@ import (
 	"github.com/universaltill/universal-till/internal/tills"
 )
 
-// The one "Tills & devices" page (ut-docs#7057): GET /tills?tab=… renders
-// the whole page, GET /ui/tills/tab/{id} the same tab as a fragment (HTMX
-// enhancement; the tab bar is made of real links, so it works without JS).
-// Every tab keeps the gate the page always had (sync_management).
+// Tills & devices (ut-docs#7057, restructured by ut-docs#7173): the sections
+// of the Settings tree. Each live section is a lazy fragment,
+// GET /ui/tills/section/{id}, loaded into its Settings card the first time
+// the card is shown (the page itself makes no network call for them,
+// ADR-0003). The old tabbed /tills page is gone: GET /tills answers a 303
+// into Settings (tillsRedirectTarget) and GET /ui/tills/tab/{id} serves the
+// same fragments for one more release. Every section keeps the gate the page
+// always had (sync_management).
 
-// tillsTabIDs is the tab order, and the only values ?tab= accepts.
+// tillsSectionIDs are the fragment ids; "old" shares the account view with
+// "others", "sync" is the Sync and network part of Shop and sync.
+var tillsSectionIDs = []string{"this", "others", "old", "add", "readers", "sync"}
+
+func validTillsSection(id string) bool {
+	for _, t := range tillsSectionIDs {
+		if t == id {
+			return true
+		}
+	}
+	return false
+}
+
+// tillsTabIDs are the legacy tab ids: the only values ?tab= and
+// /ui/tills/tab/{id} accept.
 var tillsTabIDs = []string{"this", "others", "add", "readers", "settings"}
 
 func validTillsTab(id string) bool {
@@ -183,24 +202,12 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 		m["LastReconnected"] = fmt.Sprintf(httpx.T(locale, "tills.this.last_reconnected"), httpx.FormatDateTime(hst.LastHealedAt.Local(), locale))
 	}
 	m["Tab"] = tab
-	m["TabIDs"] = tillsTabIDs
+	if d.Cfg != nil {
+		m["ShopConnected"] = enroll.CredentialsComplete(enroll.Effective(d.Cfg).Marketplace)
+	}
 	m["IsMain"] = asString(m["SyncPrimary"]) == ""
 	m["ShopName"] = shopNameOrEmpty(ctx, d)
 	m["ThisSentenceKey"] = tillsSentenceKey(m)
-	// The count tags on the tab bar come from what is already known: the
-	// pending queue (a local read) and the cached account list. Neither
-	// waits on the network.
-	if m["IsMain"].(bool) {
-		if list, perr := data.NewPairingRepo(d.Db).ListPendingReadOnly(ctx); perr == nil {
-			n := 0
-			for _, p := range list {
-				if p.RequestedRole != data.TillRoleCardReader {
-					n++
-				}
-			}
-			m["PendingCount"] = n
-		}
-	}
 	switch tab {
 	case "this":
 		tillsThisData(ctx, d, r, m, locale)
@@ -211,15 +218,15 @@ func tillsPageData(w http.ResponseWriter, r *http.Request, d *common.Deps, tab s
 		}
 		m["Others"] = o
 		m["OthersCount"] = o.Disagree
+		old := oldEntriesFrom(o)
+		m["Old"] = old
+		m["OldCount"] = len(old)
+		m["OldBanner"] = oldBannerFrom(old, locale, httpx.T(locale, "tills.tree.and"))
+		m["OldRemoveURLs"] = oldRemoveURLs(old)
 	case "add":
 		tillsAddData(r, m)
 	case "settings":
 		tillsSettingsData(ctx, d, m)
-	}
-	if tab != "others" {
-		if o, oerr := tillsOthersView(ctx, d, m, false, false); oerr == nil && o.CloudOK {
-			m["OthersCount"] = o.Disagree
-		}
 	}
 	return m, nil
 }
@@ -253,8 +260,16 @@ func tillsThisData(ctx context.Context, d *common.Deps, r *http.Request, m map[s
 		tillRegisterID = resolved
 	}
 	m["TillRegisterID"] = tillRegisterID
-	// The Registers link is offered only to a session /registers admits.
-	m["CanManageRegisters"] = canPerform(d, r, "stock_location_management")
+	// ut-docs#7173: the role tag (Main till / Additional till / Satellite).
+	roleKey := "settings.tills.role_main"
+	switch role {
+	case "":
+	case data.TillRoleSatellite:
+		roleKey = "tills.role.satellite"
+	default:
+		roleKey = "tills.role.replica"
+	}
+	m["ThisRoleLabel"] = httpx.T(locale, roleKey)
 	regs, err := data.NewPOSRepo(d.Db).ListRegisters(ctx)
 	if err != nil {
 		logging.L().Errorf("tills: list registers: %v", err)
@@ -280,6 +295,17 @@ func tillsThisData(ctx context.Context, d *common.Deps, r *http.Request, m map[s
 	if d.Cfg != nil {
 		m["ShopConnected"] = enroll.CredentialsComplete(enroll.Effective(d.Cfg).Marketplace)
 	}
+	// ut-docs#7173: device ID and key fingerprint, behind "Technical details".
+	m["TechFacts"] = registerFactsView(r, d, locale)
+}
+
+// tillsNeedFromQuery is ?need= when it names a chooser option, else "".
+func tillsNeedFromQuery(r *http.Request) string {
+	switch need := r.URL.Query().Get("need"); need {
+	case "another", "join", "replace":
+		return need
+	}
+	return ""
 }
 
 // tillsAddData: which chooser option is selected. ?need=another|join|replace;
@@ -312,32 +338,120 @@ func tillsSettingsData(ctx context.Context, d *common.Deps, m map[string]any) {
 	m["ShowQuarantine"] = n > 0 || len(asTills(m["Tills"])) > 0
 }
 
-// registerTillsTabs wires the page shell's fragment route and the bulk
-// removal of stale tills. GET /tills itself stays in registerSyncAPI.
+// tillsSectionTab maps a fragment id to the data tab its view is built from.
+func tillsSectionTab(id string) string {
+	switch id {
+	case "old":
+		return "others"
+	case "sync":
+		return "settings"
+	}
+	return id
+}
+
+// tillsSectionTemplate is the partial a fragment id renders.
+func tillsSectionTemplate(id string) string {
+	switch id {
+	case "others":
+		return "tills_section_others.html"
+	case "old":
+		return "tills_section_old.html"
+	case "add":
+		return "tills_tab_add.html"
+	case "readers":
+		return "tills_tab_readers.html"
+	case "sync":
+		return "tills_tab_settings.html"
+	}
+	return "tills_tab_this.html"
+}
+
+// tillsTabSection maps a legacy ?tab= value to its section card id in
+// Settings (the card ids are the tree's anchors).
+func tillsTabSection(tab string) string {
+	switch tab {
+	case "others":
+		return "settings-tills-others"
+	case "add":
+		return "settings-tills-add"
+	case "readers":
+		return "settings-tills-readers"
+	case "settings":
+		return "settings-tills-shop"
+	}
+	return "settings-tills-this"
+}
+
+// tillsRedirectTarget is where an old /tills URL goes: the same function in
+// the Settings tree, query kept where the new section reads it (?need= for
+// Add a till, ?refresh=1 for Other tills). A #fragment never reaches the
+// server, so the old per-tab anchors (#account, #network, #kiosk, #notices)
+// land on the tab's own section; the page's script maps them itself when a
+// hash is present on /settings.
+func tillsRedirectTarget(r *http.Request) string {
+	tab := tillsTabFromRequest(r)
+	q := url.Values{}
+	switch tab {
+	case "add":
+		switch need := r.URL.Query().Get("need"); need {
+		case "another", "join", "replace":
+			q.Set("need", need)
+		}
+	case "others":
+		if r.URL.Query().Get("refresh") == "1" {
+			q.Set("refresh", "1")
+		}
+	}
+	out := "/settings"
+	if len(q) > 0 {
+		out += "?" + q.Encode()
+	}
+	return out + "#" + tillsTabSection(tab)
+}
+
+// registerTillsTabs wires the section fragments, their legacy tab route and
+// the bulk removal of stale tills. GET /tills itself (a redirect) stays in
+// registerSyncAPI.
 func registerTillsTabs(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /ui/tills/tab/{id}", func(w http.ResponseWriter, r *http.Request) {
+	serve := func(w http.ResponseWriter, r *http.Request, section string) {
 		if !canPerform(d, r, "sync_management") {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		m, err := tillsPageData(w, r, d, tillsSectionTab(section))
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "tills_section", err)
+			return
+		}
+		m["Section"] = section
+		m["SectionTemplate"] = tillsSectionTemplate(section)
+		httpx.RenderBlock("ui/pages/tills_sections.html", "tills_fragment", m)(w, r)
+	}
+	mux.HandleFunc("GET /ui/tills/section/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if !validTillsSection(id) {
+			http.NotFound(w, r)
+			return
+		}
+		serve(w, r, id)
+	})
+	// One more release: an open page or a cached link may still ask for a tab.
+	mux.HandleFunc("GET /ui/tills/tab/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !validTillsTab(id) {
 			http.NotFound(w, r)
 			return
 		}
-		m, err := tillsPageData(w, r, d, id)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "tills_tab", err)
-			return
+		if id == "settings" {
+			id = "sync"
 		}
-		m["OOB"] = true // the tab bar rides along, swapped out of band
-		httpx.RenderBlock("ui/pages/tills.html", "tills_fragment", m)(w, r)
+		serve(w, r, id)
 	})
 	registerTillsRevokeStale(mux, d)
+	registerTillsOldEntries(mux, d)
 }
 
-// tillsTabFromRequest reads ?tab= (also the #fragment-style ids the old
-// anchors used, never trusted beyond the fixed list).
+// tillsTabFromRequest reads ?tab= (never trusted beyond the fixed list).
 func tillsTabFromRequest(r *http.Request) string {
 	if t := r.URL.Query().Get("tab"); validTillsTab(t) {
 		return t

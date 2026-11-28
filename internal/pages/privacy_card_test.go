@@ -69,10 +69,10 @@ func TestSettingsPrivacyNavRowIsManagerOnly(t *testing.T) {
 	if !has(rows) {
 		t.Fatal("Resolve has no settings-privacy row")
 	}
-	if !has(filterSettingsNavForRender(rows, true, false, false, false, false)) {
+	if !has(filterSettingsNavForRender(rows, true, false, false, false, false, true)) {
 		t.Error("a manager does not see the Privacy row")
 	}
-	if has(filterSettingsNavForRender(rows, false, false, false, false, false)) {
+	if has(filterSettingsNavForRender(rows, false, false, false, false, false, true)) {
 		t.Error("a non-manager sees the Privacy row")
 	}
 }

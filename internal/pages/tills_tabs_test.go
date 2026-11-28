@@ -29,7 +29,6 @@ func tillsTabsMux(t *testing.T, fleet []enroll.Device, fleetErr error) (*http.Se
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
-	registerTillsTabs(mux, dp)
 	resetFleetCache()
 	old := tillsFleetFetch
 	tillsFleetFetch = func(context.Context, *common.Deps) ([]enroll.Device, error) { return fleet, fleetErr }
@@ -43,26 +42,41 @@ func tabsGet(mux *http.ServeMux, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestTillsPage_EveryTabRendersAsLinksAndFragments(t *testing.T) {
+// ut-docs#7173: the old five-tab page is gone. Every old URL answers a 303
+// into the Settings tree (the table lives in tillsRedirectTarget), and every
+// section is a lazy fragment.
+func TestTillsPage_OldUrlsRedirectAndEverySectionRenders(t *testing.T) {
 	mux, _ := tillsTabsMux(t, nil, errors.New("offline"))
-	for _, tab := range tillsTabIDs {
-		page := tabsGet(mux, "/tills?tab="+tab)
-		if page.Code != http.StatusOK {
-			t.Fatalf("tab %s page: %d", tab, page.Code)
-		}
-		if !strings.Contains(page.Body.String(), `href="/tills?tab=`+tab) {
-			t.Errorf("tab %s: no real link in the tab bar", tab)
-		}
-		frag := tabsGet(mux, "/ui/tills/tab/"+tab)
-		if frag.Code != http.StatusOK || !strings.Contains(frag.Body.String(), "data-tills-heading") {
-			t.Errorf("tab %s fragment: %d, no heading", tab, frag.Code)
+	for url, want := range map[string]string{
+		"/tills":                      "/settings#settings-tills-this",
+		"/tills?tab=this":             "/settings#settings-tills-this",
+		"/tills?tab=others":           "/settings#settings-tills-others",
+		"/tills?tab=others&refresh=1": "/settings?refresh=1#settings-tills-others",
+		"/tills?tab=add":              "/settings#settings-tills-add",
+		"/tills?tab=add&need=join":    "/settings?need=join#settings-tills-add",
+		"/tills?tab=add&need=%3Cx%3E": "/settings#settings-tills-add",
+		"/tills?tab=readers":          "/settings#settings-tills-readers",
+		"/tills?tab=settings":         "/settings#settings-tills-shop",
+		"/tills?tab=%3Cscript%3E":     "/settings#settings-tills-this",
+	} {
+		rec := tabsGet(mux, url)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != want {
+			t.Errorf("GET %s = %d -> %q, want 303 -> %q", url, rec.Code, rec.Header().Get("Location"), want)
 		}
 	}
-	if tabsGet(mux, "/ui/tills/tab/nope").Code != http.StatusNotFound {
-		t.Error("unknown tab must be 404")
+	for _, id := range tillsSectionIDs {
+		frag := tabsGet(mux, "/ui/tills/section/"+id)
+		if frag.Code != http.StatusOK || strings.TrimSpace(frag.Body.String()) == "" {
+			t.Errorf("section %s: %d, empty body", id, frag.Code)
+		}
 	}
-	if rec := tabsGet(mux, "/tills?tab=%3Cscript%3E"); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "<script>alert") {
-		t.Error("an invalid tab falls back to This till")
+	for _, tab := range tillsTabIDs { // one more release of the legacy fragment route
+		if rec := tabsGet(mux, "/ui/tills/tab/"+tab); rec.Code != http.StatusOK {
+			t.Errorf("legacy tab fragment %s: %d", tab, rec.Code)
+		}
+	}
+	if tabsGet(mux, "/ui/tills/section/nope").Code != http.StatusNotFound || tabsGet(mux, "/ui/tills/tab/nope").Code != http.StatusNotFound {
+		t.Error("an unknown section or tab must be 404")
 	}
 }
 
@@ -144,14 +158,20 @@ func TestTillsRevokeStale_RemovesOnlyStaleAndAudits_RefusesWhenCloudUnknown(t *t
 	}
 }
 
-func TestTillsOthers_RoleMismatchWarnsOnlyWhenCloudRoleKnown(t *testing.T) {
+// ut-docs#7173: a role the account records differently is no longer a
+// warning of its own (nothing the owner can fix there): the till is listed as
+// working, the old-entries banner stays away and no "disagree" wording shows.
+func TestTillsOthers_RoleDifferenceIsNotAWarning(t *testing.T) {
 	mux, dp := tillsTabsMux(t, []enroll.Device{{DeviceID: "dev-t-1", TillID: "t-1", Name: "Bar", Role: "main"}}, nil)
 	if _, err := dp.Db.Exec(`INSERT INTO tills (id, name, bearer_hash, enrolled_at, role) VALUES ('t-1','Bar','h','2026-08-15T09:30:00Z','additional')`); err != nil {
 		t.Skipf("role column not seedable here: %v", err)
 	}
-	body := tabsGet(mux, "/ui/tills/tab/others").Body.String()
-	if !strings.Contains(body, "role_mismatch") && !strings.Contains(strings.ToLower(body), "disagree") {
-		t.Fatalf("role mismatch not shown: %s", body)
+	body := tabsGet(mux, "/ui/tills/section/others").Body.String()
+	if strings.Contains(strings.ToLower(body), "disagree") || strings.Contains(body, `data-testid="tills-old-banner"`) {
+		t.Fatalf("a role difference must not raise the old-entries banner: %s", body)
+	}
+	if !strings.Contains(body, "Bar") {
+		t.Fatalf("the till must still be listed: %s", body)
 	}
 }
 
@@ -159,7 +179,7 @@ func TestTillsOthers_RoleMismatchWarnsOnlyWhenCloudRoleKnown(t *testing.T) {
 // on a mux that already serves the page.
 func getTillsTab(t *testing.T, mux *http.ServeMux, role, tab string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab="+tab, nil), auth.User{ID: "u1", Role: role})
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tills/section/"+strings.Replace(tab, "settings", "sync", 1), nil), auth.User{ID: "u1", Role: role})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -168,7 +188,7 @@ func getTillsTab(t *testing.T, mux *http.ServeMux, role, tab string) *httptest.R
 // T7 / AC15 (ut-docs#7097): a till not in the account and unseen for 30 days is
 // an "Old entry" with its Remove button; one seen last week stays "Not in your
 // account"; both are removable, and the bulk button offers the old entry.
-func TestTillsOthers_OldEntryLabelAndRemove(t *testing.T) {
+func TestTillsOld_EntriesAreListedWithTheirRemoveButtons(t *testing.T) {
 	mux, dp := tillsTabsMux(t, []enroll.Device{{DeviceID: "dev-keep-me", TillID: "keep-me", Name: "Keep"}}, nil)
 	ctx := context.Background()
 	repo := data.NewTillsRepo(dp.Db)
@@ -185,26 +205,26 @@ func TestTillsOthers_OldEntryLabelAndRemove(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body := tabsGet(mux, "/ui/tills/tab/others").Body.String()
+	body := tabsGet(mux, "/ui/tills/section/old").Body.String()
 	row := func(id string) string {
 		i := strings.Index(body, `id="till-row-`+id+`"`)
 		if i < 0 {
 			t.Fatalf("no row %s: %s", id, body)
 		}
 		r := body[i:]
-		return r[:strings.Index(r, "</tr>")]
+		return r[:strings.Index(r, "</li>")]
 	}
 	oldRow, weekRow := row(oldID), row(weekID)
-	if !strings.Contains(oldRow, `data-state="old_entry"`) || !strings.Contains(oldRow, "Old entry") || !strings.Contains(oldRow, "/api/sync/tills/"+oldID+"/revoke") {
+	if !strings.Contains(oldRow, `data-kind="old"`) || !strings.Contains(oldRow, "/api/sync/tills/"+oldID+"/revoke") {
 		t.Fatalf("31-day row: %s", oldRow)
 	}
-	if strings.Contains(weekRow, "Old entry") || !strings.Contains(weekRow, `data-state="local_only"`) || !strings.Contains(weekRow, "/api/sync/tills/"+weekID+"/revoke") {
+	if !strings.Contains(weekRow, `data-kind="local"`) || !strings.Contains(weekRow, "/api/sync/tills/"+weekID+"/revoke") {
 		t.Fatalf("7-day row: %s", weekRow)
 	}
-	if !strings.Contains(body, `data-testid="tills-remove-stale-all"`) || !strings.Contains(body, `name="id" value="`+oldID+`"`) {
-		t.Fatalf("bulk remove must offer the old entry: %s", body)
+	if !strings.Contains(body, `data-testid="tills-remove-all"`) || !strings.Contains(body, "/api/sync/tills/"+oldID+"/revoke") {
+		t.Fatalf("Remove all must offer the old entry: %s", body)
 	}
-	// The bulk endpoint removes the old entry.
+	// The bulk endpoint (kept) removes the old entry.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/revoke-stale", strings.NewReader(url.Values{"id": {oldID}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

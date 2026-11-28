@@ -55,7 +55,7 @@
         "amendments": [
           { "key": "settings-theme", "order": 50 },
           { "key": "settings-printer", "group": "layout.salon.settings_group" },
-          { "key": "settings-tills", "group": "layout.salon.settings_group" }
+          { "key": "settings-tills-this", "group": "layout.salon.settings_group" }
         ]
       }
     }

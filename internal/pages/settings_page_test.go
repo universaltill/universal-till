@@ -997,10 +997,11 @@ func TestTillNameEndpoint_MainTillAuditsTillNameKey(t *testing.T) {
 func TestSettingsPage_TillNameFieldShowsThisTillsOwnName(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	registerSyncAPI(mux, d) // the till-name field lives on /tills (ut-docs#7057)
+	registerTillsTabs(mux, d)
 	ctx := t.Context()
 
 	get := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/tills?tab=this", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil)
 		req = auth.WithUser(req, mgrUser)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -1009,7 +1010,9 @@ func TestSettingsPage_TillNameFieldShowsThisTillsOwnName(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	field := func(v string) string { return `<input type="text" name="name" maxlength="60" value="` + v + `"` }
+	field := func(v string) string {
+		return `<input type="text" id="till-name-input" name="name" maxlength="60" value="` + v + `"`
+	}
 
 	if err := d.Settings.Set(ctx, "till.name", "Main Counter"); err != nil {
 		t.Fatal(err)
@@ -1246,9 +1249,10 @@ func TestSettingsPage_QuarantineSectionOnlyWhenRelevant(t *testing.T) {
 	mux := http.NewServeMux()
 	registerSettings(mux, dp)
 	registerSyncAPI(mux, dp) // the quarantine link sits on the Tills & devices Settings tab (ut-docs#7057)
+	registerTillsTabs(mux, dp)
 
 	get := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/tills?tab=settings", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/sync", nil)
 		req = auth.WithUser(req, mgrUser)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -1394,6 +1398,7 @@ func TestTillRegisterEndpoint(t *testing.T) {
 func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	registerSyncAPI(mux, d) // the picker lives on /tills (ut-docs#7057)
+	registerTillsTabs(mux, d)
 	for _, ins := range []string{
 		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
 		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
@@ -1404,7 +1409,7 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 	}
 
 	get := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/tills?tab=this", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil)
 		req = auth.WithUser(req, mgrUser)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -2139,7 +2144,7 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 	// TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier exists to
 	// prevent, for whichever NEW card it is that this test didn't know
 	// about).
-	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false, false, false)
+	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false, false, false, false)
 	filteredKeys := map[string]bool{}
 	for _, c := range cards {
 		if c.gated {
@@ -2205,7 +2210,7 @@ func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 	indexHTML := body[indexStart : indexStart+indexEnd]
 	for _, want := range []string{
 		`data-key="settings-currency" data-group="My shop" data-cat="shop"`,
-		`data-key="registration" data-group="Tills &amp; devices" data-cat="devices"`,
+		`data-key="settings-tills-shop" data-group="Tills &amp; devices" data-cat="devices"`,
 		`data-key="settings-all" data-group="Advanced" data-cat="advanced"`,
 	} {
 		if !strings.Contains(indexHTML, want) {
@@ -2215,12 +2220,12 @@ func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 	// Categories in declared order: My shop's rows before Tills & devices'
 	// before Advanced's.
 	curIdx := strings.Index(indexHTML, `data-key="settings-currency"`)
-	regIdx := strings.Index(indexHTML, `data-key="registration"`)
+	regIdx := strings.Index(indexHTML, `data-key="settings-tills-shop"`)
 	allIdx := strings.Index(indexHTML, `data-key="settings-all"`)
 	if curIdx > regIdx || regIdx > allIdx {
 		t.Fatalf("expected My shop, then Tills & devices, then Advanced, got:\n%s", indexHTML)
 	}
-	if !strings.Contains(indexHTML, "Till registration") {
+	if !strings.Contains(indexHTML, "Shop and sync") {
 		t.Fatalf("expected the resolved English label, not a raw key, got:\n%s", indexHTML)
 	}
 	// The landing grid (hidden until the page script shows it, so a
@@ -2311,7 +2316,7 @@ func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
 		t.Fatalf("salon layout must reorder settings-theme to the front of Look & feel, got:\n%s", indexHTML)
 	}
 	printerIdx := strings.Index(indexHTML, `data-key="settings-printer"`)
-	tillsIdx := strings.Index(indexHTML, `data-key="settings-tills"`)
+	tillsIdx := strings.Index(indexHTML, `data-key="settings-tills-this"`)
 	if printerIdx == -1 || tillsIdx == -1 {
 		t.Fatalf("printer/tills rows missing from index:\n%s", indexHTML)
 	}
@@ -2791,9 +2796,10 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	// ut-docs#7057: this till's name and register moved to the Tills & devices
 	// page; a manager sees both forms there, a cashier gets the 403 page.
 	registerSyncAPI(mux, d)
+	registerTillsTabs(mux, d)
 	tillsAs := func(u auth.User) (int, string) {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab=this", nil), u))
+		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil), u))
 		return rec.Code, rec.Body.String()
 	}
 	if code, body := tillsAs(mgrUser); code != http.StatusOK ||
@@ -3772,18 +3778,19 @@ func settingsRefusedForCashier(t *testing.T, mux *http.ServeMux) string {
 // joined one), and the register picker is labelled for what it does.
 func TestSettingsPage_TillsCardShowsRoleAndMainTillAddress(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
+	registerSyncAPI(mux, d)
+	registerTillsTabs(mux, d) // ut-docs#7173: the This till section
 	get := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-		req = auth.WithUser(req, mgrUser)
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil), mgrUser)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("GET /settings = %d", rec.Code)
+			t.Fatalf("GET this section = %d", rec.Code)
 		}
 		return rec.Body.String()
 	}
 	roleLine := func(role string) string {
-		return httpx.T("en", "settings.tills.role_label") + ": " + role
+		return httpx.T("en", "settings.tills.role_label") + `: <strong>` + role + `</strong>`
 	}
 	mainTill := httpx.T("en", "settings.tills.role_main")
 
@@ -3794,13 +3801,10 @@ func TestSettingsPage_TillsCardShowsRoleAndMainTillAddress(t *testing.T) {
 	if strings.Contains(body, "Main till: ") && strings.Contains(body, "192.168.1.10") {
 		t.Fatalf("main till must not show a main-till address")
 	}
-	// ut-docs#7057: the register picker moved to the Tills & devices page.
-	registerSyncAPI(mux, d)
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab=this", nil), mgrUser)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if tb := rec.Body.String(); !strings.Contains(tb, "Cash register for payouts") || !strings.Contains(tb, `href="/registers"`) {
-		t.Fatalf("want the register label and a link to the Registers page on /tills, got:\n%s", tb)
+	// The register select stays; a "Registers" link that leaves the page does
+	// not (ut-docs#7173: no hop).
+	if !strings.Contains(body, "Cash register for payouts") || strings.Contains(body, `href="/registers"`) {
+		t.Fatalf("want the register label and no link to the Registers page, got:\n%s", body)
 	}
 
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://192.168.1.10:8080"); err != nil {
@@ -3827,28 +3831,20 @@ func TestSettingsPage_TillsCardShowsRoleAndMainTillAddress(t *testing.T) {
 	}
 }
 
-// The Registers link is offered only to a session /registers admits
-// (stock_location_management), not to everyone who can open Settings.
-func TestSettingsPage_TillsCardRegistersLinkFollowsRegistersPermission(t *testing.T) {
+// ut-docs#7173: the "Registers" link that left the page is gone for every
+// session; the register select stays.
+func TestSettingsPage_TillsCardHasNoRegistersHopLink(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	registerSyncAPI(mux, d) // the Tills card moved to /tills (ut-docs#7057)
-	shown := func() bool {
-		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab=this", nil), mgrUser)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET /tills = %d", rec.Code)
-		}
-		return strings.Contains(rec.Body.String(), `href="/registers"`)
+	registerSyncAPI(mux, d)
+	registerTillsTabs(mux, d)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil), mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET this section = %d", rec.Code)
 	}
-	if !shown() {
-		t.Fatalf("manager with stock_location_management: want the Registers link")
-	}
-	if err := data.NewAuthRepo(d.Db).SetRolePermission(t.Context(), nil, "manager", "stock_location_management", false); err != nil {
-		t.Fatal(err)
-	}
-	if shown() {
-		t.Fatalf("manager without stock_location_management must not get a link /registers would refuse")
+	if strings.Contains(rec.Body.String(), `href="/registers"`) {
+		t.Fatalf("a link whose only job is to go to another page must not exist")
 	}
 }
 

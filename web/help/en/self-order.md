@@ -21,8 +21,8 @@ Self-order fits counter-service cafés, bakeries and quick-service shops, where 
 
 1. Open Settings → **Look & feel** → **Display** → **Device profile** and choose **Self-order kiosk**. Only a manager can change it, and choosing it signs that screen out. The till stays a kiosk after a restart.
    - Alternative: give the **Self-order kiosk** user a PIN on the Users page and sign in with it. An additional joined till refuses that PIN. Use **Device profile** there instead: it asks you to confirm that the till becomes a satellite, and needs the main till to be reachable; see [Multiple tills](/help/multitill).
-2. Open Settings → **Tills & devices** → **Kiosk payment mode** and choose **Card / contactless (kiosk)** (the default) or **Pay at counter**. It needs a manager. On a joined till this is a shop-wide setting.
-3. Open Settings → **Tills & devices** → **Kiosk idle reset** and pick **Off**, 30, **60** (the default), 120 or 180 **seconds**. On a joined till this is a shop-wide setting.
+2. Open Settings → **Tills & devices** → **Kiosk** and, under **Kiosk payment mode**, choose **Card / contactless (kiosk)** (the default) or **Pay at counter**. It needs a manager. On a joined till this is a shop-wide setting.
+3. In the same **Kiosk** section, under **Kiosk idle reset**, pick **Off**, 30, **60** (the default), 120 or 180 **seconds**. On a joined till this is a shop-wide setting.
 4. Set the screen size (the 70% to 130% picker at the top of the card) and **Window mode** in Settings → **Look & feel** → **Display**. The window mode **Kiosk** (a locked full-screen window) is a different thing from the **Self-order kiosk** device profile: the profile decides what the till shows, the window mode decides how the window behaves. See [Languages & display](/help/display).
 5. To offer more languages, install a language pack under Settings → **Language**. Picking a downloaded language there also makes it the till's own language, so set the till's language back afterwards. Every installed language appears on the start screen.
 6. Card payments need a payment method and a terminal; see [Payments](/help/payments). For receipts see [Printing](/help/printing).
@@ -73,7 +73,7 @@ Each line is the message the customer sees, what causes it and what to do.
 - "Ordering here is unavailable right now — please order at the counter.", "Sorry, this order can't be completed right now. Please see the counter." and "Payment couldn't be confirmed — please pay at the counter." These come from the fiscal setup. Check the fiscal device or plugin and take the order at the counter.
 - "No items found." The catalogue or the chosen category is empty. Gift vouchers are never listed on the kiosk, and inactive items don't show.
 - A receipt in the shop's language instead of the customer's: your receipt printer can't print that language's letters.
-- The kiosk resets while someone is still ordering: the idle reset time is too short. Raise it under **Kiosk idle reset**.
+- The kiosk resets while someone is still ordering: the idle reset time is too short. Raise it under **Kiosk idle reset** in Settings → Tills & devices → Kiosk.
 - A double tap or rapid repeats at checkout are refused on purpose, so one order is never placed twice.
 - "Your order is being placed. Wait for it to finish, then add more." The customer tried to change the basket (add or customize an item, change a quantity, switch **Dine in** / **Takeaway** or tap **Remove**) while the order was still being placed or paid. The basket can't change during checkout, so nothing is added to the order unseen or lost. Once checkout finishes or fails, the customer can start a new order or carry on with the basket.
 - No network: the sale still completes. **Pay at counter** needs no network at all; card payment at the kiosk depends on your payment terminal.

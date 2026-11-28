@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { gotoTillsSection } from './helpers';
 
 // ut-docs#3428 Tester additions: setup wizard path, no app.js on /setup,
 // Cancel reachable at the 1024x600 kiosk floor, long-locale/RTL overlays.
@@ -46,13 +47,13 @@ test.describe('join scan: Tester checks (ut-docs#3428)', () => {
     expect(posts).toEqual([]);
   });
 
-  for (const [name, path] of [['setup', '/setup'], ['tills', '/tills?tab=add&need=join']] as const) {
+  for (const [name, path] of [['setup', '/setup'], ['tills', '/settings?need=join#settings-tills-add']] as const) {
     for (const lang of ['en', 'de']) {
       test(`1024x600 ${name} ${lang}: Cancel and Type-instead inside the viewport`, async ({ page }) => {
         await stub(page, []);
         await page.setViewportSize({ width: 1024, height: 600 });
         if (name === 'setup') await openSetup(page, lang);
-        else { await page.goto('/tills?tab=add&need=join&lang=' + lang); await page.locator('#tills-tab-code').click(); }
+        else { await gotoTillsSection(page, 'add', '?need=join&lang=' + lang); await page.locator('#tills-tab-code').click(); }
         const p = name === 'setup' ? 'setup' : 'tills';
         await page.locator(`#${p}-join-scan`).click();
         await expect(page.locator(`#${p}-join-scan-overlay`)).toBeVisible();
@@ -75,7 +76,7 @@ test.describe('join scan: Tester checks (ut-docs#3428)', () => {
     test(`360px overlay open + not-UT hint + chip (${lang})`, async ({ page }) => {
       await stub(page, ['https://example.com/x']);
       await page.setViewportSize({ width: 360, height: 740 });
-      await page.goto('/tills?tab=add&need=join&lang=' + lang);
+      await gotoTillsSection(page, 'add', '?need=join&lang=' + lang);
       await page.locator('#tills-tab-code').click();
       await page.locator('#tills-join-scan').click();
       await expect(page.locator('#tills-join-scan-status')).not.toHaveText('');

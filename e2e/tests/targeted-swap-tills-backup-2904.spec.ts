@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
+import { watchConsole, answerPinPanel, noNativeDialogs, gotoTillsSection } from './helpers';
 
 // ut-docs#2904: pairing approve/deny, till revoke and Backup now used to
 // answer with HX-Refresh (a full page reload). They now re-render only
@@ -21,7 +21,7 @@ test('tills: deny and approve refresh only the pairing card, no page reload', as
     expect(seeded.status(), `seeding ${name}`).toBe(200);
   }
 
-  await page.goto('/tills?tab=add');
+  await gotoTillsSection(page, 'add');
   const card = page.locator('#tills-pairing-card');
   const denyRow = card.locator('tr', { hasText: 'test-2904-deny-till' });
   const approveRow = card.locator('tr', { hasText: 'test-2904-approve-till' });
@@ -60,7 +60,7 @@ test('tills: revoke refreshes only the enrolled-tills roster, no page reload', a
   });
   expect(enrollResp.ok(), `enroll: ${enrollResp.status()} ${await enrollResp.text()}`).toBe(true);
 
-  await page.goto('/tills?tab=others');
+  await gotoTillsSection(page, 'others');
   const roster = page.locator('#tills-roster');
   const row = roster.locator('tr', { hasText: 'test-2904-revoke-till' });
   await expect(row).toHaveCount(1);
@@ -69,7 +69,7 @@ test('tills: revoke refreshes only the enrolled-tills roster, no page reload', a
 
   const noNative = noNativeDialogs(page);
   await row.getByRole('button', { name: /revoke/i }).click();
-  await answerTillConfirm(page, 'confirm'); // hx-confirm
+  await answerPinPanel(row);
   await expect(page.locator('#tills-roster[data-stale]')).toHaveCount(0); // roster was replaced
   await expect(row).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__ut2904), 'page was reloaded').toBe('still-here');

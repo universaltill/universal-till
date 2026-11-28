@@ -115,9 +115,11 @@
            render there: a replica's local DELETE would revert on the next
            admin-bundle pull. The handler enforces this independently. */}}
       {{ if not $.SyncPrimary }}
-      {{/* ut-docs#2904: refresh only #tills-roster (tills.html) on success. */}}
-      <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
-                  hx-confirm="{{ T "tills.revoke_confirm" }}" data-confirm-ok="{{ T "tills.revoke" }}" data-after-request="ok refresh-region:tills-roster">{{ T "tills.revoke" }}</button>
+      {{/* ut-docs#7173: the question and the manager PIN are asked inline, right
+           under the button (tills_pin_panel.html); tills-tree.js posts the
+           revoke after the PIN checks out and the section reloads. */}}
+      <button type="button" class="btn secondary" data-pin-open aria-expanded="false" aria-controls="pin-{{ .ID }}-revoke" data-testid="till-revoke-{{ .ID }}">{{ T "tills.revoke" }}</button>
+      {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-revoke" .ID) "q" (T "tills.revoke_confirm") "ok" (T "tills.revoke") "urls" (printf "/api/sync/tills/%s/revoke" .ID) "done" (printf (T "tills.tree.old.removed") .Name)) }}
       {{ end }}
       </td>
     </tr>

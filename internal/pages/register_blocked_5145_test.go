@@ -136,7 +136,7 @@ func TestSettings_BlockedRegistrationFactsForAManager(t *testing.T) {
 	until := time.Now().Add(30 * time.Hour)
 	blockUntil(t, d, until)
 
-	body := getAs(mux, "/settings", &mgrUser).Body.String()
+	body := getAs(mux, "/settings", &mgrUser).Body.String() + tillsSection(t, mux, d, "this", &mgrUser)
 	for _, want := range []string{
 		`data-testid="register-blocked"`,
 		"can reconnect to the cloud from",
@@ -165,7 +165,7 @@ func TestSettings_BlockedRegistrationKeyUnavailable(t *testing.T) {
 	orig := tillKeyFingerprint
 	tillKeyFingerprint = func() (string, error) { return "", errors.New("unreadable") }
 	t.Cleanup(func() { tillKeyFingerprint = orig })
-	body := getAs(mux, "/settings", &mgrUser).Body.String()
+	body := tillsSection(t, mux, d, "this", &mgrUser)
 	if !strings.Contains(body, "Key fingerprint unavailable") || strings.Contains(body, "unreadable") {
 		t.Fatalf("settings must say the fingerprint is unavailable, without the raw error")
 	}

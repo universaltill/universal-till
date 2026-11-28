@@ -8584,33 +8584,44 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .pay-attn-choices { display: flex; flex-direction: column; gap: .6rem; }
 .pay-attn-q { margin: 0; font-weight: 600; }
 
-/* ---- Tills & devices: one page, five tabs (ut-docs#7057) ---- */
-.tills-tabs .tab-bar .tab { display: flex; align-items: center; justify-content: center; gap: .4rem; min-block-size: 48px; padding-inline: 1rem; text-decoration: none; white-space: nowrap; }
-.tills-tabs .tab-bar .tab:focus-visible, .tills-tabs select:focus-visible, .choice:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.tills-tabs .tag.count { min-inline-size: 1.4rem; text-align: center; }
-.tills-tabs .tab-select { display: none; }
-.tills-panel h2 { margin-block: 1rem .5rem; font-size: 1.1rem; }
-.tills-panel h2:focus { outline: none; }
+/* ---- Tills & devices: sections of the Settings tree (ut-docs#7057, ut-docs#7173) ---- */
+.choice:focus-visible, .tills-action :focus-visible, .tills-row :focus-visible, .tills-tech summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .tills-sentence { font-size: 1.15rem; font-weight: 600; margin: 0 0 .4rem; display: flex; align-items: center; gap: .6rem; }
 .tills-sentence .dot { flex: none; inline-size: .8rem; block-size: .8rem; border-radius: 50%; background: var(--success); }
 .tills-sentence .dot.warn { background: var(--warning); }
 .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .75rem; }
 .choice { display: flex; flex-direction: column; gap: .25rem; min-block-size: 44px; padding: .8rem 1rem; border: 2px solid var(--border); border-radius: .5rem; background: var(--surface); color: var(--text); text-decoration: none; }
 .choice[aria-current="true"] { border-color: var(--accent); background: var(--accent-tint, var(--surface)); }
-.tills-links { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
-.tills-links .btn { min-block-size: 44px; margin-inline-end: .5rem; }
-.tills-merged th { text-align: start; }
-.tills-merged .btn, .tills-panel .tills-roster .btn { min-block-size: 44px; }
-.tills-bulk { margin-block: .75rem; }
-.tills-phones { margin-block-start: 1rem; }
+.tills-roster .btn { min-block-size: 44px; }
+/* Old entries is drawn one step in under Other tills; the count tag is the only emphasis. */
+.settings-tree-sub { margin-inline-start: 1.1rem; border-inline-start: 2px solid var(--border); }
+.settings-tree .tag.count { margin-inline-start: .5rem; min-inline-size: 1.4rem; text-align: center; }
+.tills-lazy { min-block-size: 3rem; }
+.tills-group { margin-block-start: 1.4rem; padding-block-start: 1rem; border-block-start: 1px solid var(--border); }
+.tills-action { margin-block-start: 1.4rem; padding: 1rem; border: 2px solid var(--accent); border-radius: .5rem; }
+.tills-action h3 { margin-block-start: 0; }
+.tills-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; }
+.tills-row { padding: .8rem 1rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); }
+.tills-row p { margin-block: .25rem; }
+.tills-row-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .6rem; }
+.tills-row-actions .btn, .tills-removeall .btn, .tills-save-row .btn { min-block-size: 46px; white-space: normal; text-align: start; }
+.tills-removeall { margin-block-start: 1.2rem; }
+/* ut-docs#7173: the inline manager-PIN panel of a removal, right under its
+   button (no dialog, no overlay). */
+.tills-pin { margin-block-start: .8rem; padding: .8rem 1rem; border: 2px solid var(--accent); border-radius: .5rem; background: var(--surface); }
+.tills-pin[hidden] { display: none; }
+.tills-pin-q { margin-block: 0 .6rem; font-weight: 600; }
+.tills-pin-row { display: flex; flex-direction: column; gap: .3rem; max-inline-size: 16rem; }
+.tills-pin-row input { min-block-size: 46px; font-size: 1.1rem; letter-spacing: .15em; }
+.tills-pin-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .6rem; }
+.tills-pin-actions .btn { min-block-size: 46px; }
+.tills-save-row { margin-block-start: 1.4rem; }
+.tills-tech { margin-block-start: 1.4rem; }
+.tills-tech summary { cursor: pointer; min-block-size: 44px; padding-block: .6rem; font-weight: 600; }
+#settings-grid #tills-old-error, #settings-grid #tills-others-error { margin-block-start: .6rem; }
 @media (max-width: 640px) {
-  .tills-tabs .tab-bar { display: none; }
-  .tills-tabs .tab-select { display: flex; flex-direction: column; gap: .25rem; margin-block: .5rem; }
-  .tills-tabs .tab-select select { inline-size: 100%; min-block-size: 48px; font-size: 16px; }
-  .tills-merged, .tills-merged tbody, .tills-merged tr, .tills-merged td { display: block; inline-size: 100%; }
-  .tills-merged thead { display: none; }
-  .tills-merged tr { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; background: var(--surface); }
-  .tills-merged .btn { inline-size: 100%; }
+  .tills-row-actions .btn, .tills-removeall .btn, .tills-pin-actions .btn { inline-size: 100%; }
+  .tills-pin-row { max-inline-size: none; }
 }
 /* ut-docs#3428: scanned pairing code on the join forms. The code is a long
    base64url string: keep it on one truncated line (never a wall of text) and

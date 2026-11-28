@@ -557,21 +557,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// unlimited, as before). Its own instance: unrelated to pair-request.
 	shortCodeLimiter := newPairRateLimiter(time.Minute, 5)
 
-	// Tills page (manager): enrolled replicas + Add-till QR.
+	// ut-docs#7173: the old five-tab /tills page is now sections of the
+	// Settings tree; every old URL keeps working through a 303. A person
+	// without sync_management lands on /settings, as before.
 	mux.HandleFunc("GET /tills", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
-		m, err := tillsPageData(w, r, d, tillsTabFromRequest(r))
-		if err != nil {
-			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
-			return
-		}
-		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
-		m["theme"] = d.ResolvedTheme(r)
-		m["menuItems"] = d.MenuSnapshot()
-		httpx.Render("ui/pages/tills.html", m)(w, r)
+		http.Redirect(w, r, tillsRedirectTarget(r), http.StatusSeeOther)
 	})
 
 	// Issue a one-time enrolment token; responds with the short code + this

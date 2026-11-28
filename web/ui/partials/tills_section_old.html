@@ -1,0 +1,62 @@
+{{/* Section "Old entries" (ut-docs#7173): every entry the shop account and
+     this till disagree about, one Remove per entry, "same phone: replace"
+     when a live till with another name looks like the same phone, and one
+     Remove all. A removal asks for the manager PIN in a panel right under the
+     button (tills_pin_panel.html: no native confirm, no dialog, no showModal),
+     is audited by the existing revoke route, and the list, the tree's count
+     tag and the Other tills banner follow without a page reload
+     (tills-changed). Account-side removal of a cloud-only entry waits for
+     the cloud call (accountRemovalReady): until then the entry says so. */}}
+{{ with .Others }}
+<div id="tills-old" data-ut-refresh="#tills-old" data-ut-refresh-url="/ui/tills/section/old" data-testid="tills-old" data-old-count="{{ $.OldCount }}">
+{{ if not .CloudOK }}
+  {{ if not $.ShopConnected }}
+  <p class="lead" data-testid="tills-old-not-connected">{{ T "tills.tree.old.not_connected" }}</p>
+  {{ else }}
+  <div class="sync-banner" role="status" data-testid="tills-old-offline">
+    <strong>{{ T "tills.tree.old.offline_title" }}</strong>
+    <p>{{ T "tills.tree.old.offline_body" }}</p>
+    <button type="button" class="btn" hx-get="/ui/tills/section/old?refresh=1" hx-target="#tills-old-body" hx-swap="innerHTML">{{ T "tills.list.try_again" }}</button>
+  </div>
+  {{ end }}
+{{ else if not $.Old }}
+  <div class="sync-banner" role="status" data-testid="tills-old-none">
+    <strong>{{ T "tills.tree.old.nothing_title" }}</strong> {{ T "tills.tree.old.nothing_body" }}
+  </div>
+{{ else }}
+  <p class="lead">{{ T "tills.tree.old.intro" }}</p>
+  {{ if $.SyncPrimary }}<p class="muted">{{ T "tills.list.ask_manager" }}</p>{{ end }}
+  <ul class="tills-rows" data-testid="tills-old-list">
+    {{ range $.Old }}
+    <li class="tills-row" id="till-row-{{ .ID }}" data-till-id="{{ .ID }}" data-kind="{{ .Kind }}" data-testid="till-old-entry">
+      <div class="tills-row-head"><strong>{{ .Name }}</strong> <span class="tag warn">{{ T "tills.tree.old.tag" }}</span></div>
+      <p>{{ T "tills.tree.old.desc" }}</p>
+      {{ if .LastSeen }}<p class="muted">{{ printf (T "tills.tree.last_seen") (datetime .LastSeen) }}</p>{{ end }}
+      {{ if $.SyncPrimary }}
+      {{ else if .Removable }}
+      <div class="tills-row-actions" data-testid="till-remove-{{ .ID }}">
+        {{ if .SameAsName }}
+        <button type="button" class="btn secondary" data-pin-open aria-expanded="false" aria-controls="pin-{{ .ID }}-replace" data-testid="till-replace-{{ .ID }}">{{ printf (T "tills.tree.old.same_phone") .SameAsName }}</button>
+        {{ end }}
+        <button type="button" class="btn secondary" data-pin-open aria-expanded="false" aria-controls="pin-{{ .ID }}-remove" data-testid="till-remove-btn-{{ .ID }}">{{ T "tills.tree.old.remove" }}</button>
+      </div>
+      {{ if .SameAsName }}
+      {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-replace" .ID) "q" (printf "%s %s" (printf (T "tills.tree.confirm.replace_title") .Name .SameAsName) (printf (T "tills.tree.confirm.replace_body") .SameAsName .Name)) "ok" (T "tills.tree.confirm.replace_ok") "urls" .RemoveURL "done" (printf (T "tills.tree.old.replaced") .Name .SameAsName)) }}
+      {{ end }}
+      {{ template "tills_pin_panel.html" (dict "id" (printf "pin-%s-remove" .ID) "q" (printf "%s %s" (printf (T "tills.tree.confirm.remove_title") .Name) (T "tills.tree.confirm.remove_body")) "ok" (T "tills.tree.old.remove") "urls" .RemoveURL "done" (printf (T "tills.tree.old.removed") .Name)) }}
+      {{ else }}
+      <p class="hint" data-testid="tills-cloud-pending">{{ T "tills.tree.old.cloud_pending" }}</p>
+      {{ end }}
+    </li>
+    {{ end }}
+  </ul>
+  {{ with $.OldBanner }}{{ if and (gt .Removable 1) (not $.SyncPrimary) }}
+  <div class="tills-removeall">
+    <button type="button" class="btn" data-pin-open aria-expanded="false" aria-controls="pin-all-old" data-testid="tills-remove-all">{{ printf (T "tills.tree.old.remove_all") .Removable }}</button>
+    {{ template "tills_pin_panel.html" (dict "id" "pin-all-old" "q" (printf "%s %s" (printf (T "tills.tree.confirm.all_title") .Removable) (printf (T "tills.tree.confirm.all_body") .Names)) "ok" (printf (T "tills.tree.old.remove_all") .Removable) "urls" $.OldRemoveURLs "done" (T "tills.tree.old.removed_all")) }}
+  </div>
+  {{ end }}{{ end }}
+  <p id="tills-old-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{ end }}
+</div>
+{{ end }}

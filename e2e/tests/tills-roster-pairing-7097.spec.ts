@@ -1,9 +1,9 @@
 import * as crypto from 'crypto';
 import { test, expect } from './fixtures';
-import { answerTillConfirm } from './helpers';
+import { answerPinPanel, gotoTillsSection } from './helpers';
 
 // ut-docs#7097 / ut-docs#7057 (T7): one pending pair request per device, and
-// the Manage-tills page refresh never wipes what a manager is working on.
+// the Tills & devices section refresh never wipes what a manager is working on.
 
 const DEVICE = 'till-7097aaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
@@ -26,7 +26,7 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
     const ids: string[] = [];
     for (let i = 1; i <= 3; i++) ids.push(await pairRequest(request, name, `e2e-7097-secret-${i}`, DEVICE));
     try {
-      await page.goto('/tills?tab=add');
+      await gotoTillsSection(page, 'add');
       await expect(page.locator('#tills-pairing-card tr', { hasText: name })).toHaveCount(1);
       // The older requests are gone for the phone too: only the newest can be approved.
       expect((await request.get(`/api/sync/pair-requests/${ids[0]}`, { headers: { 'X-UT-Pair-Request-Secret': 'e2e-7097-secret-1' } })).status()).toBe(404);
@@ -39,7 +39,7 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
     const name = 'e2e-7097-approve-box';
     const id = await pairRequest(request, name, 'e2e-7097-secret-box', 'till-7097bbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     try {
-      await page.goto('/tills?tab=add');
+      await gotoTillsSection(page, 'add');
       const row = page.locator('#tills-pairing-card tr', { hasText: name });
       await expect(row).toHaveCount(1);
       await page.evaluate(() => { (document.getElementById('pending-pairings') as any).__kept = true; });
@@ -60,7 +60,7 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
     const name = 'e2e-7097-roster-till';
     expect((await request.post('/api/sync/enroll', { data: { token: tok, name } })).ok()).toBe(true);
     try {
-      await page.goto('/tills?tab=others');
+      await gotoTillsSection(page, 'others');
       const row = page.locator('#tills-roster tr', { hasText: name });
       await expect(row).toHaveCount(1);
       await page.evaluate((n) => {
@@ -75,11 +75,11 @@ test.describe('roster and pairing requests (ut-docs#7097)', () => {
       }, name);
       expect(kept, 'the roster row was re-rendered instead of only its status cells').toBe(true);
     } finally {
-      await page.goto('/tills?tab=others');
+      await gotoTillsSection(page, 'others');
       const row = page.locator('#tills-roster tr', { hasText: name });
       if (await row.count()) {
         await row.getByRole('button', { name: /revoke/i }).click();
-        await answerTillConfirm(page, 'confirm');
+        await answerPinPanel(row);
         await expect(row).toHaveCount(0);
       }
     }

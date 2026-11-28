@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#1548: three defects reported from the pilot pair, all reproduced
 // and measured on the real tablet — /tills overflowed the viewport by 40-
@@ -25,7 +25,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
     { width: 1280, height: 800 },
     { width: 1024, height: 600 },
   ]) {
-    test(`/tills never needs horizontal scroll at ${vp.width}x${vp.height}`, async ({ page, request }) => {
+    test(`Add a till (Settings > Tills & devices) never needs horizontal scroll at ${vp.width}x${vp.height}`, async ({ page, request }) => {
       // Seed a REAL pending request first. Measured during review: with an
       // empty pending list (the state this spec used to load) /tills does
       // not overflow at either viewport even with the entire AC-1 fix
@@ -45,7 +45,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
       try {
         await page.setViewportSize(vp);
         const assertClean = watchConsole(page);
-        await page.goto('/tills?tab=add&need=join');
+        await gotoTillsSection(page, 'add', '?need=join');
         await page.waitForSelector('.tills-join');
         // Fail loudly rather than silently measuring the empty state again
         // if the partial, its poll, or the seed endpoint ever regresses.
@@ -74,7 +74,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
 
   test('discover and paste-a-code are two tabs sharing one till-name field, not two stacked sections', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/tills?tab=add&need=join');
+    await gotoTillsSection(page, 'add', '?need=join');
     await page.waitForSelector('.tills-join');
 
     // Exactly one shared till-name field for the whole join component —
@@ -108,7 +108,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
 
   test('an empty required till-name field shows a persistent red border + message, not just a submit-time bubble', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/tills?tab=add&need=join');
+    await gotoTillsSection(page, 'add', '?need=join');
     await page.waitForSelector('.tills-join');
 
     const nameInput = page.locator('#pairing-till-name');

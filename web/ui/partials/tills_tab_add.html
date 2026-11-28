@@ -1,28 +1,27 @@
-{{/* Tab "Add a till" (ut-docs#7057): the chooser, then what is waiting for a
+{{/* Section "Add a till" (ut-docs#7057, ut-docs#7173): the chooser, then what is waiting for a
      manager, then only the section the chooser selected (?need=another|join|
      replace). A replaced main till shows the replaced notice instead of a
      pairing code and the pending list; the API answer (409 till_replaced) is
      unchanged. */}}
-<h2 tabindex="-1" data-tills-heading>{{ T "tills.tab.add" }}</h2>
 <div class="card" data-testid="tills-add-chooser">
   <h3>{{ T "tills.add.chooser.title" }}</h3>
   <div class="choices">
-    <a class="choice" data-testid="tills-choice-another" href="/tills?tab=add&amp;need=another" hx-get="/ui/tills/tab/add?need=another" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=another"{{ if eq .Need "another" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.another" }}</strong><span class="muted">{{ T "tills.add.chooser.another_help" }}</span></a>
-    <a class="choice" data-testid="tills-choice-join" href="/tills?tab=add&amp;need=join" hx-get="/ui/tills/tab/add?need=join" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=join"{{ if eq .Need "join" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.join" }}</strong><span class="muted">{{ T "tills.add.chooser.join_help" }}</span></a>
-    <a class="choice" data-testid="tills-choice-replace" href="/tills?tab=add&amp;need=replace" hx-get="/ui/tills/tab/add?need=replace" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=add&amp;need=replace"{{ if eq .Need "replace" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.replace" }}</strong><span class="muted">{{ T "tills.add.chooser.replace_help" }}</span></a>
+    <a class="choice" data-testid="tills-choice-another" href="/settings?need=another#settings-tills-add" hx-get="/ui/tills/section/add?need=another" hx-target="#tills-add-body" hx-swap="innerHTML"{{ if eq .Need "another" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.another" }}</strong><span class="muted">{{ T "tills.add.chooser.another_help" }}</span></a>
+    <a class="choice" data-testid="tills-choice-join" href="/settings?need=join#settings-tills-add" hx-get="/ui/tills/section/add?need=join" hx-target="#tills-add-body" hx-swap="innerHTML"{{ if eq .Need "join" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.join" }}</strong><span class="muted">{{ T "tills.add.chooser.join_help" }}</span></a>
+    <a class="choice" data-testid="tills-choice-replace" href="/settings?need=replace#settings-tills-add" hx-get="/ui/tills/section/add?need=replace" hx-target="#tills-add-body" hx-swap="innerHTML"{{ if eq .Need "replace" }} aria-current="true"{{ end }}><strong>{{ T "tills.add.chooser.replace" }}</strong><span class="muted">{{ T "tills.add.chooser.replace_help" }}</span></a>
   </div>
 </div>
 
 {{ if .IsReplaced }}
 <div class="sync-banner" role="status" data-testid="tills-add-replaced">
   {{ if .ReplacedBy }}{{ printf (T "tills.add.replaced_notice") .ReplacedBy }}{{ else }}{{ T "tills.add.replaced_notice_unnamed" }}{{ end }}
-  <a class="btn secondary" href="/tills?tab=add&amp;need=join">{{ if .ReplacedBy }}{{ printf (T "tills.add.replaced_join") .ReplacedBy }}{{ else }}{{ T "tills.add.replaced_join_unnamed" }}{{ end }}</a>
+  <a class="btn secondary" href="/settings?need=join#settings-tills-add">{{ if .ReplacedBy }}{{ printf (T "tills.add.replaced_join") .ReplacedBy }}{{ else }}{{ T "tills.add.replaced_join_unnamed" }}{{ end }}</a>
 </div>
 {{ else if .IsMain }}
 {{/* ut-docs#2904: approve/deny (pending_pairings.html) refresh this card
      only; the fresh copy's load trigger re-fetches the list. ut-docs#7057: a
      request is never hidden, and one whose name is already enrolled says so. */}}
-<div class="card" id="tills-pairing-card" data-ut-refresh="#tills-pairing-card" data-testid="tills-waiting">
+<div class="card" id="tills-pairing-card" data-ut-refresh="#tills-pairing-card" data-ut-refresh-url="/ui/tills/section/add?need={{ .Need }}" data-testid="tills-waiting">
   <h3>{{ T "tills.add.waiting_title" }}</h3>
   <p class="muted">{{ T "tills.pairing.help" }}</p>
   <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -179,7 +178,7 @@
 <div class="card" data-testid="tills-add-replace">
   <h3>{{ T "tills.add.replace.title" }}</h3>
   <p class="muted">{{ T "tills.add.replace.help" }}</p>
-  <a class="btn secondary" href="/tills?tab=others" hx-get="/ui/tills/tab/others" hx-target="#tills-tab" hx-swap="innerHTML" hx-push-url="/tills?tab=others">{{ T "tills.add.replace.go" }}</a>
+  <a class="btn secondary" href="#settings-tills-others">{{ T "tills.add.replace.go" }}</a>
   <p class="small muted">{{ T "tills.add.replace.main" }}</p>
 </div>
 {{ end }}

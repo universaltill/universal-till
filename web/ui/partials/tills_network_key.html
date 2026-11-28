@@ -2,7 +2,7 @@
      key" action, now on the Settings tab of the Tills & devices page (ut-docs#7057).
      Only where the live roster is (main till, TLS served). */}}
 {{ with .NetworkKey }}{{ if .Show }}
-<div class="card" id="tills-network-key-region" data-ut-refresh="#tills-network-key-region">
+<div class="card" id="tills-network-key-region" data-ut-refresh="#tills-network-key-region" data-ut-refresh-url="/ui/tills/section/sync">
 <div class="tills-network-key" data-testid="tills-network-key" data-rotation="{{ if .Pending }}pending{{ else }}idle{{ end }}">
   <p><strong>{{ T "tills.network_key.title" }}</strong><br>
     <small class="muted">{{ if .Pending }}{{ T "tills.network_key.pending" }}{{ else }}{{ T "tills.network_key.idle" }}{{ end }}</small></p>

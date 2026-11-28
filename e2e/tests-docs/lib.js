@@ -89,7 +89,7 @@ function sha256Hex(buf) {
 // whose secondary routes (routes[1:]) show meaningfully different screens
 // from routes[0] will simply never get those screens captured for the
 // manual — confirmed, accepted gap for "inventory" (routes[0] /inventory;
-// /locations never shown) and "multitill" (routes[0] /tills; /registers
+// /locations never shown) and "multitill" (routes[0] was /tills, now a redirect into Settings, ut-docs#7173: the help front-matter names the new route; /registers
 // never shown), ut-docs#900. Their prose already documents the /locations
 // and /registers screens well enough without a dedicated screenshot,
 // consistent with option (b) in ut-docs#900's own acceptance criteria. A

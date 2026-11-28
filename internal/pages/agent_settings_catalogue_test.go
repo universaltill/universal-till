@@ -46,19 +46,25 @@ func TestAgentSettingsCatalogue_CoversEverySettingsRegion_4129(t *testing.T) {
 // schedule, till roles) that slice 2 ("remaining entries by region") adds.
 // A NEW card must get a registry entry, not an entry here.
 var settingsCardsWithoutRegistryKey = map[string]string{
-	"registration":         "action/status card (pairing, claim code), no key; its one key (registration.stopped) moved to the Privacy card",
-	"subscription":         "billing: tier never, not a settings key",
-	"settings-issuereport": "action card (bug report), no key",
-	"settings-diagnostics": "slice 2: diagnostics consent",
-	"settings-menulayout":  "slice 2: menu layout",
-	"settings-about":       "read-only version info",
-	"settings-theme":       "slice 2: appearance",
-	"settings-display":     "slice 2: appearance",
-	"settings-backup":      "slice 2: backup schedule (destinations are sensitive)",
-	"settings-data":        "action card (import/export), no key",
-	"settings-tills":       "slice 2: till roles and names (cloud pairing is tier never)",
-	"settings-staff-links": "navigation card, no key",
-	"settings-all":         "raw key/value editor; every key it can write is gated by the registry elsewhere",
+	// ut-docs#7173: the old registration / subscription / settings-tills
+	// cards became the Tills & devices tree sections below.
+	"settings-tills-shop":    "action/status card (pairing, claim code, plan), no key; its one key (registration.stopped) moved to the Privacy card; billing tier never",
+	"settings-tills-others":  "status card (live roster, account list), no key",
+	"settings-tills-old":     "action card (remove an old entry), no key",
+	"settings-tills-add":     "action card (pair a new till), no key",
+	"settings-tills-readers": "status card (card readers), no key",
+	"settings-kiosk":         "container of the kiosk idle reset and payment mode, registered under their own regions (settings-kiosk-idle-reset, settings-kiosk-payment-mode)",
+	"settings-issuereport":   "action card (bug report), no key",
+	"settings-diagnostics":   "slice 2: diagnostics consent",
+	"settings-menulayout":    "slice 2: menu layout",
+	"settings-about":         "read-only version info",
+	"settings-theme":         "slice 2: appearance",
+	"settings-display":       "slice 2: appearance",
+	"settings-backup":        "slice 2: backup schedule (destinations are sensitive)",
+	"settings-data":          "action card (import/export), no key",
+	"settings-tills-this":    "slice 2: till roles and names (cloud pairing is tier never)",
+	"settings-staff-links":   "navigation card, no key",
+	"settings-all":           "raw key/value editor; every key it can write is gated by the registry elsewhere",
 }
 
 // ut-docs#5349: every Settings card (class "card" with an id) has a registry

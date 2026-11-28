@@ -4,7 +4,7 @@
      compare, and offers no role choice (the role is fixed by the request).
      Approve and Deny reuse the pairing API; Approve asks the manager PIN. */}}
 <div id="reader-requests" class="card" role="region" aria-labelledby="reader-requests-title"
-     hx-get="/ui/tills/reader-requests" hx-trigger="every 3s [!utPairingBusy()], tills-changed[!utPairingBusy()] from:body" hx-target="this" hx-swap="outerHTML">
+     hx-get="/ui/tills/reader-requests" hx-trigger="every 3s [!utPairingBusy() && !document.querySelector('.settings-section-hidden #reader-requests')], tills-changed[!utPairingBusy()] from:body" hx-target="this" hx-swap="outerHTML">
   <h4 id="reader-requests-title">{{ T "tap.pair.requests_title" }}</h4>
   {{ if .NeedsTLS }}
   <p class="muted" role="status">{{ T "tap.pair.needs_tls" }}</p>
@@ -21,12 +21,12 @@
     <div class="reader-actions">
       <form hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#rpin-{{ .ID }}" hx-swap="none"
             hx-disabled-elt="find button[type=submit]"
-            data-after-request="ok refresh-region:tills-pairing-card; fail unhide:rpin-error-{{ .ID }}">
+            data-after-request="ok refresh-region:tills-readers-card; fail unhide:rpin-error-{{ .ID }}">
         <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
       </form>
       <form hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#rpin-{{ .ID }}" hx-swap="none"
             hx-disabled-elt="find button[type=submit]"
-            data-after-request="ok refresh-region:tills-pairing-card; fail unhide:rpin-error-{{ .ID }}">
+            data-after-request="ok refresh-region:tills-readers-card; fail unhide:rpin-error-{{ .ID }}">
         <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
       </form>
     </div>

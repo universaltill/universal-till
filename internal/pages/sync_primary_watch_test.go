@@ -231,7 +231,7 @@ func TestReplicaWithStaleURL_RecoversEndToEnd(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	syncPullTick(ctx, replica, client, func(context.Context) {})
 	chip := getMainTillChip(t, replica)
-	if !strings.Contains(chip, `href="/tills"`) || !strings.Contains(chip, "sb-main-till") ||
+	if !strings.Contains(chip, `href="/settings#settings-tills-this"`) || !strings.Contains(chip, "sb-main-till") ||
 		!strings.Contains(chip, "Main till not reachable since") {
 		t.Fatalf("no main-till chip linking to /tills after the main till went missing: %q", chip)
 	}
@@ -304,9 +304,9 @@ func TestTillsPage_ReplicaShowsMainTillUnreachableNotice(t *testing.T) {
 	}
 	get := func() string {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tills", nil))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("GET /tills = %d", rec.Code)
+			t.Fatalf("GET /ui/tills/section/this = %d", rec.Code)
 		}
 		return rec.Body.String()
 	}
@@ -348,9 +348,9 @@ func TestTillsPage_RestoredReplicaShowsRejoinNotice(t *testing.T) {
 	})
 	dp.PrimaryWatch.ContactFailed(ctx)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tills", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/tills/section/this", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /tills = %d", rec.Code)
+		t.Fatalf("GET /ui/tills/section/this = %d", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `data-testid="tills-needs-rejoin"`) || !strings.Contains(body, "notice-block-warn") ||

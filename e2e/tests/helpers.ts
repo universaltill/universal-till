@@ -1,4 +1,4 @@
-import { APIRequestContext, Page, expect, test } from '@playwright/test';
+import { APIRequestContext, Locator, Page, expect, test } from '@playwright/test';
 
 // Every till GET page the sweeps walk. Shared by phone-layout-sweep-3297 and
 // touch-target-floor-5989; add every new GET page here.
@@ -321,10 +321,24 @@ export async function ensureRegisteredAutomatically(page: Page) {
   await nameShop(page);
   const card = page.locator('#registration');
   await expect(async () => {
-    await page.goto('/settings#registration');
+    await page.goto('/settings#settings-tills-shop');
     await page.reload();
     await expect(card).toContainText('This till is registered', { timeout: 1000 });
   }).toPass({ timeout: 30_000 });
+}
+
+// ut-docs#7173: Tills & devices is a set of sections in the Settings tree, not
+// a page. Opens `section` (an id suffix of #settings-tills-<section>), with an
+// optional query such as '?need=join' or '?lang=de' (leading '?', before the
+// hash), and waits until the section's lazy fragment has landed, so a spec can
+// count rows straight away. GET /ui/tills/section/* runs only once the card is
+// shown (tills-tree.js sets data-loaded after the swap).
+export type TillsSection = 'this' | 'shop' | 'others' | 'old' | 'add' | 'readers';
+export async function gotoTillsSection(page: Page, section: TillsSection, query = ''): Promise<void> {
+  await page.goto(`/settings${query}#settings-tills-${section}`);
+  const card = page.locator(`#settings-tills-${section}`);
+  await expect(card).toBeVisible();
+  await expect(card.locator('[data-tills-body]').first()).toHaveAttribute('data-loaded', '1');
 }
 
 // Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
@@ -934,4 +948,16 @@ export async function resetBasketWithPIN(request: APIRequestContext, pin: string
   if (res.headers()['x-ut-response'] === 'elevation-prompt') {
     throw new Error('resetBasketWithPIN: approved New sale re-prompted');
   }
+}
+
+/**
+ * Answer the inline manager-PIN panel of a removal (ut-docs#7173): the panel
+ * opens right under the clicked button, never as a dialog. Types the PIN and
+ * presses the panel's own confirm button.
+ */
+export async function answerPinPanel(scope: Locator | Page, pin: string = ADMIN_PIN): Promise<void> {
+  const panel = scope.locator('[data-pin-panel]:visible').first();
+  await expect(panel).toBeVisible();
+  await panel.locator('input[name="override_pin"]').fill(pin);
+  await panel.locator('[data-pin-confirm]').click();
 }

@@ -1,0 +1,54 @@
+{{/* Section "Other tills" (ut-docs#7173): the working tills, and ONE banner
+     that says what is wrong with the old entries and removes them on the
+     spot (tills-tree.js asks for the manager PIN inline, then posts each removal to
+     the existing revoke route). Nothing here deletes anything by itself; when the account list
+     cannot be read nothing is marked (selling and the LAN never depend on it,
+     ADR-0003). Every warning carries a button or says "Nothing needed". */}}
+{{ with .Others }}
+<div id="tills-others" data-ut-refresh="#tills-others" data-ut-refresh-url="/ui/tills/section/others" data-testid="tills-others" data-old-count="{{ $.OldCount }}">
+{{ if not .CloudOK }}
+  {{ if not $.ShopConnected }}
+  <p class="lead" data-testid="tills-not-connected">{{ T "tills.tree.not_connected_hint" }}</p>
+  {{ else }}
+  <div class="notice-block-warn" role="alert" data-testid="tills-account-unavailable">
+    <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.tree.account_down.title" }}</strong>
+    <p>{{ T "tills.tree.account_down.body" }}</p>
+    <button type="button" class="btn" hx-get="/ui/tills/section/others?refresh=1" hx-target="#tills-others-body" hx-swap="innerHTML">{{ T "tills.list.try_again" }}</button>
+  </div>
+  {{ end }}
+{{ else if $.OldCount }}
+  {{ with $.OldBanner }}
+  <div class="notice-block-warn" role="alert" data-testid="tills-old-banner">
+    <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.tree.banner.title" }}</strong>
+    <p>{{ if eq .Count 1 }}{{ if .Phone }}{{ printf (T "tills.tree.banner.body_one") .Names .Phone }}{{ else }}{{ printf (T "tills.tree.banner.body_one_plain") .Names }}{{ end }}{{ else }}{{ if .Phone }}{{ printf (T "tills.tree.banner.body_other") .Count .Names .Phone }}{{ else }}{{ printf (T "tills.tree.banner.body_other_plain") .Count .Names }}{{ end }}{{ end }}</p>
+    {{ if $.SyncPrimary }}
+    <p class="muted">{{ T "tills.list.ask_manager" }}</p>
+    {{ else }}
+      {{ if .Removable }}
+      <button type="button" class="btn" data-pin-open aria-expanded="false" aria-controls="pin-all-banner" data-testid="tills-banner-remove">{{ if eq .Removable 1 }}{{ T "tills.tree.banner.fix_one" }}{{ else }}{{ printf (T "tills.tree.banner.fix_other") .Removable }}{{ end }}</button>
+      {{ $q := "" }}{{ $ok := "" }}
+      {{ if eq .Removable 1 }}{{ $q = printf "%s %s" (T "tills.tree.confirm.one_title") (T "tills.tree.confirm.remove_body") }}{{ $ok = T "tills.tree.old.remove" }}
+      {{ else }}{{ $q = printf "%s %s" (printf (T "tills.tree.confirm.all_title") .Removable) (printf (T "tills.tree.confirm.all_body") .Names) }}{{ $ok = printf (T "tills.tree.old.remove_all") .Removable }}{{ end }}
+      {{ template "tills_pin_panel.html" (dict "id" "pin-all-banner" "q" $q "ok" $ok "urls" $.OldRemoveURLs "done" (T "tills.tree.old.removed_all")) }}
+      {{ end }}
+      {{ if .Pending }}<p class="muted" data-testid="tills-cloud-pending">{{ T "tills.tree.old.cloud_pending" }}</p>{{ end }}
+    {{ end }}
+    <p id="tills-others-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+  </div>
+  {{ end }}
+{{ else }}
+  <div class="sync-banner" role="status" data-testid="tills-nothing-needed">
+    <strong>{{ T "tills.tree.nothing.title" }}</strong> {{ T "tills.tree.nothing.body" }}
+  </div>
+{{ end }}
+
+<h3>{{ printf (T "tills.tree.count_other") (len $.Tills) }}</h3>
+{{/* ut-docs#2742: live on a main till — the roster re-renders itself every
+     10 s (GET /ui/tills/roster swaps only this block). A replica has nothing
+     live to show, so it doesn't poll. The tick is skipped while the
+     operator's focus is inside the table or while this section is hidden. */}}
+<div id="tills-roster" data-ut-refresh="#tills-roster" data-ut-refresh-url="/ui/tills/section/others"{{ if $.LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [(!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)) && !document.querySelector('.settings-section-hidden #tills-roster')]" hx-swap="innerHTML"{{ end }}>
+  {{ template "tills_roster.html" $ }}
+</div>
+</div>
+{{ end }}

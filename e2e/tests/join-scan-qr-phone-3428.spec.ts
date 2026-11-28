@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { gotoTillsSection } from './helpers';
 
 // ut-docs#3428, WebKit phone lane (iOS WKWebView has no native
 // BarcodeDetector, so the vendored zxing-wasm decoder is what runs): the REAL
@@ -43,7 +44,7 @@ test('the vendored decoder reads the main till QR and fills the join form', asyn
     });
   }, png);
 
-  await page.goto('/tills?tab=add&need=join');
+  await gotoTillsSection(page, 'add', '?need=join');
   await page.locator('#tills-tab-code').click();
   await page.locator('#tills-join-scan').click();
   await expect(page.locator('#tills-join-scanned')).toBeVisible({ timeout: 30_000 });

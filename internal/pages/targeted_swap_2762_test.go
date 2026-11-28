@@ -124,7 +124,7 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 		{"/api/settings/till-register", "settings-till-register-region"},
 	} {
 		ts := string(thisTab)
-		at := strings.Index(ts, `id="`+c.region+`" data-ut-refresh="#`+c.region+`" data-ut-saved-msg="#`)
+		at := strings.Index(ts, `id="`+c.region+`" data-ut-refresh="#`+c.region+`" data-ut-refresh-url="/ui/tills/section/this" data-ut-saved-msg="#`)
 		if at < 0 {
 			t.Errorf("tills_tab_this.html: missing region %q", c.region)
 			continue
@@ -222,7 +222,7 @@ func TestPairingRevokeBackupSwapRegionNotReload(t *testing.T) {
 		{"web/ui/partials/tills_tab_add.html", []string{
 			`id="tills-pairing-card" data-ut-refresh="#tills-pairing-card"`,
 		}},
-		{"web/ui/partials/tills_tab_others.html", []string{
+		{"web/ui/partials/tills_section_others.html", []string{
 			`id="tills-roster" data-ut-refresh="#tills-roster"`,
 		}},
 		{"web/ui/partials/pending_pairings.html", []string{

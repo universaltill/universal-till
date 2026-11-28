@@ -1,11 +1,13 @@
-{{/* Tab "This till" (ut-docs#7057): one sentence about this till, the banner
-     that explains any trouble, its name and register, its shop account. The
-     name and register forms post to the same endpoints Settings uses
-     (elevation-wired there, unchanged). */}}
-<h2 tabindex="-1" data-tills-heading>{{ T "settings.tills.role_label" }}</h2>
+{{/* Section "This till" (ut-docs#7057, ut-docs#7173): one sentence about this
+     till, the banners that explain any trouble, its name and register (one
+     form, one Save) and the technical details support asks for. The shop
+     account moved to Shop and sync. The forms post to the same endpoints
+     Settings always used (elevation-wired there, unchanged). */}}
 <div class="card" data-testid="tills-this-status">
   <p class="tills-sentence"><span class="dot{{ if or .MainUnreachable .IsReplaced .Heal }} warn{{ end }}" aria-hidden="true"></span> <span data-testid="tills-this-sentence">{{ .ThisSentence }}</span></p>
+  <p class="small" data-testid="tills-this-role">{{ T "settings.tills.role_label" }}: <strong>{{ .ThisRoleLabel }}</strong></p>
   {{ if .MainTillAddr }}<p class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</p>{{ end }}
+  {{ if .LastReconnected }}<p class="muted small" data-testid="tills-last-reconnected">{{ .LastReconnected }}</p>{{ end }}
 </div>
 {{/* ut-docs#7057: the replaced state is said here, in the page, not only by an
      API refusal. Never a modal. */}}
@@ -20,7 +22,7 @@
 <div class="sync-banner" role="status" data-testid="tills-replaced-banner">
   <strong>{{ T "tills.this.replaced_title" }}</strong>
   {{ if .ReplacedBy }}{{ printf (T "tills.this.replaced_body") .ReplacedBy }}{{ else }}{{ T "tills.this.replaced_body_unnamed" }}{{ end }}
-  <a href="/tills?tab=add&amp;need=join">{{ T "tills.this.replaced_join" }}</a>
+  <a href="/settings?need=join#settings-tills-add">{{ T "tills.this.replaced_join" }}</a>
 </div>
 {{ end }}
 {{ if .NeedsRejoin }}
@@ -28,7 +30,7 @@
   <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "sync.link.rejoin" }}</strong>
   <p>{{ T "sync.link.rejoin_hint" }}</p>
   <p>{{ T "tills.rejoin_needed_help" }}</p>
-  <a class="btn secondary" href="/tills?tab=add&amp;need=join">{{ T "tills.this.reconnect" }}</a>
+  <a class="btn secondary" href="/settings?need=join#settings-tills-add">{{ T "tills.this.reconnect" }}</a>
 </div>
 {{ end }}
 {{ if and .MainUnreachable (not .NeedsRejoin) }}
@@ -40,45 +42,44 @@
 </div>
 {{ end }}
 
-<div class="card" id="settings-tills">
-  <h3>{{ T "tills.this.name_title" }}</h3>
-  <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-saved-msg="#till-name-msg">
-  <form hx-post="/api/settings/till-name" hx-swap="none"
+<div class="card" id="tills-this-form-card" data-testid="tills-this-form">
+  {{/* One Save for both fields (tills-tree.js submits whichever changed); each
+       form keeps its own endpoint, region refresh and message line. */}}
+  <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-refresh-url="/ui/tills/section/this" data-ut-saved-msg="#till-name-msg">
+  <form id="till-name-form" hx-post="/api/settings/till-name" hx-swap="none"
         data-after-request="ok not-html refresh-region; status:422 text-response:till-name-msg; fail not-status:422 save-error:settings-save-error">
-    <label>{{ T "settings.tills.name_label" }}
-      <input type="text" name="name" maxlength="60" value="{{ .TillName }}" aria-describedby="till-name-help">
-    </label>
-    <p id="till-name-help" class="small muted">{{ T "tills.this.name_help" }}</p>
-    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <label for="till-name-input">{{ T "settings.tills.name_label" }}</label>
+    <input type="text" id="till-name-input" name="name" maxlength="60" value="{{ .TillName }}" aria-describedby="till-name-help">
+    <p id="till-name-help" class="small muted">{{ T "tills.tree.this.name_hint" }}</p>
     <span id="till-name-msg" role="status" aria-live="polite"></span>
   </form>
   </div>
-  <div id="settings-till-register-region" data-ut-refresh="#settings-till-register-region" data-ut-saved-msg="#till-register-msg">
-  <form hx-post="/api/settings/till-register" hx-swap="none"
+  <div id="settings-till-register-region" data-ut-refresh="#settings-till-register-region" data-ut-refresh-url="/ui/tills/section/this" data-ut-saved-msg="#till-register-msg">
+  <form id="till-register-form" hx-post="/api/settings/till-register" hx-swap="none"
         data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
-    <label>{{ T "settings.tills.register_label" }}
-      <select name="register_id" required>
-        {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
-        {{ range .registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
-      </select>
-    </label>
-    <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    <label for="till-register-select">{{ T "settings.tills.register_label" }}</label>
+    <select id="till-register-select" name="register_id" required aria-describedby="till-register-help">
+      {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
+      {{ range .registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+    </select>
+    <p id="till-register-help" class="small muted">{{ T "tills.tree.this.register_hint" }}</p>
     <span id="till-register-msg" role="status" aria-live="polite"></span>
-    <p class="muted">{{ T "settings.tills.register_help" }}
-      {{ if .CanManageRegisters }}<a href="/registers">{{ T "registers.title" }}</a>{{ end }}</p>
   </form>
+  </div>
+  <div class="tills-save-row">
+    <button type="button" class="btn" id="tills-this-save" data-testid="tills-this-save" data-save-forms="#till-name-form, #till-register-form">{{ T "tills.tree.this.save" }}</button>
   </div>
 </div>
 
-<div class="card" data-testid="tills-shop-account">
-  <h3>{{ T "tills.this.account_title" }}</h3>
-  <dl class="kv">
-    {{ if .ShopName }}<dt>{{ T "tills.this.account_shop" }}</dt><dd>{{ .ShopName }}</dd>{{ end }}
-    <dt>{{ T "tills.this.account_state" }}</dt>
-    <dd>{{ if .ShopConnected }}<span class="tag ok">{{ T "tills.this.connected" }}</span>{{ else }}<span class="tag warn">{{ T "tills.this.not_connected" }}</span>{{ end }}</dd>
+{{ with .TechFacts }}
+<details class="tills-tech" data-testid="tills-technical-details">
+  <summary>{{ T "tills.tree.this.technical_details" }}</summary>
+  <dl class="register-facts" data-testid="register-facts">
+    {{ if .deviceID }}<div><dt>{{ T "settings.enrol.device" }}</dt><dd data-testid="register-facts-device"><bdi dir="ltr"><code>{{ .deviceID }}</code></bdi></dd></div>{{ end }}
+    <div><dt>{{ T "settings.till_registration.fingerprint" }}</dt>
+      {{ if .fingerprint }}<dd data-testid="register-facts-fingerprint"><bdi dir="ltr"><code>{{ .fingerprint }}</code></bdi></dd>
+      {{ else }}<dd class="muted">{{ .fingerprintUnavailable }}</dd>{{ end }}</div>
   </dl>
-  <p class="small muted">{{ T "tills.this.account_note" }}</p>
-  {{ if not .ShopConnected }}<p class="muted">{{ T "tills.this.not_connected_hint" }}</p>{{ end }}
-  {{ if .LastReconnected }}<p class="muted small" data-testid="tills-last-reconnected">{{ .LastReconnected }}</p>{{ end }}
-  <a class="btn secondary" href="/tills?tab=settings#account">{{ T "tills.this.account_settings" }}</a>
-</div>
+  <p class="small muted">{{ T "tills.tree.this.technical_hint" }}</p>
+</details>
+{{ end }}

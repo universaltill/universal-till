@@ -326,52 +326,54 @@ var demoDeniedRoutes = map[string]bool{
 	// Cloud enrolment, registration, telemetry and LAN
 	// sync/pairing/discovery/link (all /api/sync/*, /api/setup/*, the Tills
 	// pages).
-	"GET /api/enrol/devices":                       true,
-	"GET /api/setup/discover-primaries":            true,
-	"GET /api/setup/pair-status":                   true,
-	"GET /api/sync/admin":                          true,
-	"GET /api/sync/assets":                         true,
-	"GET /api/sync/assets/categories":              true,
-	"GET /api/sync/assets/categories/file":         true,
-	"GET /api/sync/assets/file":                    true,
-	"GET /api/sync/discover-primaries":             true,
-	"GET /api/sync/held-sales":                     true,
-	"GET /api/sync/link":                           true,
-	"GET /api/sync/orders":                         true,
-	"GET /api/sync/orders/stream":                  true,
-	"GET /api/sync/pair-requests":                  true,
-	"GET /api/pairings/stream":                     true,
-	"GET /api/sync/pair-requests/{id}":             true,
-	"GET /api/sync/pair-status":                    true,
-	"GET /api/sync/ping":                           true,
-	"GET /api/sync/plugins":                        true,
-	"GET /api/sync/secrets-key":                    true,
-	"GET /api/sync/snapshot":                       true,
-	"GET /api/sync/stock":                          true,
-	"GET /api/sync/tables":                         true,
-	"GET /api/sync/vouchers/{id}":                  true,
-	"GET /sync-quarantine":                         true,
-	"GET /tills":                                   true,
-	"GET /ui/tills/tab/{id}":                       true, // ut-docs#7057: the Tills & devices tabs are manager tools
-	"POST /api/sync/tills/revoke-stale":            true, // ut-docs#7057: bulk remove of tills not in the account
-	"GET /ui/tills/pending-pairings":               true,
-	"GET /ui/tills/reader-requests":                true, // ut-docs#6538: card reader pairing is a manager tool
-	"GET /ui/tills/readers":                        true,
-	"GET /ui/tills/reader-settings":                true, // ut-docs#6538 phase 2: the phone card readers switch and the till id
-	"POST /ui/tills/reader-settings/phone-pairing": true,
-	"POST /ui/tills/readers/{id}/rename":           true,
-	"POST /ui/tills/readers/{id}/revoke":           true,
-	"GET /ui/tills/roster":                         true, // the denied /tills page's polled roster (ADR-0114 §10)
-	"POST /api/enrol/check-plan":                   true, // ADR-0148: a demo till never contacts the cloud
-	"POST /api/subscription/check-now":             true, // ut-docs#4285: same — a demo till never contacts the cloud
-	"POST /api/cloud/sync-now":                     true, // ut-docs#6977: a demo till never contacts the cloud
-	"POST /api/subscription/panel":                 true, // ut-docs#4286: refreshes from the cloud first
-	"POST /api/subscription/panel/handoff":         true, // ut-docs#4286: a QR to the real plans page
-	"POST /api/subscription/panel/poll":            true, // ut-docs#4286: an operator check-in
-	"POST /api/enrol/claim-code":                   true,
-	"POST /api/enrol/pair":                         true,
-	"POST /api/enrol/reconnect":                    true, // ut-docs#5145: a demo till never contacts the cloud
-	"POST /api/enrol/new-shop":                     true, // ut-docs#5145: same
+	"GET /api/enrol/devices":                        true,
+	"GET /api/setup/discover-primaries":             true,
+	"GET /api/setup/pair-status":                    true,
+	"GET /api/sync/admin":                           true,
+	"GET /api/sync/assets":                          true,
+	"GET /api/sync/assets/categories":               true,
+	"GET /api/sync/assets/categories/file":          true,
+	"GET /api/sync/assets/file":                     true,
+	"GET /api/sync/discover-primaries":              true,
+	"GET /api/sync/held-sales":                      true,
+	"GET /api/sync/link":                            true,
+	"GET /api/sync/orders":                          true,
+	"GET /api/sync/orders/stream":                   true,
+	"GET /api/sync/pair-requests":                   true,
+	"GET /api/pairings/stream":                      true,
+	"GET /api/sync/pair-requests/{id}":              true,
+	"GET /api/sync/pair-status":                     true,
+	"GET /api/sync/ping":                            true,
+	"GET /api/sync/plugins":                         true,
+	"GET /api/sync/secrets-key":                     true,
+	"GET /api/sync/snapshot":                        true,
+	"GET /api/sync/stock":                           true,
+	"GET /api/sync/tables":                          true,
+	"GET /api/sync/vouchers/{id}":                   true,
+	"GET /sync-quarantine":                          true,
+	"GET /tills":                                    true,
+	"GET /ui/tills/tab/{id}":                        true, // ut-docs#7057: legacy tab route, kept one release
+	"GET /ui/tills/section/{id}":                    true, // ut-docs#7173: the Tills & devices sections are manager tools
+	"POST /api/sync/tills/{id}/remove-from-account": true, // ut-docs#7173: Old entries, account-side removal
+	"POST /api/sync/tills/revoke-stale":             true, // ut-docs#7057: bulk remove of tills not in the account
+	"GET /ui/tills/pending-pairings":                true,
+	"GET /ui/tills/reader-requests":                 true, // ut-docs#6538: card reader pairing is a manager tool
+	"GET /ui/tills/readers":                         true,
+	"GET /ui/tills/reader-settings":                 true, // ut-docs#6538 phase 2: the phone card readers switch and the till id
+	"POST /ui/tills/reader-settings/phone-pairing":  true,
+	"POST /ui/tills/readers/{id}/rename":            true,
+	"POST /ui/tills/readers/{id}/revoke":            true,
+	"GET /ui/tills/roster":                          true, // the denied /tills page's polled roster (ADR-0114 §10)
+	"POST /api/enrol/check-plan":                    true, // ADR-0148: a demo till never contacts the cloud
+	"POST /api/subscription/check-now":              true, // ut-docs#4285: same — a demo till never contacts the cloud
+	"POST /api/cloud/sync-now":                      true, // ut-docs#6977: a demo till never contacts the cloud
+	"POST /api/subscription/panel":                  true, // ut-docs#4286: refreshes from the cloud first
+	"POST /api/subscription/panel/handoff":          true, // ut-docs#4286: a QR to the real plans page
+	"POST /api/subscription/panel/poll":             true, // ut-docs#4286: an operator check-in
+	"POST /api/enrol/claim-code":                    true,
+	"POST /api/enrol/pair":                          true,
+	"POST /api/enrol/reconnect":                     true, // ut-docs#5145: a demo till never contacts the cloud
+	"POST /api/enrol/new-shop":                      true, // ut-docs#5145: same
 	// ut-docs#5127 UT-1b: approving a move signs with the till's key and
 	// moves its cloud identity; a demo visitor never gets near it.
 	"GET /settings/cloud/move/{id}":             true,

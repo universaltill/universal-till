@@ -36,6 +36,7 @@ func newSyncLinkFixture(t *testing.T) *syncLinkFixture {
 	dp := newSyncPairingGateTestDeps(t)
 	mux := http.NewServeMux()
 	registerSyncAPI(mux, dp)
+	registerTillsTabs(mux, dp) // ut-docs#7173: section fragments
 	adminRepo := registerSyncAdmin(mux, dp)
 	cfg := fleetlink.DefaultConfig()
 	cfg.PingInterval = 50 * time.Millisecond

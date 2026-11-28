@@ -23,7 +23,7 @@ func pinHealStatus(t *testing.T, st credheal.Status) {
 
 func TestCloudHealChip_EachStateRendersItsWordsAndExactlyOneButton(t *testing.T) {
 	soon := time.Now().Add(5 * time.Hour)
-	const codeHref = "/settings?reconnect=1#pair-details"
+	const codeHref = "/settings#pair-details"
 	for _, c := range []struct {
 		name     string
 		st       credheal.Status
@@ -34,27 +34,27 @@ func TestCloudHealChip_EachStateRendersItsWordsAndExactlyOneButton(t *testing.T)
 		href     string // where the one link goes
 	}{
 		{"healing", credheal.Status{State: credheal.StateHealing, Reason: credheal.ReasonReconnecting}, true,
-			"Reconnecting…", "This till is reconnecting to your shop. Selling works as normal. Nothing needs doing.", "", "/tills?tab=this"},
+			"Reconnecting…", "This till is reconnecting to your shop. Selling works as normal. Nothing needs doing.", "", "/settings#settings-tills-this"},
 		{"waiting", credheal.Status{State: credheal.StateWaiting, Reason: credheal.ReasonKeyQuarantined, Until: soon}, true,
-			"Reconnects ", "This till reconnects to your shop by itself on ", "", "/tills?tab=this"},
+			"Reconnects ", "This till reconnects to your shop by itself on ", "", "/settings#settings-tills-this"},
 		{"cannot prove, owned", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonCannotProve}, true,
 			"Needs a code to reconnect", "because it can&#39;t prove who it is. Selling works as normal. To reconnect it: on my.universaltill.com open Tills, choose this till, then Make a code, and type the code here.", "Reconnect with a code", codeHref},
 		{"cannot prove, ownerless", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonCannotProve}, false,
-			"Can&#39;t reconnect by itself", "its shop has no online account to get a code from.", "Register as a new shop", "/settings#registration"},
+			"Can&#39;t reconnect by itself", "its shop has no online account to get a code from.", "Register as a new shop", "/settings#settings-tills-shop"},
 		{"removed", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonRemoved}, true,
 			"Removed from your shop", "This till was removed from your shop&#39;s account. Its sales are saved on this till, and it can still sell. To connect it again, ask the shop owner for a code and type it here.", "Enter a code", codeHref},
 		{"replaced", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonReplaced, Detail: "Back till"}, true,
-			"Replaced by Back till", "Back till replaced this till and is now the main till of your shop. This till can still sell, but its sales no longer reach your account. To keep using it, join it to Back till as an additional till.", "Join as an additional till", "/tills?tab=add&amp;need=join"},
+			"Replaced by Back till", "Back till replaced this till and is now the main till of your shop. This till can still sell, but its sales no longer reach your account. To keep using it, join it to Back till as an additional till.", "Join as an additional till", "/settings?need=join#settings-tills-add"},
 		{"replaced, no name", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonReplaced}, true,
-			"This till was replaced", "Another till replaced this one and is now the main till of your shop.", "Join as an additional till", "/tills?tab=add&amp;need=join"},
+			"This till was replaced", "Another till replaced this one and is now the main till of your shop.", "Join as an additional till", "/settings?need=join#settings-tills-add"},
 		{"moved", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonMoved, Detail: "store-4d5df8a3"}, true,
-			"Moved to another shop", "This till now belongs to another shop. Its connection to the old shop has ended.", "Open Till registration", "/settings#registration"},
+			"Moved to another shop", "This till now belongs to another shop. Its connection to the old shop has ended.", "Open Shop and sync", "/settings#settings-tills-shop"},
 		{"shop deleted", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonStoreDeleted}, true,
-			"Shop deleted from its account", "The owner can restore the shop on my.universaltill.com. This till then reconnects by itself within a day.", "", "/tills?tab=this"},
+			"Shop deleted from its account", "The owner can restore the shop on my.universaltill.com. This till then reconnects by itself within a day.", "", "/settings#settings-tills-this"},
 		{"role conflict", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonRoleConflict}, true,
-			"Another till is the main till", "so this till can&#39;t reconnect as the main till.", "Join as an additional till", "/tills?tab=add&amp;need=join"},
+			"Another till is the main till", "so this till can&#39;t reconnect as the main till.", "Join as an additional till", "/settings?need=join#settings-tills-add"},
 		{"in use elsewhere", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonInUseElsewhere}, true,
-			"In use on two devices", "Set the other one up again as a new additional till.", "Open Till registration", codeHref},
+			"In use on two devices", "Set the other one up again as a new additional till.", "Open Shop and sync", codeHref},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})

@@ -59,11 +59,13 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-privacy", Label: "Privacy", Group: staff, Cat: "staff"},
 		{Key: "settings-idle-lock", Label: "Auto-lock", Group: staff, Cat: "staff"},
 		{Key: "settings-staff-links", Label: "Users and permissions", Group: staff, Cat: "staff"},
-		{Key: "registration", Label: "Till registration", Group: devices, Cat: "devices"},
-		{Key: "subscription", Label: "Subscription", Group: devices, Cat: "devices"},
-		{Key: "settings-tills", Label: "🔗 Tills", Group: devices, Cat: "devices"},
-		{Key: "settings-kiosk-idle-reset", Label: "Kiosk idle reset", Group: devices, Cat: "devices"},
-		{Key: "settings-kiosk-payment-mode", Label: "Kiosk payment mode", Group: devices, Cat: "devices"},
+		{Key: "settings-tills-this", Label: "This till", Group: devices, Cat: "devices"},
+		{Key: "settings-tills-shop", Label: "Shop and sync", Group: devices, Cat: "devices"},
+		{Key: "settings-tills-others", Label: "Other tills", Group: devices, Cat: "devices"},
+		{Key: "settings-tills-old", Label: "Old entries", Group: devices, Cat: "devices", Sub: true},
+		{Key: "settings-tills-add", Label: "Add a till", Group: devices, Cat: "devices"},
+		{Key: "settings-tills-readers", Label: "Card readers", Group: devices, Cat: "devices"},
+		{Key: "settings-kiosk", Label: "Kiosk", Group: devices, Cat: "devices"},
 		{Key: "settings-notices", Label: "Notices", Group: devices, Cat: "devices"},
 		{Key: "settings-menulayout", Label: "Hidden menu tiles", Group: look, Cat: "look"},
 		{Key: "settings-theme", Label: "Theme", Group: look, Cat: "look"},
@@ -172,7 +174,7 @@ func TestResolve_ReorderRelabelAndRegroupAmendment(t *testing.T) {
 	got := Resolve("en", []uislot.Amendment{
 		{PluginID: "com.example.layout", Slot: uislot.SettingsSlot, Key: "settings-theme", Order: &fifty},
 		{PluginID: "com.example.layout", Slot: uislot.SettingsSlot, Key: "settings-printer", Group: "layout.salon.settings_group"},
-		{PluginID: "com.example.layout", Slot: uislot.SettingsSlot, Key: "settings-tills", Group: "layout.salon.settings_group"},
+		{PluginID: "com.example.layout", Slot: uislot.SettingsSlot, Key: "settings-tills-this", Group: "layout.salon.settings_group"},
 	})
 	if len(got) != len(uislot.CoreSettings) {
 		t.Fatalf("reorder/regroup must not drop or add rows, got %d", len(got))
@@ -200,14 +202,14 @@ func TestResolve_ReorderRelabelAndRegroupAmendment(t *testing.T) {
 		switch r.Key {
 		case "settings-printer":
 			printerIdx = i
-		case "settings-tills":
+		case "settings-tills-this":
 			tillsIdx = i
 		}
 	}
 	if printerIdx == -1 || tillsIdx == -1 {
 		t.Fatalf("printer/tills rows missing entirely: %+v", got)
 	}
-	if tillsIdx != printerIdx+1 {
+	if tillsIdx != printerIdx+1 && tillsIdx != printerIdx-1 {
 		t.Fatalf("regrouped rows must be adjacent, got printer=%d tills=%d", printerIdx, tillsIdx)
 	}
 	if got[printerIdx].Group == "" || got[tillsIdx].Group == "" {
@@ -247,13 +249,13 @@ func TestResolve_PluginGroupIDsNeverCollide(t *testing.T) {
 	initRealI18n(t)
 	got := Resolve("en", []uislot.Amendment{
 		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-printer", Group: "layout.x.GroupA"},
-		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-tills", Group: "layout.x.groupa"},
+		{PluginID: "p", Slot: uislot.SettingsSlot, Key: "settings-tills-this", Group: "layout.x.groupa"},
 	})
 	cat := map[string]string{}
 	for _, r := range got {
 		cat[r.Key] = r.Cat
 	}
-	if cat["settings-printer"] == cat["settings-tills"] {
+	if cat["settings-printer"] == cat["settings-tills-this"] {
 		t.Fatalf("distinct plugin groups must get distinct category ids, both got %q", cat["settings-printer"])
 	}
 	plugin := 0

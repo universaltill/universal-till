@@ -1,0 +1,22 @@
+{{/* Inline manager-PIN panel for a removal (ut-docs#7173, owner 2026-11-27).
+     Opens right under its button: no native confirm, no dialog, no showModal,
+     no overlay, so the status bar and the lock stay reachable (offline-first
+     rules). tills-tree.js checks the PIN (POST /api/sync/tills/verify-pin)
+     and only then posts each removal in data-remove-urls. Every word is
+     rendered here, already translated. Params: id, q (the question), ok (the
+     confirm verb), urls (space separated removal routes), done (the line said
+     after). */}}
+<div class="tills-pin" id="{{ .id }}" data-pin-panel hidden role="group" aria-labelledby="{{ .id }}-q"
+     data-remove-urls="{{ .urls }}" data-done-text="{{ .done }}" data-failed-text="{{ T "tills.tree.old.remove_failed" }}">
+  <p id="{{ .id }}-q" class="tills-pin-q">{{ .q }}</p>
+  <div class="tills-pin-row">
+    <label for="{{ .id }}-pin">{{ T "elevation.pin_label" }}</label>
+    <input type="password" id="{{ .id }}-pin" name="override_pin" inputmode="numeric" autocomplete="off" maxlength="12" data-pin-input aria-describedby="{{ .id }}-hint {{ .id }}-err">
+  </div>
+  <p id="{{ .id }}-hint" class="small muted">{{ T "tills.tree.pin.hint" }}</p>
+  <p id="{{ .id }}-err" class="login-error" role="alert" data-pin-error hidden></p>
+  <div class="tills-pin-actions">
+    <button type="button" class="btn" data-pin-confirm>{{ .ok }}</button>
+    <button type="button" class="btn secondary" data-pin-cancel>{{ T "common.cancel" }}</button>
+  </div>
+</div>

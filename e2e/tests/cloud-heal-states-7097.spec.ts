@@ -7,7 +7,7 @@ import { PREBUILT_BIN, REPO_ROOT, isHealthy } from './worker-till';
 
 // ut-docs#7097 (ADR-0222, UX notes): a till whose cloud credential was
 // refused says so in plain words, in ONE status-bar control (short words, a
-// dot, the button label) and the same sentence and button on Tills > This
+// dot, the button label) and the same sentence and button on Settings > Tills & devices > This
 // till. The button lands on the code field, on screen at 1024x600 without
 // scrolling. A till that is reconnecting by itself shows no banner and no
 // button. Each state boots its own throwaway till with the engine's saved
@@ -34,7 +34,7 @@ const STATES: State[] = [
     short: 'Removed from your shop',
     sentence: /This till was removed from your shop's account\. Its sales are saved on this till, and it can still sell\. To connect it again, ask the shop owner for a code and type it here\./,
     button: 'Enter a code',
-    href: /\/settings\?reconnect=1#pair-details$/,
+    href: /\/settings#pair-details$/,
   },
   {
     name: 'replaced',
@@ -42,15 +42,15 @@ const STATES: State[] = [
     short: 'Replaced by Counter Mac',
     sentence: /Counter Mac replaced this till and is now the main till of your shop\. This till can still sell, but its sales no longer reach your account\. To keep using it, join it to Counter Mac as an additional till\./,
     button: 'Join as an additional till',
-    href: /\/tills\?tab=add&need=join$/,
+    href: /\/settings\?need=join#settings-tills-add$/,
   },
   {
     name: 'moved',
     seed: { state: 'needs_person', reason: 'moved', detail: 'Other Shop' },
     short: 'Moved to another shop',
     sentence: /This till now belongs to another shop\. Its connection to the old shop has ended\./,
-    button: 'Open Till registration',
-    href: /\/settings#registration$/,
+    button: 'Open Shop and sync',
+    href: /\/settings#settings-tills-shop$/,
   },
   {
     name: 'reconnecting',
@@ -102,7 +102,8 @@ test.describe('till self-heal states (ut-docs#7097)', () => {
         try {
           await till.ready();
           await page.setViewportSize(vp);
-          await page.goto(`${till.url}/tills?tab=this`);
+          await page.goto(`${till.url}/settings#settings-tills-this`);
+          await expect(page.locator('#settings-tills-this [data-tills-body]').first()).toHaveAttribute('data-loaded', '1');
 
           // The chip: ONE control; short words; the button label only when there is a button.
           const chip = page.locator('[data-testid="sb-cloud-auth"]');
@@ -138,9 +139,9 @@ test.describe('till self-heal states (ut-docs#7097)', () => {
           expect(overflow).toBeLessThanOrEqual(0);
 
           // The button's one tap shows the code field without scrolling (code buttons only).
-          if (st.button && /reconnect=1/.test(String(st.href))) {
+          if (st.button && /pair-details/.test(String(st.href))) {
             await banner.locator('a').click();
-            await expect(page).toHaveURL(/\/settings\?reconnect=1#pair-details$/);
+            await expect(page).toHaveURL(/\/settings#pair-details$/);
             await expect(page.locator('#pair-code')).toBeInViewport();
             await expect(page.locator('[data-testid="heal-notice"]')).toContainText(st.sentence);
           }

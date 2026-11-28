@@ -181,7 +181,7 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	// ut-docs#405: was a bare <span>, not clickable at all.
 	// ut-docs#1539: and it is a rail MENU BUTTON now, so the link carries the
 	// same nav-toggle dress as every other rail item.
-	if !strings.Contains(body, `<a href="/tills"`) {
+	if !strings.Contains(body, `<a href="/settings#settings-tills-others"`) {
 		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
 	}
 	// ut-docs#1539: the ONE rail item ut-docs#1423 missed — was a bare "⇅"
@@ -241,7 +241,7 @@ func TestSyncChip_ReplicaWithoutBearerSaysRejoin(t *testing.T) {
 	if !strings.Contains(body, `class="nav-badge"`) {
 		t.Fatalf("expected the badge dot, got %q", body)
 	}
-	if !strings.Contains(body, `href="/tills"`) {
+	if !strings.Contains(body, `href="/settings#settings-tills-others"`) {
 		t.Fatalf("expected a link to /tills, got %q", body)
 	}
 }
@@ -317,7 +317,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Front Counter") {
 		t.Fatalf("expected the primary's own name in the chip label, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `<a href="/tills"`) {
+	if !strings.Contains(rec.Body.String(), `<a href="/settings#settings-tills-others"`) {
 		t.Fatalf("expected the primary chip to stay a clickable link to /tills, got %q", rec.Body.String())
 	}
 	// ut-docs#1539: the ONE rail item ut-docs#1423 missed — was a bare "⇅"

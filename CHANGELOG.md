@@ -7,6 +7,23 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **One tree for Tills & devices, and old entries you can remove
+  (ut-docs#7173).** Settings > Tills & devices is now one list of sections:
+  This till, Shop and sync (your shop account, plan and **Reconnect this till
+  to a shop**), Other tills, Old entries, Add a till, Card readers, Kiosk and
+  Notices. The five-tab Tills page, its **Manage tills** button, the Registers
+  link and the Settings tab are gone; every old address (`/tills`,
+  `?tab=...`, `#registration`, `#subscription`) still opens the matching
+  section. This till has one Save for its name and register, and the device
+  ID and key fingerprint sit under **Technical details**. Tills your account
+  lists but that were never added on this till (for example the leftovers
+  when a phone joins again under a new name) are listed as **Old entries**
+  with a plain-words banner and a **Remove old entry** button. Removing asks
+  for the manager PIN in a box under the button, not in a dialog. A till
+  that might be the same phone is offered as **replace**. Removing an entry
+  from your shop account itself arrives in a later update; until then the
+  entry says so.
+
 - **A till folder copied onto other hardware moves its numbers ahead
   (ut-docs#6907).** A main till whose whole data folder (secrets included)
   is copied to other hardware (a folder or SD card copy) now notices the new

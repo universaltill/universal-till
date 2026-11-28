@@ -58,7 +58,7 @@ func TestSyncChip_CashierGetsStatusNotLink(t *testing.T) {
 				}
 			}
 			manager := get("manager")
-			if !strings.Contains(manager, `<a href="/tills"`) {
+			if !strings.Contains(manager, `<a href="/settings#settings-tills-others"`) {
 				t.Fatalf("manager sync chip must still link /tills, got %q", manager)
 			}
 		})

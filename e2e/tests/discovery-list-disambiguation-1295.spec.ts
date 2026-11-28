@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#1295: two different, unrelated shops scanning the same LAN
 // segment while both still on their unconfigured default name used to
@@ -27,7 +27,7 @@ test('discovery list shows a distinguishing address when two candidates share a 
     }),
   );
 
-  await page.goto('/tills?tab=add&need=join');
+  await gotoTillsSection(page, 'add', '?need=join');
 
   const btn = page.locator('#discover-btn');
   await expect(btn).toBeEnabled();
@@ -89,7 +89,7 @@ test('discovery list address handles an IPv6 candidate without truncating it', a
     }),
   );
 
-  await page.goto('/tills?tab=add&need=join');
+  await gotoTillsSection(page, 'add', '?need=join');
   await page.locator('#discover-btn').click();
 
   const item = page.locator('#discover-results li');

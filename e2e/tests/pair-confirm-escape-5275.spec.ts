@@ -59,13 +59,11 @@ function startPaidCloud(): Promise<http.Server> {
   return new Promise((resolve) => server.listen(CLOUD_PORT, '127.0.0.1', () => resolve(server)));
 }
 
-// ut-docs#6959: on a claimed shop the Pair form sits in a collapsed
-// "Reconnect this till to a shop" <details>; open it first when it is shut.
+// ut-docs#6959 / ut-docs#7173: the Pair form sits in the always-visible
+// "Reconnect this till to a shop" block of Shop and sync (no <details> to
+// open any more); just wait for it.
 async function openReconnect(page: import('@playwright/test').Page) {
-  const details = page.locator('details#pair-details');
-  if ((await details.count()) && !(await details.evaluate((el: HTMLDetailsElement) => el.open))) {
-    await details.locator('summary').click();
-  }
+  await expect(page.locator('#pair-details')).toBeVisible();
 }
 
 test.describe.serial('pair confirm Escape / Cancel (ut-docs#5275)', () => {
@@ -90,7 +88,7 @@ test.describe.serial('pair confirm Escape / Cancel (ut-docs#5275)', () => {
         if (route.request().method() === 'POST') posts++;
         return route.continue();
       });
-      await page.goto('/settings#registration');
+      await page.goto('/settings#settings-tills-shop');
       await openReconnect(page);
       const code = page.locator('#pair-code');
       await code.fill('K7QX-M2RP');
@@ -133,7 +131,7 @@ test.describe.serial('pair confirm Escape / Cancel (ut-docs#5275)', () => {
       await gate;
       return route.fulfill({ status: 200, contentType: 'text/html', body: '<span id="pair-answer-5288">Answer 5288</span>' });
     });
-    await page.goto('/settings#registration');
+    await page.goto('/settings#settings-tills-shop');
     await openReconnect(page);
     const code = page.locator('#pair-code');
     await code.fill('K7QX-M2RP');

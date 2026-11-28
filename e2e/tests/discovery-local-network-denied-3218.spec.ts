@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#3218: on iOS, discovery goes through Bonjour, and the user can
 // refuse the Local Network permission. The server then answers 403 with
@@ -18,7 +18,7 @@ test('Tills page explains a refused Local Network permission', async ({ page }) 
   await page.route('**/api/sync/discover-primaries', (route) => route.fulfill(denied));
 
   await page.setViewportSize({ width: 390, height: 844 }); // a phone, where this happens
-  await page.goto('/tills?tab=add&need=join');
+  await gotoTillsSection(page, 'add', '?need=join');
   const btn = page.locator('#discover-btn');
   await btn.click();
 

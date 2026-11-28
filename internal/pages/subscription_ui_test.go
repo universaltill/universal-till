@@ -142,6 +142,17 @@ func TestSubscriptionChip_CashierSeesNoChip(t *testing.T) {
 // to the next card.
 func cardSection(t *testing.T, body, id string) string {
 	t.Helper()
+	// ut-docs#7173: the old registration and subscription cards are two
+	// groups of the one Shop and sync card, still carrying their old ids.
+	switch id {
+	case "registration":
+		return between(body, `<div id="registration">`, `id="subscription"`) +
+			between(body, `id="pair-details"`, `<div class="card" id="settings-tills-others"`)
+	case "subscription":
+		return between(body, `id="subscription"`, `id="pair-details"`)
+	case "settings-tills-shop":
+		return between(body, `<div class="card" id="settings-tills-shop"`, `<div class="card" id="settings-tills-others"`)
+	}
 	start := strings.Index(body, `<div class="card" id="`+id+`"`)
 	if start == -1 {
 		return ""
@@ -151,6 +162,20 @@ func cardSection(t *testing.T, body, id string) string {
 		return body[start : start+1+end]
 	}
 	return body[start:]
+}
+
+// between returns body from the first start marker up to the next end marker
+// after it ("" when start is absent).
+func between(body, start, end string) string {
+	i := strings.Index(body, start)
+	if i == -1 {
+		return ""
+	}
+	rest := body[i+len(start):]
+	if j := strings.Index(rest, end); j != -1 {
+		return body[i : i+len(start)+j]
+	}
+	return body[i:]
 }
 
 func TestSettingsSubscriptionCard_States(t *testing.T) {
@@ -372,17 +397,22 @@ func TestSubscriptionViewPausedOnly(t *testing.T) {
 	}
 }
 
-// The Subscription card is manager-only, and so is its sidebar row.
+// ut-docs#7173: the Subscription card is a group of Shop and sync, which
+// stays in everyone's sidebar (the Till registration card always did); the
+// old "subscription" row is gone from the tree.
 func TestSettingsSubscriptionCard_NavRowFilteredForNonManager(t *testing.T) {
 	for _, isManager := range []bool{true, false} {
-		found := false
-		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true, true) {
-			if r.Key == "subscription" {
-				found = true
+		shop, old := false, false
+		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true, true, true) {
+			switch r.Key {
+			case "settings-tills-shop":
+				shop = true
+			case "subscription":
+				old = true
 			}
 		}
-		if found != isManager {
-			t.Fatalf("isManager=%v: subscription row present=%v", isManager, found)
+		if !shop || old {
+			t.Fatalf("isManager=%v: shop row present=%v, retired subscription row present=%v", isManager, shop, old)
 		}
 	}
 }

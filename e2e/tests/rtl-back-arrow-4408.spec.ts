@@ -26,9 +26,10 @@ async function receiptHref(page): Promise<string> {
 
 test('back arrows point the way the page reads, en and fa (ut-docs#4408)', async ({ page }) => {
   const href = await receiptHref(page);
-  // /invoices needs seller details set (else it redirects to /settings);
-  // /tills renders the same .back-arrow markup with no setup.
-  for (const path of ['/tills', href, '/settings']) {
+  // /invoices needs seller details set (else it redirects to /settings).
+  // ut-docs#7173: /tills is now a redirect into Settings, so it no longer
+  // renders a page of its own; the receipt page and Settings stay.
+  for (const path of [href, '/settings']) {
     for (const lang of ['en', 'fa']) {
       // Settings' Back shows at phone width with a section deep-linked
       // (settings-two-pane-1960.spec.ts).

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#3428: "Scan QR code" on the join form. Fill-then-confirm (UX
 // verdict, design section 10): a valid scan fills the code and shows the
@@ -48,14 +48,14 @@ async function stubCamera(page: import('@playwright/test').Page, opts: { reject?
 }
 
 async function openJoin(page: import('@playwright/test').Page) {
-  await page.goto('/tills?tab=add&need=join');
+  await gotoTillsSection(page, 'add', '?need=join');
   await page.locator('#tills-tab-code').click();
   await expect(page.locator('#tills-join-scan')).toBeVisible();
 }
 
 test.describe('scan the pairing QR on the join form (ut-docs#3428)', () => {
   test('parse table', async ({ page }) => {
-    await page.goto('/tills?tab=add&need=join');
+    await gotoTillsSection(page, 'add', '?need=join');
     const cases: [string, string, boolean][] = [
       ['form A base64url', GOOD, true],
       ['form A https', code('https://till.example:8443'), true],
@@ -214,7 +214,7 @@ test.describe('scan the pairing QR on the join form (ut-docs#3428)', () => {
     test(`overlay and chip do not overflow a 360px phone (${lang})`, async ({ page }) => {
       await stubCamera(page, { qr: [GOOD] });
       await page.setViewportSize({ width: 360, height: 740 });
-      await page.goto('/tills?tab=add&need=join&lang=' + lang);
+      await gotoTillsSection(page, 'add', '?need=join&lang=' + lang);
       await page.locator('#tills-tab-code').click();
       await page.locator('#tills-join-scan').click();
       await page.screenshot({ path: `test-results/join-scan-overlay-${lang}.png` });

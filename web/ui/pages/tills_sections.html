@@ -1,0 +1,13 @@
+{{/* Tills & devices sections (ut-docs#7173). There is no /tills page any more
+     (GET /tills answers a 303 into Settings); this file only holds the block
+     GET /ui/tills/section/{id} renders: the body of one Settings card, loaded
+     the first time the card is shown. Each section is its own partial. */}}
+{{ define "content" }}{{ end }}
+{{ define "tills_fragment" }}
+{{ if eq .Section "others" }}{{ template "tills_section_others.html" . }}
+{{ else if eq .Section "old" }}{{ template "tills_section_old.html" . }}
+{{ else if eq .Section "add" }}{{ template "tills_tab_add.html" . }}
+{{ else if eq .Section "readers" }}{{ template "tills_tab_readers.html" . }}
+{{ else if eq .Section "sync" }}{{ template "tills_tab_settings.html" . }}
+{{ else }}{{ template "tills_tab_this.html" . }}{{ end }}
+{{ end }}

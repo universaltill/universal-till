@@ -55,7 +55,7 @@
   {{/* ut-docs#405: /tills is a LOCAL route (relative href, this till's own
        server), never the primary's origin — can't strand an operator the
        way linking straight to primaryURL would (ut-docs#390). */}}
-  {{ if .canManage }}<a href="/tills" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
+  {{ if .canManage }}<a href="/settings#settings-tills-others" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
      title="{{ if .rejoin }}{{ T "sync.link.rejoin" }}{{ else if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}"
      aria-label="{{ if .rejoin }}{{ T "sync.link.rejoin" }}{{ else if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }} — {{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}">
     {{/* Queued sales while still "online" is real backlog worth flagging —
@@ -74,7 +74,7 @@
        quarantined does — additional detail on the SAME control, never a
        new href branch (a pending request is resolved on /tills either
        way, quarantined or not). */}}
-  {{ if .canManage }}<a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
+  {{ if .canManage }}<a href="{{ if .quarantined }}/sync-quarantine{{ else }}/settings#settings-tills-others{{ end }}" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
      title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
      aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .stale }} · {{ .stale }} {{ if eq .stale 1 }}{{ T "sync.chip_till_offline_one" }}{{ else }}{{ T "sync.chip_till_offline_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}">
     <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined .pending }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>

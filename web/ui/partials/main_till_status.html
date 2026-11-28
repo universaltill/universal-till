@@ -24,19 +24,19 @@
      links to Settings → Software update instead of /tills); the explanation
      is in the title. */}}
 {{ if eq .state "rejoin" -}}
-<a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="rejoin"
+<a class="sb-item sb-link is-unreachable sb-main-till" href="/settings#settings-tills-shop" data-testid="sb-link" data-link-state="rejoin"
    title="{{ T "sync.link.rejoin_hint" }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
   <span class="sb-link-text">{{ T "sync.link.rejoin" }}</span>
 </a>
 {{- else if eq .state "unreachable" -}}
-<a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="unreachable"
+<a class="sb-item sb-link is-unreachable sb-main-till" href="/settings#settings-tills-this" data-testid="sb-link" data-link-state="unreachable"
    title="{{ T "sync.main_till_unreachable_hint" }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
   <span class="sb-link-text">{{ if .since }}{{ printf (T "sync.main_till_unreachable_since") (shortdatetime .since) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}{{ if .pluginsWaiting }} · {{ T "sync.main_till_unreachable_plugins" }}{{ end }}</span>
 </a>
 {{- else -}}
-<a class="sb-item sb-link is-{{ .state }}" href="{{ if eq .update "update_manual" }}/settings#settings-update{{ else }}/tills{{ end }}" data-testid="sb-link" data-link-state="{{ .state }}"{{ if .update }} data-update="{{ .update }}"{{ end }}
+<a class="sb-item sb-link is-{{ .state }}" href="{{ if eq .update "update_manual" }}/settings#settings-update{{ else }}/settings#settings-tills-others{{ end }}" data-testid="sb-link" data-link-state="{{ .state }}"{{ if .update }} data-update="{{ .update }}"{{ end }}
    title="{{ if eq .update "update_following" }}{{ T "sync.link.update_following_hint" }}{{ else if eq .update "update_manual" }}{{ printf (T "sync.link.update_manual_hint") .target }}{{ else if eq .state "linked" }}{{ T "sync.link.linked_hint" }}{{ else }}{{ T "sync.link.polling_hint" }}{{ end }}">
   <span class="sb-dot" aria-hidden="true"></span>
   <span class="sb-link-text">{{ if eq .state "linked" }}{{ T "sync.link.linked" }}{{ else }}{{ T "sync.link.polling" }}{{ end }}{{ if eq .update "update_following" }} · {{ printf (T "sync.link.update_following") .target }}{{ else if eq .update "update_manual" }} · {{ printf (T "sync.link.update_manual") .target }}{{ else if eq .update "main_update_waiting" }} · {{ T "sync.link.main_update_waiting" }}{{ end }}</span>

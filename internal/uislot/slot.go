@@ -544,17 +544,25 @@ var SettingsCategories = []Category{
 // settingsnav.Resolve gathers rows by category, so the declaration order
 // below stays the template's card order.
 var CoreSettings = []Entry{
-	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
+	// ut-docs#7173: Tills & devices is ONE flat list of sections in the tree
+	// (no hop page, no tab bar): This till, Shop and sync (the old
+	// Till registration + Subscription), Other tills, Old entries (a
+	// sub-row of Other tills, settingsnav.subRows), Add a till, Card
+	// readers; Kiosk and Notices follow further down. The old card ids
+	// (#registration, #subscription, #settings-kiosk-idle-reset,
+	// #settings-kiosk-payment-mode, #pair-details) live on as anchors INSIDE
+	// the new cards, so every old deep link still lands.
+	{Key: "settings-tills-this", Href: "#settings-tills-this", LabelKey: "settings.tills_tree.this", Order: 100, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-shop", Href: "#settings-tills-shop", LabelKey: "settings.tills_tree.shop", Order: 102, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-others", Href: "#settings-tills-others", LabelKey: "settings.tills_tree.others", Order: 104, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-old", Href: "#settings-tills-old", LabelKey: "settings.tills_tree.old", Order: 106, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-add", Href: "#settings-tills-add", LabelKey: "settings.tills_tree.add", Order: 108, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-readers", Href: "#settings-tills-readers", LabelKey: "settings.tills_tree.readers", Order: 110, Group: "settings.cat.devices.label"},
 	// ADR-0200: Privacy, manager-only, right after Till registration in
 	// settings.html. The registration notice names "Settings > Privacy" and
 	// the "Send usage facts" switch inside it; filtered from a cashier's
 	// sidebar like subscription.
 	{Key: "settings-privacy", Href: "#settings-privacy", LabelKey: "settings.privacy.title", Order: 125, Group: "settings.cat.staff.label"},
-	// ut-docs#2569 (ADR-0060 §6): Subscription, manager-only, right after
-	// Till registration in settings.html — beside the cloud link whose paid
-	// features it explains; filtered from a cashier's sidebar like
-	// settings-diagnostics.
-	{Key: "subscription", Href: "#subscription", LabelKey: "subscription.nav", Order: 150, Group: "settings.cat.devices.label"},
 	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200, Group: "settings.cat.advanced.label"},
 	// ADR-0092 §7 / ut-docs#2169: diagnostic mode (activation code entry,
 	// "ON since" copy, local stop). Manager-only card right after
@@ -588,13 +596,12 @@ var CoreSettings = []Entry{
 	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
 	{Key: "settings-cloud-staff", Href: "#settings-cloud-staff", LabelKey: "settings.cloud_staff.title", Order: 1450, Group: "settings.cat.advanced.label"},
 	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
-	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
 	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
 	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800, Group: "settings.cat.staff.label"},
 	// ut-docs#3208: links to the Users (PINs) and Permissions pages.
 	{Key: "settings-staff-links", Href: "#settings-staff-links", LabelKey: "settings.staff_links.title", Order: 1850, Group: "settings.cat.staff.label"},
-	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
-	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
+	// ut-docs#7173: the two kiosk cards are one Kiosk section (the old ids stay as anchors inside it).
+	{Key: "settings-kiosk", Href: "#settings-kiosk", LabelKey: "settings.tills_tree.kiosk", Order: 1900, Group: "settings.cat.devices.label"},
 	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
 	{Key: "settings-notices", Href: "#settings-notices", LabelKey: "settings.notices.title", Order: 2125, Group: "settings.cat.devices.label"},
 	// ut-docs#3115: Shop name, first in My shop (the template declares it
@@ -835,6 +842,14 @@ var railSpec = slotSpec{name: RailSlot, lookup: CoreRailEntry, protected: IsProt
 // entries whose resolved Group differs, the same groupTogether/GroupHeading
 // mechanism the Menu slot already uses. Widen allowHide once a "Settings →
 // Hidden sections" restore page exists, mirroring menu_layout_settings_page.go.
+var retiredSettingsKeys = map[string]string{
+	"settings-tills":              "settings-tills-this",
+	"registration":                "settings-tills-shop",
+	"subscription":                "settings-tills-shop",
+	"settings-kiosk-idle-reset":   "settings-kiosk",
+	"settings-kiosk-payment-mode": "settings-kiosk",
+}
+
 var settingsSpec = slotSpec{name: SettingsSlot, lookup: CoreSettingsEntry, protected: IsProtectedSettingsKey, allowGroup: true}
 
 // ParseSettingsAmendments is ParseMenuAmendments' twin for the /settings
@@ -968,6 +983,19 @@ func parseSlotAmendments(pluginID string, spec slotSpec, config map[string]any) 
 		obj, ok := item.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("layout amendment #%d must be an object", i+1)
+		}
+		if spec.name == SettingsSlot {
+			// ut-docs#7173: an already-installed layout plugin may still name a
+			// retired settings card; follow it to the card that replaced it
+			// instead of refusing (and so deactivating) the whole layout.
+			if k, _ := obj["key"].(string); retiredSettingsKeys[k] != "" {
+				cp := make(map[string]any, len(obj))
+				for kk, vv := range obj {
+					cp[kk] = vv
+				}
+				cp["key"] = retiredSettingsKeys[k]
+				obj = cp
+			}
 		}
 		a, err := parseAmendment(pluginID, spec, obj)
 		if err != nil {

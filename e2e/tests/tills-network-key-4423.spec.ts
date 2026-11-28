@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs, gotoTillsSection } from './helpers';
 
 // ut-docs#4423 (ADR-0114 §7): the main till's Tills page shows its LAN
 // TLS network key and a manager "Change key" that starts a rotation now.
@@ -9,7 +9,7 @@ import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 800 }]) {
   test(`tills: network key line fits at ${vp.width}x${vp.height}`, async ({ page }) => {
     await page.setViewportSize(vp);
-    await page.goto('/tills?tab=settings');
+    await gotoTillsSection(page, 'shop');
     const block = page.getByTestId('tills-network-key');
     await expect(block).toHaveCount(1);
     const box = await block.boundingBox();
@@ -23,7 +23,7 @@ for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 800 }]) {
 
 test('tills: Change key starts a rotation and the line reads in progress', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/tills?tab=settings');
+  await gotoTillsSection(page, 'shop');
   const block = page.getByTestId('tills-network-key');
   const btn = block.getByRole('button', { name: 'Change key' });
   // The e2e till is shared across specs: a run on a reused till may find

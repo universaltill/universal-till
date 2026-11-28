@@ -145,7 +145,7 @@ test.describe.serial('cloud catalogue bootstrap over the seed rows (ut-docs#4494
     // The till registers itself once named (ADR-0200); registering checks in
     // at once, and that check-in tick caches catalog_master "cloud" and then
     // pulls the feed. An already-registered till asks via "Check for a paid plan".
-    await page.goto('/settings#registration');
+    await page.goto('/settings#settings-tills-shop');
     const card = page.locator('#registration');
     await ensureRegisteredAutomatically(page);
     {
