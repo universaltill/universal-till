@@ -81,7 +81,7 @@
       "tr": "c61225d2aac91d349f1c1434d7cc08122e29528b50ea8eda5c96cf5130aab4bf"
     },
     "display": {
-      "en": "8ecf74044fbcd6214a2e33a3b0ad315ae5274c838a9a58d22acfa6a1bf932c2d",
+      "en": "767175d029ba1d484d4e69c75736cb44946c774f2baf48762e8f8650b27527b2",
       "fa": "ef1e520d4e2494e7c88abb6f416df6c900f026243c2090d43a030f388b96c89c",
       "ar": "2dbfe8fc7883699c5a123da99a41b3a01e6423645b311081f1635395acfcee84",
       "tr": "c20220a5fe885de6f3158093143bca2b2ed2a7187085d91c3a6660d2985b3035"
@@ -320,7 +320,7 @@
       "sha256": "7dc5231e82233d2922c0b52a0e01aee2a2150e0d2d14a8b06cba6cb4db5faaad"
     },
     "internal/pages/catalog/handlers.go": {
-      "sha256": "716b360b442a5577c5514eb39aff310954f1157e9ed60e99053097dc4f3334a5"
+      "sha256": "7236bc4bcbf70f4745e084bde89c4d0f7fd546e46dcf59d3cf0bd810fc280eb8"
     },
     "internal/pages/catalog/row_oob.go": {
       "sha256": "b2f7a5c6a3b1bf0c12e9eb0d6c3d19a6accf8102b9c72ea866f7926d2b72b0cc"
@@ -596,7 +596,7 @@
       "sha256": "b9f6d7e0f2bb622c122705d4e58a975e6115d959ccd68e135e2c9c6196602a0c"
     },
     "internal/pages/offsite_backup_api.go": {
-      "sha256": "a697c06ff11e3d667d92035890221571f23cec42c46a60d09762375089fe1405"
+      "sha256": "025b97fb1b802fbf656265b19488ad539df73d3d2ba9bec9ef6347f3922a86ed"
     },
     "internal/pages/open_orders_counter.go": {
       "sha256": "df4d1e06e12d370d6ba2b9e40ac1a1c7a76d2dc47f1f42341d0212a0eb6d115b"
@@ -716,7 +716,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "7eaa1774660f2ece6c51537422bf61d6301702fd791b3ab81d3d56728ac571e4"
+      "sha256": "7676a3f3d54d6a07b0891bf40487891aa241e807f59a6bfeacf1c91afb99633f"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "83f643a6b362418ba0cd1f1e06fba991a53da87c23eefbda52c6f88ad0de08da"
@@ -728,7 +728,7 @@
       "sha256": "90a813d597c374ffe3130c438e5831becab7fad14f38818105848fd577c0f18e"
     },
     "internal/pages/settingsnav/settingsnav.go": {
-      "sha256": "905e93b37c89808c6b1ff97d0851e040a97bbe1788ac6ebb97cb8a470ab24621"
+      "sha256": "e2ab02ed916d18a1220fe59b90eb54ca36d946c51876ffa713bd458c2b29c3f2"
     },
     "internal/pages/setup_base_plugins.go": {
       "sha256": "c972465061d321eb93ddf69cc4617fc323d2b3ad7f49413a05ca996ba3a8f583"
@@ -863,7 +863,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "e6984cd79ea035ae8860ffe2e7d770e6b5f2779a5668428b514c270b4e5c1197"
+      "sha256": "d159eb1c2c7357677638caf6e1ecf4e2849ad787c25d106e3d5f68cb35022bb0"
     },
     "web/public/app.js": {
       "sha256": "775d2348a9d2331ecca27eba175ecadd15d038698fb3d2283c6269332f736371"
@@ -1655,7 +1655,7 @@
       "sha256": "d689ff469982654ef163e0a00850475acbe4f4cac78eca7a567f1dfb0f2a1a82"
     },
     "web/ui/pages/catalog.html": {
-      "sha256": "2d1da8ee4e27d2851c39381911238ca0c0070f24823249ab632c1e1c9fa07165"
+      "sha256": "fb8ca180c8b4a1daf40d8efd3228e48f064fe957d0705a7614a4386a5c745c9e"
     },
     "web/ui/pages/categories.html": {
       "sha256": "c67c670cc85ff0a31726555314027d7015999d63cd73e38d594866ae3bbb6809"
@@ -1817,7 +1817,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "82901581a487196e229cfd9069eb7ab53a3373abc214af42adad9911931dbf0c"
+      "sha256": "5802a92fb1a342e3daf44a16ffd01d2e49d72d33656fc809330f6c26f937e46e"
     },
     "web/ui/pages/setup.html": {
       "sha256": "b714d36368916a600caa9775f19e3d21235e7882f59d3d1e972528f879a0449a"
@@ -1856,10 +1856,10 @@
       "sha256": "8ad3af9304815fd798db2ea40394e8678b4961e5447f372ec017d41fc7c776f3"
     },
     "web/ui/partials/backup_cloud_card.html": {
-      "sha256": "f18caad05328dab4443ab6bf7985b158e7fb972caeee5a3879e6c22ac1d53a94"
+      "sha256": "de1d0a679517c9779455146cd5ab3b4fef5b1bc0c5fdf10305bf46bdd8817257"
     },
     "web/ui/partials/backup_copy_chip.html": {
-      "sha256": "226f9e91966a968755cc7947ed573c6d697aa8feb82b8fdc20c06130a629c958"
+      "sha256": "113640921e6f755bccc424d8f8731a9e1de0e028567ce06c77337a4201f9c948"
     },
     "web/ui/partials/backup_restore_staged.html": {
       "sha256": "5c6695ba80ee4e0b926584efb8af109c8bdfcd2656a40eacb243b623eb5ddcc3"
@@ -2153,13 +2153,13 @@
       "sha256": "0a74dc184b19c9f1c641741359c0c39bbd4c4223ad4bbef35b6a4a58fbd101f6"
     },
     "web/ui/partials/shop_type_panel.html": {
-      "sha256": "5cddbda9a30199f993d4174c56121f2bfcbd809d98f70759cb0600b25f9b88bc"
+      "sha256": "909b0cdd567d0def92bf5599c26e50c74b4f5328aa64e098baf0d9d7c35c8481"
     },
     "web/ui/partials/shop_type_pick.html": {
       "sha256": "2ab639863d401ad68e8bc35b67baab886f7c37dfb787443a95517786d7ee09a8"
     },
     "web/ui/partials/shop_type_preview.html": {
-      "sha256": "d462c5b9701cbc2f7d76732dbfde84d309779e6483e4452c23bb363d9594c266"
+      "sha256": "c860088a30e23d4dec25021d75b189ec8d32d8dc467495f4f2b7a95c089a137b"
     },
     "web/ui/partials/shop_type_tiles.html": {
       "sha256": "255ccbe92d974e9061c0a9f645ca2b4414a62bf86272d97e323fcef5bda4df1c"
@@ -2240,7 +2240,7 @@
       "sha256": "501789ea6cf1a885d5653a5be1bf25a483fea0a64380e2d006acd3a4c65d6368"
     },
     "web/ui/partials/tills_roster.html": {
-      "sha256": "ee3f2b8a09d56e9e46f79edee85fb34c507fcf89bd19f1c8477c006f032d5d7f"
+      "sha256": "61446afaa60e956e03c44f5c572d89bb03174812d12972a4eb34dc335ed081e7"
     },
     "web/ui/partials/tills_sales_mirror.html": {
       "sha256": "d157c79e5ddf66d7c8c0b7171c0914f6b358df390dca7a7d8628538d99655101"
@@ -2255,7 +2255,7 @@
       "sha256": "5be5e325e580d52d5d22faf4ca4b98a5eaf30293b7b64c84168fd9579e419827"
     },
     "web/ui/partials/tills_tab_others.html": {
-      "sha256": "2d10cd8fafacb0e74aa304200787a9be922fac4ac7e6a31a556b3e8109941c44"
+      "sha256": "5f03120403731967ebd2585eb79ad387450c89002d61c999611b6e01ecde4f98"
     },
     "web/ui/partials/tills_tab_readers.html": {
       "sha256": "8ff87a6be5ac20ca265173fc1a4070407193f3af6f760d9b4256fad61cc20b64"

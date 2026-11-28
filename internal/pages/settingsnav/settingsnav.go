@@ -84,6 +84,13 @@ type Category struct {
 // none for a group).
 const pluginGroupIcon = "puzzle"
 
+// pluginGroupTile is a known plugin group's tile description (a locale key)
+// and icon, keyed by the group's category id (ut-docs#7205). A group not
+// listed keeps the generic puzzle icon and no description.
+var pluginGroupTile = map[string]struct{ DescKey, Icon string }{
+	"g-layout-salon-settings_group": {"layout.salon.settings_group_desc", "printer"},
+}
+
 var nonIDChars = regexp.MustCompile(`[^a-z0-9_-]+`)
 
 // catOf maps a resolved entry's Group (a locale KEY, before translation)
@@ -186,6 +193,19 @@ func ResolveClassed(locale string, amendments []uislot.Amendment, classOf ClassF
 // the rows' own (already category-sorted) order. Advanced is always the
 // last tile: its view lists every row.
 func Categories(locale string, rows []Row) []Category {
+	return categories(locale, rows, true)
+}
+
+// CategoriesLegacy is Categories for a shop in legacy salon replay mode
+// (type set, no template ledger): plugin-group tiles keep the generic icon and
+// no description, so the Settings page stays byte-identical to the build that
+// shipped the salon layout plugin (ADR-0190, ut-docs#6332). #7205's tile
+// description applies once the shop accepts a template.
+func CategoriesLegacy(locale string, rows []Row) []Category {
+	return categories(locale, rows, false)
+}
+
+func categories(locale string, rows []Row, groupTiles bool) []Category {
 	byKey := make(map[string]uislot.Category, len(uislot.SettingsCategories))
 	for _, c := range uislot.SettingsCategories {
 		byKey[c.Key] = c
@@ -200,6 +220,10 @@ func Categories(locale string, rows []Row) []Category {
 			continue
 		}
 		c := Category{ID: r.Cat, Label: r.Group, Icon: pluginGroupIcon}
+		if t, ok := pluginGroupTile[r.Cat]; ok && groupTiles {
+			c.Desc = httpx.T(locale, t.DescKey)
+			c.Icon = t.Icon
+		}
 		if decl, ok := byKey[r.Cat]; ok {
 			c.Label = httpx.T(locale, decl.LabelKey)
 			c.Desc = httpx.T(locale, decl.DescKey)

@@ -8,7 +8,11 @@
 <div id="tills-others" data-ut-refresh="#tills-others" data-ut-refresh-url="/ui/tills/section/others" data-testid="tills-others" data-old-count="{{ $.OldCount }}">
 {{ if not .CloudOK }}
   {{ if not $.ShopConnected }}
-  <p class="lead" data-testid="tills-not-connected">{{ T "tills.tree.not_connected_hint" }}</p>
+  <div class="card" data-testid="tills-not-paired" role="status">
+    <p>{{ T "tills.list.not_paired" }}</p>
+    <a class="btn" href="/settings#settings-tills-shop" data-testid="tills-pair-action">{{ T "tills.list.pair_action" }}</a>
+    <small class="muted">{{ T "tills.list.pair_where" }}</small>
+  </div>
   {{ else }}
   <div class="notice-block-warn" role="alert" data-testid="tills-account-unavailable">
     <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.tree.account_down.title" }}</strong>

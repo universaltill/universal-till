@@ -44,7 +44,7 @@
            can match the two by eye. Blank = not known yet. */}}
       <td>{{ .PrimaryTillName }} {{ if .SyncPrimary }}<span class="muted">({{ T "tills.the_primary" }})</span>{{ else }}<span class="muted">({{ T "tills.this_till" }})</span>{{ end }}
         <br><small class="muted till-id" data-testid="tills-main-discovery-id">{{ T "tills.discovery.result_name" }}: {{ if .MainTillDiscoveryID }}<bdi dir="ltr">{{ .MainTillDiscoveryID }}</bdi>{{ else }}—{{ end }}</small></td>
-      <td>—</td>
+      <td>{{ T "tills.role.main" }}</td>
       {{ if .LinkInfo }}<td>—</td><td>{{ .MainVersion }}</td>{{ end }}
       <td>—</td>
       {{/* ut-docs#2722: on a replica, when THIS till last reached the main

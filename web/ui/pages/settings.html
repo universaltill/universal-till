@@ -3112,8 +3112,27 @@
   // update card's install form — update_api.go); or it names nothing / is
   // absent, in which case the first card is shown so the panel is never
   // empty on arrival.
+  // ut-docs#7198: the status chip's /settings#cloud-key-ask names the key
+  // question, which loads lazily (htmx, #backup-cloud-slot) far below the backup
+  // list, so it is not in the DOM yet. Treat it as the Backups card, then scroll
+  // to the question once the card has loaded.
+  var wantKeyAsk = false;
+  function scrollToKeyAsk() {
+    var ask = document.getElementById('cloud-key-ask');
+    if (!wantKeyAsk || !ask) return;
+    wantKeyAsk = false;
+    ask.scrollIntoView({ block: 'center' });
+    ask.focus({ preventScroll: true });
+  }
+  document.addEventListener('htmx:afterSettle', function (ev) {
+    var t = ev.target;
+    if (t && (t.id === 'backup-cloud-slot' || (t.closest && t.closest('#backup-cloud-slot')))) scrollToKeyAsk();
+  });
+
   function resolveHash() {
     var hash = (location.hash || '').slice(1);
+    wantKeyAsk = hash === 'cloud-key-ask';
+    if (wantKeyAsk) hash = 'settings-backup';
     var nested = null;
     var id = null;
     if (hash) {
@@ -3164,6 +3183,7 @@
     // no real deep link, arrive on the section list and wait for a tap. With
     // a hash the operator explicitly navigated somewhere — show it directly.
     showSection(id, { select: r.hadHash || fromEvent, focusPanel: !!fromEvent });
+    scrollToKeyAsk(); // already loaded (same-page hash change)
     if (r.nested) {
       // ut-docs#1534 fixed the #android-update anchor landing short (the
       // enrol-devices panel swaps in late and reflows the page) by

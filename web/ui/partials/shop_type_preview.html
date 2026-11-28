@@ -12,7 +12,7 @@
 {{ else }}
   <form hx-post="/api/settings/shop-type" hx-target="#shop-type-msg" hx-swap="innerHTML show:#settings-shop-type:top" hx-disabled-elt="#shop-type-confirm">
     <input type="hidden" name="to" value="{{ .To }}">
-    <div class="shop-type-preview-body">
+    <div class="shop-type-preview-body" tabindex="0" role="region" aria-labelledby="shop-type-preview-title">
       <h3 id="shop-type-preview-title" tabindex="-1">{{ .Title }}</h3>
       <p class="muted">{{ T "settings.template.preview.intro" }}</p>
       {{ if .LabelOnly }}
@@ -47,8 +47,8 @@
       </details>
       {{ end }}
       {{ end }}
-      <p class="muted">{{ T "settings.template.preview.never_changed_line" }}</p>
     </div>
+    <p class="muted">{{ T "settings.template.preview.never_changed_line" }}</p>
     <div class="shop-type-bar">
       <button type="button" class="btn secondary" hx-get="/api/settings/shop-type/panel" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.template.preview.cancel" }}</button>
       <button type="submit" class="btn primary" id="shop-type-confirm">{{ T "settings.template.preview.confirm" }}</button>

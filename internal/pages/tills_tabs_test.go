@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -235,5 +236,44 @@ func TestTillsOld_EntriesAreListedWithTheirRemoveButtons(t *testing.T) {
 	var n int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM tills WHERE id = ?`, oldID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("old entry still enrolled: n=%d err=%v", n, err)
+	}
+}
+
+// ut-docs#7204: a never-paired till has no account to reach, so the tab says
+// so and points at Pair with a shop; a paired till whose account is down keeps
+// the "could not reach" wording with its Try again.
+func TestTillsOthers_UnpairedSaysNotConnectedNotUnreachable(t *testing.T) {
+	mux, dp := tillsTabsMux(t, nil, errors.New("not registered"))
+	dp.Cfg.Marketplace = config.MarketplaceConfig{}
+	body := tabsGet(mux, "/ui/tills/section/others").Body.String()
+	if !strings.Contains(body, "not connected to a shop account") || !strings.Contains(body, "Pair with a shop") || !strings.Contains(body, `href="/settings#settings-tills-shop"`) {
+		t.Fatalf("unpaired: want not-connected wording and the pair action: %s", body)
+	}
+	if strings.Contains(body, "reach your shop account") || strings.Contains(body, "Try again") {
+		t.Fatalf("unpaired: must not offer a retry that can never work: %s", body)
+	}
+	dp.Cfg.Marketplace = config.MarketplaceConfig{EndpointURL: "https://x.invalid", StoreID: "s", MerchantToken: "t"}
+	body = tabsGet(mux, "/ui/tills/section/others?refresh=1").Body.String()
+	if !strings.Contains(body, "reach your shop account") || strings.Contains(body, "not connected to a shop account") {
+		t.Fatalf("paired but account down: want the unreachable wording: %s", body)
+	}
+}
+
+func TestTillsRoster_MainOwnRowSaysMain(t *testing.T) {
+	mux, _ := tillsTabsMux(t, nil, errors.New("offline"))
+	body := tabsGet(mux, "/ui/tills/tab/others").Body.String()
+	i := strings.Index(body, `class="table tills-roster"`)
+	if i < 0 {
+		t.Fatal("no roster rendered")
+	}
+	row := body[i:]
+	if k := strings.Index(row, "<tbody>"); k > 0 {
+		row = row[k:]
+	}
+	if j := strings.Index(row, "</tr>"); j > 0 {
+		row = row[:j]
+	}
+	if !strings.Contains(row, ">Main<") {
+		t.Fatalf("main's own roster row must say Main: %s", row)
 	}
 }

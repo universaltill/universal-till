@@ -319,7 +319,7 @@ func TestOffsite_KeyChoiceAsksOncePINGatedAndCallsTheCloud(t *testing.T) {
 
 	// Unasked: the card asks, with the trade-off, and offers Save your key.
 	b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
-	for _, w := range []string{"cloud-key-ask", "technically decrypt", "cannot be read by anyone", "cloud-key-choose-on", "cloud-key-choose-off", "cloud-key-save-link"} {
+	for _, w := range []string{"cloud-key-ask", "technically decrypt", "nobody can read your backups", "cloud-key-choose-on", "cloud-key-choose-off", "cloud-key-save-link"} {
 		if !strings.Contains(b, w) {
 			t.Errorf("unasked card misses %q", w)
 		}
@@ -385,7 +385,7 @@ func TestOffsite_BlockedByOwnerShowsItAndHidesTheSwitch(t *testing.T) {
 	_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, "on")
 	_ = d.Settings.Set(ctx, data.OffsiteEscrowBlockedKey, "1")
 	b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
-	if !strings.Contains(b, "Turned off by the owner on my.universaltill.com.") || strings.Contains(b, "cloud-key-change") {
+	if !strings.Contains(b, "The shop owner switched off the cloud copy of your backup key on my.universaltill.com.") || strings.Contains(b, "cloud-key-change") {
 		t.Fatalf("blocked card: %s", b)
 	}
 }
@@ -672,5 +672,151 @@ func TestOffsite_KeyFlowsPromptLandsInMessageSpanAndAnswerReplacesCard(t *testin
 		if !strings.Contains(rec.Body.String(), `id="backup-cloud-card"`) {
 			t.Errorf("%s answer is not the card: %s", f.path, rec.Body.String())
 		}
+	}
+}
+
+// ut-docs#7200: the privacy note and the status line must not claim a wrapped
+// copy when the owner said No, nor "only on this till" while one is held.
+func TestOffsite_CardWordingFollowsTheChoiceAndTheHeldCopy(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	_, _, _ = offsitebackup.Shared(d.Cfg, d.Db).Uploader.Keys.Generate("st_1")
+	ctx := context.Background()
+	card := func() string { return getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String() }
+	const wrapped = "wrapped copy of your backup key"
+
+	// Unasked, no copy: the general note makes no claim about a held copy.
+	if b := card(); strings.Contains(b, wrapped) && !strings.Contains(b, "cloud-key-ask") {
+		t.Errorf("unasked card claims a held copy outside the question: %s", b)
+	}
+	// Off, nothing held: no wrapped-copy claim anywhere in the privacy note.
+	_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, "off")
+	b := card()
+	if strings.Contains(b, wrapped) || strings.Contains(b, `data-held="true"`) {
+		t.Errorf("off and nothing held, but the card claims a copy: %s", b)
+	}
+	if !strings.Contains(b, "does not send") {
+		t.Errorf("off status should say the till does not send the key: %s", b)
+	}
+	// On: the copy and its consequence are stated.
+	_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, "on")
+	if b := card(); !strings.Contains(b, wrapped) || !strings.Contains(b, "technically decrypt") {
+		t.Errorf("on: the card must state the wrapped copy: %s", b)
+	}
+	// On then Off with the cloud still holding it: say so, and who can delete.
+	_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, "off")
+	_ = d.Settings.Set(ctx, data.OffsiteCopyHeldKey, "1")
+	b = card()
+	if !strings.Contains(b, `data-held="true"`) || !strings.Contains(b, "still holds") || !strings.Contains(b, "technically decrypt") {
+		t.Errorf("off but a copy is held: %s", b)
+	}
+}
+
+func TestOffsite_ChoosingOffAfterOnMarksTheCopyAsHeld(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	withManagerPIN(t, d)
+	ctx := context.Background()
+	_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, "on")
+	// The cloud cannot be asked (no key on this till): the safe side is "held".
+	postAs(mux, "/api/offsite/key/choice", url.Values{"choice": {"off"}, "override_pin": {offsitePIN}}, &mgrUser)
+	if v, _, _ := d.Settings.Get(ctx, data.OffsiteCopyHeldKey); v != "1" {
+		t.Fatalf("copy_held = %q after On then Off, want 1", v)
+	}
+}
+
+// Counsel F2 (ut-docs#7200): after a restore or a link the choice is
+// undecided but the cloud may hold a copy. An Off the cloud could not confirm
+// is shown as held (safe side) until the next round says otherwise.
+func TestOffsite_ChoosingOffFromUndecidedUnconfirmedMarksHeld(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	withManagerPIN(t, d)
+	ctx := context.Background()
+	postAs(mux, "/api/offsite/key/choice", url.Values{"choice": {"off"}, "override_pin": {offsitePIN}}, &mgrUser)
+	if v, _, _ := d.Settings.Get(ctx, data.OffsiteCopyHeldKey); v != "1" {
+		t.Fatalf("copy_held = %q after an unconfirmed Off, want 1", v)
+	}
+}
+
+// ut-docs#7198: the key-question chip must lead to the question itself. The
+// ask block loads lazily far below the backup list, so the chip names its id
+// and the Settings page scrolls to it once the card has loaded.
+func TestOffsite_KeyChipLinksToTheQuestionAnchor(t *testing.T) {
+	mux, d, _ := offsiteMux(t, true)
+	svc := offsitebackup.Shared(d.Cfg, d.Db)
+	_, _, _ = svc.Uploader.Keys.Generate("st_1")
+	chip := getAs(mux, "/ui/backup-copy-chip", &mgrUser).Body.String()
+	if !strings.Contains(chip, `href="/settings#cloud-key-ask"`) {
+		t.Errorf("key chip does not link to the question: %s", chip)
+	}
+	card := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
+	if !strings.Contains(card, ` id="cloud-key-ask"`) {
+		t.Errorf("the ask block has no anchor id: %s", card)
+	}
+	// Other chips still land on the Backups panel.
+	if strings.Contains(card, ` id="cloud-key-ask"`) && strings.Count(card, ` id="cloud-key-ask"`) != 1 {
+		t.Error("anchor id must be unique")
+	}
+}
+
+func TestSettingsScrollsToTheKeyQuestionAfterTheCardLoads(t *testing.T) {
+	html := readRepoFile(t, "web/ui/pages/settings.html")
+	for _, w := range []string{"cloud-key-ask", "htmx:afterSettle", "backup-cloud-slot"} {
+		if !strings.Contains(html, w) {
+			t.Errorf("settings.html misses %q in the key-question scroll", w)
+		}
+	}
+}
+
+// Visual check 2026-11-28 (item 2): the card must not contradict itself. The
+// "first copy goes after the next backup" line belongs to the On choice only;
+// a blocked card offers no "Copy now", and Restore only when a copy is held.
+func TestOffsite_CardButtonsAndFirstCopyLineFollowTheState(t *testing.T) {
+	const (
+		firstCopy = "The first copy goes to the cloud after the next daily backup."
+		copyNow   = `data-testid="backup-cloud-now"`
+		restore   = `data-testid="backup-cloud-restore-link"`
+	)
+	cases := []struct {
+		name                            string
+		choice, blocked, held           string
+		wantFirst, wantNow, wantRestore bool
+	}{
+		// Uploads and a saved-key restore work in every key state (ADR-0199 D17),
+		// so the controls and the first-copy line never depend on the key choice.
+		{"undecided", "", "", "", true, true, true},
+		{"on", "on", "", "1", true, true, true},
+		{"no", "off", "", "", true, true, true},
+		{"no-but-held", "off", "", "1", true, true, true},
+		{"blocked", "on", "1", "", true, true, true},
+		{"blocked-but-held", "on", "1", "1", true, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mux, d, _ := offsiteMux(t, true)
+			_, _, _ = offsitebackup.Shared(d.Cfg, d.Db).Uploader.Keys.Generate("st_1")
+			ctx := context.Background()
+			if c.choice != "" {
+				_ = d.Settings.Set(ctx, data.OffsiteKeyInCloudKey, c.choice)
+			}
+			if c.blocked != "" {
+				_ = d.Settings.Set(ctx, data.OffsiteEscrowBlockedKey, c.blocked)
+			}
+			if c.held != "" {
+				_ = d.Settings.Set(ctx, data.OffsiteCopyHeldKey, c.held)
+			}
+			b := getAs(mux, "/ui/backup-cloud-card", &mgrUser).Body.String()
+			for _, chk := range []struct {
+				what string
+				has  bool
+				want bool
+			}{
+				{"first-copy line", strings.Contains(b, firstCopy), c.wantFirst},
+				{"copy-now button", strings.Contains(b, copyNow), c.wantNow},
+				{"restore link", strings.Contains(b, restore), c.wantRestore},
+			} {
+				if chk.has != chk.want {
+					t.Errorf("%s: present=%v want %v\n%s", chk.what, chk.has, chk.want, b)
+				}
+			}
+		})
 	}
 }

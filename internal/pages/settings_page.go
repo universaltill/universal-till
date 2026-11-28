@@ -559,6 +559,15 @@ type settingsCategoryTile struct {
 	IconSVG template.HTML
 }
 
+// settingsCategoriesFor builds the landing tiles; a legacy salon replay shop
+// (type set, no ledger) keeps the frozen plain plugin-group tile (ADR-0190).
+func settingsCategoriesFor(ctx context.Context, d *common.Deps, locale string, rows []settingsnav.Row) []settingsnav.Category {
+	if d.TemplateState(ctx).Mode == common.TemplateLegacy {
+		return settingsnav.CategoriesLegacy(locale, rows)
+	}
+	return settingsnav.Categories(locale, rows)
+}
+
 func settingsCategoryTiles(cats []settingsnav.Category) []settingsCategoryTile {
 	out := make([]settingsCategoryTile, len(cats))
 	for i, c := range cats {
@@ -1102,7 +1111,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#3090: the landing grid's category tiles, built from
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.
-			"settingsCategories": settingsCategoryTiles(settingsnav.Categories(locale, settingsNav)),
+			"settingsCategories": settingsCategoryTiles(settingsCategoriesFor(r.Context(), d, locale, settingsNav)),
 			// ut-docs#2981: shop-wide regions render read-only while this
 			// additional till cannot reach its main till.
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
