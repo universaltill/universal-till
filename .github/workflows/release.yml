@@ -192,11 +192,16 @@ jobs:
     needs: [prepare]
     runs-on: ubuntu-latest
     # ut-docs#2274: a "Run tests before releasing" run hung with zero step
-    # movement for hours (historical baseline for that step alone is ~6.5m,
-    # ut-docs#643/#753/#776) and occupied the runner silently instead of
-    # failing loudly. 40m gives generous headroom over that baseline, while
-    # still bounding a genuine hang to a fraction of GitHub's 360m default.
-    timeout-minutes: 40
+    # movement for hours and occupied the runner silently instead of failing
+    # loudly. The step runs two serial `go test -timeout 20m` commands
+    # (internal/pages is inside the first, the bulk); the step took ~14 min on
+    # 2026-11-26 (ut-docs#7091), the old ~6.5m baseline is long gone. 45m =
+    # 20 + 20 + ~5 for checkout, setup-go and a cold compile: the smallest
+    # bound at which each command's own -timeout fires, and prints its
+    # goroutine dump, before GitHub kills the job (same reasoning as ci.yml's
+    # test-heavy "40, not 30"). release-job-timeouts_test.sh pins the formula
+    # (20 * go test commands + 5). Still a fraction of GitHub's 360m default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -211,7 +216,14 @@ jobs:
         # (ut-docs#643/#753/#776): a release build must not fail on the
         # same timeout-margin false alarm the main CI workflow was just
         # fixed for.
-        run: go test -timeout 20m $(go list ./... | grep -v '/internal/plugins$') && go test -timeout 20m ./internal/plugins
+        #
+        # ut-docs#7091: -json through gotestdur logs per-package and
+        # slowest-test durations; shell: bash is `-eo pipefail`, so a failing
+        # first line stops the step as the old `&&` did.
+        shell: bash
+        run: |
+          go test -timeout 20m -json $(go list ./... | grep -v '/internal/plugins$') | go run ./scripts/ci/gotestdur
+          go test -timeout 20m -json ./internal/plugins | go run ./scripts/ci/gotestdur
 
   # Code signing (ut-docs#2480, ut-docs#2610): the Windows binaries are signed
   # by .goreleaser.yaml's post-build hook (packaging/windows/sign-exe.sh)

@@ -42,13 +42,15 @@ const (
 	SettingSecretNotSet = "not set"
 )
 
-// RegistryMinTillVersion is the first till release whose set_till_setting
-// honours `expect` (compare-and-set); an older till ignores the field and
-// writes unconditionally, so the cloud must not rely on it below this. The
-// next release after v0.35.3: release.yml defaults to a patch bump, so
-// 0.35.4; if the release is cut with another bump, change this constant and
-// regenerate the artefact.
-const RegistryMinTillVersion = "0.35.4"
+// RegistryMinTillVersion is the first till release that honours the
+// conditional set_till_setting fields: `expect` (compare-and-set, 0.35.4) and
+// since the shop-config work `ver`/`base_ver` (per-field versions, conflict and
+// stale refusal) and `tier` (tier_mismatch refusal). An older till ignores
+// them and writes unconditionally, so the cloud must not rely on them, and
+// must not send the conditional form, below this. The next release after
+// v0.36.5: release.yml defaults to a patch bump, so 0.36.6; if the release is
+// cut with another bump, change this constant and regenerate the artefact.
+const RegistryMinTillVersion = "0.36.6"
 
 // ValidSettingTier reports whether t is one of the four tiers.
 func ValidSettingTier(t string) bool {

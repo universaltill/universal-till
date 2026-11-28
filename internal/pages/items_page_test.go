@@ -1,13 +1,8 @@
 package pages
 
 import (
-	"bytes"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,9 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
-	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/uislot"
-	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
 func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
@@ -314,28 +307,18 @@ func TestItemsSection_RealHTMXSwapStillGetsOOBRail(t *testing.T) {
 	}
 }
 
-// ut-docs#1911's demonstration AC end to end, against the REAL shipped
-// plugin, not a test fixture: installing plugins/layout-salon (the same
-// manifest builtinlayouts.Sync installs for shop_type=service) makes the
-// /items rail's Library row read "Services" and move to the front — the
-// Items slot amended by the same mechanism the Menu tile already was.
-// installShippedSalonLayout installs the REAL shipped plugins/layout-salon manifest
-// (the same one builtinlayouts.Sync installs for shop_type=service) into
-// dp's till and reloads plugin state — shared by every test that proves an
-// ADR-0088 slot end to end against that plugin rather than a fixture
-// (menu_layout_settings_test.go's installBuiltinLayout is the FIXTURE twin:
-// a hand-built hide-only manifest for the restore-surface tests).
+// ut-docs#1911's demonstration AC end to end, now through the shop-type
+// template (ADR-0190): a service shop that predates templates (legacy mode)
+// keeps the layout the retired salon plugin supplied, so the /items rail's
+// Library row reads "Services" and moves to the front — the Items slot
+// amended by the same mechanism the Menu tile already was.
 //
-// syncLocales (internal/plugins.Manager) reads a plugin's locale files back
-// from paths.Plugins() on disk, never from the manifest bytes (Decision G)
-// — so a real overlay needs them written there first, the same step
-// internal/plugins/builtinlayouts.installBuiltin takes for a real till.
-// Isolated to a temp dir so this test can't touch (or race) another test's
-// plugin files. Call BEFORE newMenuPageTestDeps (which, via its own
-// pm.SetLocalizer call, does a paths.Plugins() read) so that read already
-// sees the isolated dir, not repo-root ./data — same orig/restore shape as
-// sync_assets_test.go's own paths.Init use (independent review of
-// ut-docs#1911, finding 11).
+// installServiceLayout puts dp's till in that state: shop.type=service, the
+// real shipped templates loaded, no apply-once ledger (legacy mode), and the
+// amendment lists rebuilt. Shared by every test that proves an ADR-0088 slot
+// end to end against the shipped service layout rather than a fixture
+// (menu_layout_settings_test.go's installBuiltinLayout is the FIXTURE twin: a
+// hand-built hide-only manifest for the restore-surface tests).
 func isolatePluginDir(t *testing.T) {
 	t.Helper()
 	orig := paths.DataDir()
@@ -343,44 +326,22 @@ func isolatePluginDir(t *testing.T) {
 	t.Cleanup(func() { paths.Init(orig) })
 }
 
-func installShippedSalonLayout(t *testing.T, dp *common.Deps) {
+func installServiceLayout(t *testing.T, dp *common.Deps) {
 	t.Helper()
-	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
-	if err != nil {
-		t.Fatalf("parse plugins/layout-salon/plugin.json: %v", err)
-	}
-	localeEntries, err := fs.ReadDir(layoutsalon.Locales, "locales")
-	if err != nil {
-		t.Fatalf("read embedded salon locales: %v", err)
-	}
-	destDir := paths.Plugins(m.ID, m.Version, "locales")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	useRealShopTemplates(t, dp)
+	if err := dp.Settings.Set(t.Context(), common.KeyShopType, "service"); err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range localeEntries {
-		raw, err := fs.ReadFile(layoutsalon.Locales, path.Join("locales", e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(destDir, e.Name()), raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := plugins.PersistManifest(t.Context(), dp.Db, m, plugins.InstallOptions{}); err != nil {
-		t.Fatalf("install salon layout: %v", err)
-	}
-	if err := dp.ReloadPlugins(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	dp.ReloadTemplate(t.Context())
 }
 
-func TestItemsPage_SalonLayoutRelabelsAndReordersLibraryRow(t *testing.T) {
+func TestItemsPage_ServiceLayoutRelabelsAndReordersLibraryRow(t *testing.T) {
 	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	isolatePluginDir(t)
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
 	registerItemsPage(mux, dp)
-	installShippedSalonLayout(t, dp)
+	installServiceLayout(t, dp)
 
 	body := getPage(t, mux, "/items").Body.String()
 	if !strings.Contains(body, "Services") {
@@ -402,13 +363,13 @@ func TestItemsPage_SalonLayoutRelabelsAndReordersLibraryRow(t *testing.T) {
 }
 
 // ut-docs#1912's demonstration AC end to end, against the REAL shipped
-// plugin: installing plugins/layout-salon moves Orders ahead of Inventory
+// service template: a legacy service shop moves Orders ahead of Inventory
 // in the nav rail on every page (here: /items, but nav.html is a shared
 // partial, so any whole-page render would do) — the rail amended by the
 // same mechanism the Menu tile and the /items section list already are.
 // Nothing else about the rail changes: the same four anchors, the same
 // data-testids, Sell/Menu still first.
-func TestNavRail_SalonLayoutReordersOrdersAheadOfInventory(t *testing.T) {
+func TestNavRail_ServiceLayoutReordersOrdersAheadOfInventory(t *testing.T) {
 	isolatePluginDir(t)
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
@@ -419,7 +380,7 @@ func TestNavRail_SalonLayoutReordersOrdersAheadOfInventory(t *testing.T) {
 		t.Fatalf("zero-plugin rail must list Inventory before Orders, got inventory@%d orders@%d", i, o)
 	}
 
-	installShippedSalonLayout(t, dp)
+	installServiceLayout(t, dp)
 
 	body := getPage(t, mux, "/items").Body.String()
 	rail := body[strings.Index(body, `<div class="nav-primary">`):strings.Index(body, `<div class="nav-right">`)]

@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { TILL_SHUTDOWN } from './till-webserver';
 import * as path from 'path';
 
 // A fixed instant (RFC3339, UTC) passed to both throwaway tills as
@@ -59,6 +60,7 @@ export default defineConfig({
     // (403 with no operator in context), so the users topic is captured on
     // the auth till after the same wizard/PIN flow login.spec.ts drives.
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till.sh',
       url: 'http://127.0.0.1:8091/healthz',
       timeout: 120_000,
@@ -78,6 +80,7 @@ export default defineConfig({
       env: DOCS_SHOTS_ENV,
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
@@ -88,6 +91,7 @@ export default defineConfig({
     // waiting for approval, which also puts a banner on every other page —
     // so it gets its own till, fed by a fake cloud sync (run-till-move.sh).
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-move.sh',
       url: 'http://127.0.0.1:8093/healthz',
       timeout: 120_000,
@@ -97,6 +101,7 @@ export default defineConfig({
     {
       // ut-docs#5366: the Notices topic is captured on a till that pulls a
       // fixed set from a fake cloud (fake-notices-cloud.mjs "docs" fixture).
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-notices.sh',
       url: 'http://127.0.0.1:8105/healthz',
       timeout: 120_000,
@@ -106,6 +111,7 @@ export default defineConfig({
     {
       // ut-docs#335: the plugins topic's Plugin Store shots need a populated
       // store: a docs-only till with a fixed offline catalogue snapshot.
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-plugins.sh',
       url: 'http://127.0.0.1:8107/healthz',
       timeout: 120_000,

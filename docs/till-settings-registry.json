@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "expect_min_till_version": "0.35.4",
+  "expect_min_till_version": "0.36.6",
   "entries": [
     {
       "key": "pos.allow_negative_inventory",
@@ -19,7 +19,15 @@
       "min_till_version": "",
       "audit": "allow_negative_inventory_changed",
       "writable_by_till_agent": true,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "catalog_import_barcode_from_sku_default",
@@ -38,7 +46,15 @@
       "min_till_version": "",
       "audit": "catalog_import_barcode_default_changed",
       "writable_by_till_agent": true,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "advanced"
     },
     {
       "key": "catalog_pre_pack_unit_price_enabled",
@@ -57,7 +73,15 @@
       "min_till_version": "",
       "audit": "catalog_pre_pack_unit_price_changed",
       "writable_by_till_agent": true,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "advanced"
     },
     {
       "key": "registration.stopped",
@@ -76,7 +100,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "update.auto_enabled",
@@ -95,7 +127,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "payments.default_method",
@@ -114,7 +154,69 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
+    },
+    {
+      "key": "payments.tips_enabled",
+      "type": "bool",
+      "tier": "sensitive",
+      "secret": false,
+      "default": "",
+      "on": "1",
+      "off": "0",
+      "min": null,
+      "max": null,
+      "options": null,
+      "label_key": "settings.payments.tips_enabled",
+      "description_key": "settings.payments.tips_help",
+      "region": "settings-payments-tips",
+      "min_till_version": "",
+      "audit": "",
+      "writable_by_till_agent": false,
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
+    },
+    {
+      "key": "payments.tip_presets",
+      "type": "text",
+      "tier": "sensitive",
+      "secret": false,
+      "default": "10,15,20",
+      "on": "",
+      "off": "",
+      "min": null,
+      "max": null,
+      "options": null,
+      "label_key": "settings.payments.tip_presets",
+      "description_key": "settings.payments.tip_presets_help",
+      "region": "settings-payments-tips",
+      "min_till_version": "",
+      "audit": "",
+      "writable_by_till_agent": false,
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
     },
     {
       "key": "sale.display_no_scheme",
@@ -136,7 +238,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "sale.order_type_prompt",
@@ -160,7 +270,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "barcode_enabled_symbologies",
@@ -179,7 +297,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "advanced"
     },
     {
       "key": "sale.browsing_mode",
@@ -202,7 +328,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "store.report_retention_mode",
@@ -221,7 +355,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "shortening it deletes records",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "advanced"
     },
     {
       "key": "reports.cloud_staff_breakdown",
@@ -240,7 +382,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "advanced"
     },
     {
       "key": "notices.enabled",
@@ -259,7 +409,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "device",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "invoice.seller_name",
@@ -278,7 +436,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "invoice.seller_address",
@@ -297,7 +463,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "invoice.seller_vat_no",
@@ -316,7 +490,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "auth.idle_lock_minutes",
@@ -335,7 +517,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "kiosk.idle_reset_seconds",
@@ -354,7 +544,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "kiosk.payment_mode",
@@ -376,7 +574,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "marketplace.telemetry_opt_in",
@@ -395,7 +601,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "advanced"
     },
     {
       "key": "store.name",
@@ -414,7 +628,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "essential"
     },
     {
       "key": "store.currency",
@@ -433,7 +655,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "changes the meaning of every price and report",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
     },
     {
       "key": "store.currency_display",
@@ -452,7 +682,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "essential"
     },
     {
       "key": "store.locale",
@@ -471,7 +709,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "essential"
     },
     {
       "key": "store.staff_locales",
@@ -490,7 +736,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "shop.type",
@@ -509,7 +763,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": false
+      "remote_writable": false,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": false,
+      "restorable_reason": "drives tax and fiscal defaults",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "essential"
     },
     {
       "key": "printer.receipt_policy",
@@ -532,7 +794,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "device",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner_or_manager",
+      "step_up": false,
+      "gate_switch": "allow_till_settings",
+      "class": "common"
     },
     {
       "key": "receipt.header1",
@@ -551,7 +821,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "receipt.header2",
@@ -570,7 +848,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "receipt.header3",
@@ -589,7 +875,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     },
     {
       "key": "receipt.footer",
@@ -608,7 +902,15 @@
       "min_till_version": "",
       "audit": "",
       "writable_by_till_agent": false,
-      "remote_writable": true
+      "remote_writable": true,
+      "owner": "core",
+      "scope": "shop",
+      "restorable": true,
+      "restorable_reason": "",
+      "confirm_by": "owner",
+      "step_up": true,
+      "gate_switch": "allow_sensitive_settings",
+      "class": "common"
     }
   ]
 }

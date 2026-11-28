@@ -112,7 +112,7 @@ func TestPluginIcons_ScriptedSVGIsSandboxed(t *testing.T) {
 	assertIconHeaders(t, rec, "image/svg+xml")
 }
 
-// Real plugins ship PNG icons (ut-plugin-faq, layout-salon: assets/icon.png).
+// Real plugins ship PNG icons (ut-plugin-faq: assets/icon.png).
 func TestPluginIcons_ServesAllowedRasterTypes(t *testing.T) {
 	base := withPluginIconsDir(t)
 	for rel, want := range map[string]string{

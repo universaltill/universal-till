@@ -1,7 +1,6 @@
 package pages
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -27,12 +26,8 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/pages/settingsnav"
-	"github.com/universaltill/universal-till/internal/paths"
-	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/uislot"
-	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
 func TestShortDeviceID(t *testing.T) {
@@ -2139,7 +2134,7 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 	// TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier exists to
 	// prevent, for whichever NEW card it is that this test didn't know
 	// about).
-	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false, false, false)
+	allFilteredOut := filterSettingsNavForRender(settingsNavPlain("en", nil), false, false, false, false, false)
 	filteredKeys := map[string]bool{}
 	for _, c := range cards {
 		if c.gated {
@@ -2206,7 +2201,7 @@ func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 	for _, want := range []string{
 		`data-key="settings-currency" data-group="My shop" data-cat="shop"`,
 		`data-key="registration" data-group="Tills &amp; devices" data-cat="devices"`,
-		`data-key="settings-all" data-group="Advanced" data-cat="advanced"`,
+		`data-key="settings-all" data-group="More settings" data-cat="advanced"`,
 	} {
 		if !strings.Contains(indexHTML, want) {
 			t.Errorf("nav index must carry %s, got:\n%s", want, indexHTML)
@@ -2238,7 +2233,7 @@ func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 	if got, want := strings.Join(tiles, ","), "shop,selling,payments,receipts,staff,devices,look,backup,advanced"; got != want {
 		t.Fatalf("landing tiles = %s, want %s", got, want)
 	}
-	for _, want := range []string{`href="#cat-shop"`, `data-icon="store"`, "Currency, language and the kind of shop you run.", "Every setting, including the technical ones."} {
+	for _, want := range []string{`href="#cat-shop"`, `data-icon="store"`, "Currency, language and the kind of shop you run.", "Everything else, including the technical settings."} {
 		if !strings.Contains(homeHTML, want) {
 			t.Errorf("landing grid must contain %q:\n%s", want, homeHTML)
 		}
@@ -2269,19 +2264,14 @@ func TestSettingsPage_NoTileForAnEmptyCategory(t *testing.T) {
 	}
 }
 
-// With the salon `layout` plugin active, GET /settings' nav index reflects
-// its Settings-slot amendment: settings-theme reordered to the front, and
+// For a legacy service shop, GET /settings' nav index reflects the service
+// layout's Settings-slot amendment: settings-theme reordered to the front, and
 // settings-printer/settings-tills gathered under a shared group heading —
 // the same handler-level proof TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt
 // gives the Menu slot's /tables hide.
-func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
+func TestSettingsPage_NavIndexReflectsServiceLayoutAmendment(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	ctx := t.Context()
-	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
-	if err != nil {
-		t.Fatalf("plugins.Init: %v", err)
-	}
-	d.Pm = pm
+	useRealShopTemplates(t, d)
 
 	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
@@ -2569,6 +2559,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	cases := []matrixCase{
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
+		{"payments-tips", http.MethodPost, "/api/settings/payments-tips", url.Values{"enabled": {"on"}, "presets": {"10,15,20"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
 		{"registration-stop", http.MethodPost, "/api/settings/registration-stop", url.Values{"stop": {"1"}}, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}}, gateElevation},
@@ -2731,7 +2722,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`hx-post="/api/settings/kiosk-payment-mode"`, // kiosk-payment-mode card
 		`hx-post="/api/settings/telemetry"`,          // telemetry card
 		`hx-post="/api/settings/save"`,               // currency card
-		`hx-post="/api/settings/shop-type"`,          // shop-type card
+		`hx-get="/api/settings/shop-type/pick"`,      // shop-type card (S7: Change shop type opens the pick step)
 		`hx-post="/api/settings/store-name"`,         // ut-docs#3115: shop-name card
 		`hx-post="/api/settings/printer"`,            // ut-docs#866: printer card
 		`hx-post="/api/settings/invoice"`,            // ut-docs#866: invoice card
@@ -3625,33 +3616,25 @@ func TestSettingsPage_ExportEntryLabel_MultiEntry_ResolvesPluginOverlayAndFallsB
 	}
 }
 
-// ut-docs#1902: POST /api/settings/shop-type is the SAME handler production
-// wires builtinlayouts.Sync into — this drives it through the real mux (not
-// just the unit-tested Sync function directly) to prove the wiring itself
-// works, not only the function it calls. newFullAuthDeps doesn't wire a
-// plugin manager by default (several older tests assert Pm==nil fallbacks),
-// so this test wires one itself, exactly as pages.Init does in production.
-func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *testing.T) {
+// ut-docs#1902, now ADR-0190: POST /api/settings/shop-type is the SAME
+// handler production wires the template layout into — this drives it through
+// the real mux to prove the wiring itself works: a service shop that predates
+// templates (legacy mode) gets its old layout (hide /tables) the moment the
+// type is saved, and switching to a type with no legacy layout drops it again.
+func TestShopTypeEndpoint_ServiceFollowsTemplateLayout_SwitchAwayRemovesIt(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	ctx := t.Context()
+	useRealShopTemplates(t, d)
 
-	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
-	if err != nil {
-		t.Fatalf("plugins.Init: %v", err)
-	}
-	d.Pm = pm
-
-	hasSalonAmendment := func() bool {
-		for _, a := range d.Pm.LayoutAmendments {
-			if a.PluginID == salonLayoutID(t) && a.Key == "/tables" && a.Hide {
+	hidesTables := func() bool {
+		for _, a := range d.MenuAmendmentsSnapshot() {
+			if a.Key == "/tables" && a.Hide {
 				return true
 			}
 		}
 		return false
 	}
-
-	if hasSalonAmendment() {
-		t.Fatal("salon layout must not be active before shop_type is ever set")
+	if hidesTables() {
+		t.Fatal("the service layout must not be active before shop_type is ever set")
 	}
 
 	// Manager role saves shop_type=service (mgrUser self-approves, no PIN
@@ -3660,91 +3643,18 @@ func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *tes
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save shop_type=service: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !hasSalonAmendment() {
-		t.Fatalf("saving shop_type=service through the real handler must activate the salon layout (hide /tables), got amendments %+v", d.Pm.LayoutAmendments)
+	if !hidesTables() {
+		t.Fatalf("saving shop_type=service through the real handler must apply the service layout (hide /tables), got %+v", d.MenuAmendmentsSnapshot())
 	}
 
-	// Switching to a different shop type must remove it again — no
-	// orphaned hidden tile survives the switch.
-	rec = postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"cafe"}}, &mgrUser)
+	// Switching to a different shop type must drop it again — no orphaned
+	// hidden tile survives the switch.
+	rec = postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"hospitality"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("save shop_type=cafe: code=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("save shop_type=hospitality: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if hasSalonAmendment() {
-		t.Fatalf("switching to shop_type=cafe must deactivate the salon layout, still present: %+v", d.Pm.LayoutAmendments)
-	}
-}
-
-// ut-docs#2006 gap 2, at the real handler level: a version-bump reinstall
-// whose installBuiltin half fails must still trigger ReloadPlugins — proven
-// here by d.Pm actually reflecting the post-removal DB state (no orphaned
-// amendment) even though builtinlayouts.Sync returned an error. Before this
-// card's fix, the handler's `if err := Sync(...); err != nil { warn } else
-// if ... ReloadPlugins ...` skipped the reload on any Sync error, so a
-// caller's in-memory Pm would have kept serving the stale, now-uninstalled
-// plugin's amendments until some unrelated later reload.
-func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
-	origDataDir := paths.DataDir()
-	paths.Init(t.TempDir())
-	t.Cleanup(func() { paths.Init(origDataDir) })
-
-	mux, _, d := newFullAuthDeps(t)
-	ctx := t.Context()
-
-	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
-	if err != nil {
-		t.Fatalf("plugins.Init: %v", err)
-	}
-	d.Pm = pm
-
-	hasSalonAmendment := func() bool {
-		for _, a := range d.Pm.LayoutAmendments {
-			if a.PluginID == salonLayoutID(t) && a.Key == "/tables" && a.Hide {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Simulate a pre-existing install of a STALE embedded-manifest version
-	// (same setup builtinlayouts' own
-	// TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync uses) —
-	// DB row only, no on-disk plugin files, exactly what a real prior till
-	// self-update would leave if it never re-synced.
-	staleManifest, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
-	if err != nil {
-		t.Fatal(err)
-	}
-	staleManifest.Version = "0.0.1-stale"
-	if err := plugins.PersistManifest(ctx, d.Db, staleManifest, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
-		t.Fatalf("install fabricated stale version: %v", err)
-	}
-	if err := d.ReloadPlugins(ctx); err != nil {
-		t.Fatalf("reload after seeding stale version: %v", err)
-	}
-	if !hasSalonAmendment() {
-		t.Fatal("the stale-but-installed salon layout must already be active before the reinstall attempt")
-	}
-
-	// Block installBuiltin's os.MkdirAll deterministically, same
-	// failure-injection as builtinlayouts_test.go's
-	// TestSync_ReinstallFailure_StillReturnsError: a regular file where a
-	// directory needs to be created, placed at the plugins ROOT (not under
-	// the plugin's own id directory) so removeBuiltin's os.RemoveAll doesn't
-	// wipe it before installBuiltin ever runs.
-	if err := os.WriteFile(paths.Plugins(), []byte("blocking file"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Re-saving shop_type=service now hits the version-mismatch reinstall
-	// path: removeBuiltin succeeds (DB says uninstalled), installBuiltin fails
-	// (blocked MkdirAll). The handler must treat this as "reload anyway."
-	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("save shop_type=service over a stale version: code=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if hasSalonAmendment() {
-		t.Fatal("a failed reinstall must still trigger ReloadPlugins — d.Pm kept serving the stale (now-uninstalled) plugin's amendment instead of reflecting the DB's real post-removal state")
+	if hidesTables() {
+		t.Fatalf("switching to shop_type=hospitality (its template shows Tables; cafe would also hide it) must drop the service layout, still present: %+v", d.MenuAmendmentsSnapshot())
 	}
 }
 

@@ -1,0 +1,10 @@
+{{/* ut-docs#6332 S7: the idle Shop type card body (Settings > My shop).
+     Input: shopTypePanelView {Label, Satellite, SatelliteText}. Also served by
+     GET /api/settings/shop-type/panel (Cancel). */}}
+<p class="shop-type-current">{{ if .Label }}<strong>{{ .Label }}</strong>{{ else }}{{ T "settings.shop_type.not_set" }}{{ end }}</p>
+{{ if .Satellite }}
+<p class="muted shop-type-lock" role="note">{{ .SatelliteText }}</p>
+{{ else }}
+<button type="button" class="btn" id="shop-type-change" hx-get="/api/settings/shop-type/pick" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ T "settings.shop_type.change_button" }}</button>
+{{ if .Tidy }}<button type="button" class="btn secondary" id="shop-type-tidy" hx-get="/api/settings/shop-type/preview?to={{ .Tidy.Type }}" hx-target="#shop-type-panel" hx-swap="innerHTML show:#settings-shop-type:top">{{ .Tidy.Text }}</button>{{ end }}
+{{ end }}

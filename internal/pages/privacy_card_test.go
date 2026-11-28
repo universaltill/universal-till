@@ -57,7 +57,7 @@ func TestSettingsPrivacyCardHoldsTheSendUsageFactsSwitch(t *testing.T) {
 }
 
 func TestSettingsPrivacyNavRowIsManagerOnly(t *testing.T) {
-	rows := settingsnav.Resolve("en", nil)
+	rows := settingsNavPlain("en", nil)
 	has := func(rs []settingsnav.Row) bool {
 		for _, r := range rs {
 			if r.Key == "settings-privacy" {

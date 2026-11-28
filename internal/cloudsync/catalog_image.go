@@ -71,9 +71,75 @@ type CatalogImage struct {
 	// checksum, not this, is what a fetched body is checked against.
 	Size  int64
 	Clear bool
+	// Images is the v2 gallery (ut-docs#7101, ADR-0218), in position order
+	// (index 0 = the primary, equal to SHA256); nil for a v1 directive or a
+	// clear. VariantID, when set, addresses one variant's gallery of Entity item.
+	Images    []CatalogImageRef
+	VariantID string
 	// Fetch downloads the PNG from the cloud and checks it hashes to
 	// SHA256 (nil when Clear). Every error is an owner-readable sentence.
 	Fetch func(ctx context.Context) ([]byte, error)
+}
+
+// CatalogImageRef is one picture of a v2 gallery. Fetch downloads and
+// checksums it like CatalogImage.Fetch.
+type CatalogImageRef struct {
+	SHA256 string
+	Alt    string
+	Fetch  func(ctx context.Context) ([]byte, error)
+}
+
+// maxGalleryImages and maxGalleryAlt mirror the cloud's limits (ADR-0218).
+const (
+	maxGalleryImages = 10
+	maxGalleryAlt    = 512
+)
+
+// decodeGallery reads the optional v2 "images" list: present = a gallery
+// (an empty list clears), positions must be exactly 1..n, returned in order.
+func decodeGallery(p payload) (imgs []CatalogImageRef, present bool, msg string) {
+	v, ok := p["images"]
+	if !ok || v == nil {
+		return nil, false, ""
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil, true, "bad images"
+	}
+	if len(list) > maxGalleryImages {
+		return nil, true, "too many images"
+	}
+	ordered := make([]CatalogImageRef, len(list))
+	seen := make([]bool, len(list))
+	for _, e := range list {
+		m, ok := e.(map[string]any)
+		if !ok {
+			return nil, true, "bad image"
+		}
+		ip := payload(m)
+		sum, ok := ip.optStr("sha256")
+		if !ok || sum == nil || !sha256Hex.MatchString(*sum) {
+			return nil, true, "bad image sha256"
+		}
+		alt, ok := ip.optStr("alt")
+		if !ok {
+			return nil, true, "bad image alt"
+		}
+		pos, ok := ip.optInt("position")
+		if !ok || pos == nil || *pos < 1 || int(*pos) > len(list) || seen[*pos-1] {
+			return nil, true, "image positions must be 1..n"
+		}
+		r := CatalogImageRef{SHA256: *sum}
+		if alt != nil {
+			if len(*alt) > maxGalleryAlt {
+				return nil, true, "image alt too long"
+			}
+			r.Alt = *alt
+		}
+		seen[*pos-1] = true
+		ordered[*pos-1] = r
+	}
+	return ordered, true, ""
 }
 
 // decodeCatalogImage reads a set_catalog_image payload (§3.9 rule 1). A
@@ -109,6 +175,33 @@ func decodeCatalogImage(p payload) (CatalogImage, string) {
 	out.Clear = clear != nil && *clear
 	if sum != nil {
 		out.SHA256 = *sum
+	}
+	if vid, ok := p.optStr("variant_id"); !ok {
+		return out, "bad variant_id"
+	} else if vid != nil && strings.TrimSpace(*vid) != "" {
+		if out.Entity != "item" {
+			return out, "variant_id applies to items only"
+		}
+		out.VariantID = strings.TrimSpace(*vid)
+	}
+	gallery, hasGallery, msg := decodeGallery(p)
+	if msg != "" {
+		return out, msg
+	}
+	if hasGallery {
+		if out.Entity != "item" {
+			return out, "images apply to items only"
+		}
+		switch {
+		case out.Clear && len(gallery) > 0:
+			return out, "images and clear cannot both be set"
+		case len(gallery) == 0:
+			out.Clear, out.SHA256 = true, "" // an empty gallery removes the pictures
+		case out.SHA256 != "" && out.SHA256 != gallery[0].SHA256:
+			return out, "sha256 is not the first image"
+		default:
+			out.SHA256, out.Images = gallery[0].SHA256, gallery
+		}
 	}
 	size, ok := p.optInt("size")
 	if !ok || (size != nil && (*size < 0 || *size > catalogImageMaxBytes)) {

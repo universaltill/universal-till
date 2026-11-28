@@ -223,9 +223,10 @@ func TestEOD_OrderTypeSectionHiddenWhenOffAndNoTakeaway(t *testing.T) {
 	}
 }
 
-// Setup wizard: retail and service shops start with Off; cafe/hospitality/
+// Setup wizard (template seeds, ADR-0190): retail and service shops start with Off; cafe/hospitality/
 // market_stall/other are unchanged; an already-set value is never overwritten.
 func TestSetupWizard_ShopTypePicksOrderTypeOff(t *testing.T) {
+	useSeedTemplates(t) // ADR-0190: the defaults now come from template data (S6)
 	orig := paths.DataDir()
 	paths.Init(t.TempDir())
 	t.Cleanup(func() { paths.Init(orig) })

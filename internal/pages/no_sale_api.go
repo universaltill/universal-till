@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -25,6 +24,9 @@ const noSaleReasonMaxRunes = 200
 type noSaleRequest struct {
 	ManagerPIN string `json:"manager_pin"`
 	Reason     string `json:"reason"`
+	// Approval is the single-use token from a refusal's error.approval
+	// (ut-docs#7140); a manager_pin without it approves nothing.
+	Approval string `json:"approval"`
 }
 
 // registerNoSaleAPI wires POST /api/pos/no-sale (ut-docs#2558): open the cash
@@ -35,8 +37,9 @@ type noSaleRequest struct {
 // Order of operations:
 //  1. authorize — the cash_adjustment permission, exactly like a cash skim
 //     (shifts_api.go): a role holding it opens with no PIN, any other
-//     session needs a manager PIN (checkOrElevate). 403 manager_pin_required
-//     (429 once the PIN lockout trips).
+//     session needs a bound manager approval (ut-docs#7140): the refusal
+//     carries a single-use token in error.approval, the retry sends it with
+//     the manager PIN. 403 (429 once the PIN lockout trips).
 //  2. kick the drawer — print.OpenDrawer sends only the kick pulse over the
 //     thermal transport. No printer / a system printer → 409; the printer
 //     refusing or unreachable → 503. Nothing is recorded on failure: the
@@ -62,15 +65,17 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		elev := checkOrElevate(d, r, "cash_adjustment", strings.TrimSpace(req.ManagerPIN))
+		// The register the event will record (read-only; the EnsureRegister
+		// self-heal write stays after the gate and the kick). The approval is
+		// bound to it, the session user and the trimmed reason (ut-docs#7140).
+		registerID := tillRegisterIDBestEffort(ctx, d)
+		binding := approvalBinding("/api/pos/no-sale", getSessionUserID(r), []string{"cash_adjustment"},
+			[]elevationHiddenField{{"reason", reason}}, registerID)
+		elev, tok := checkOrElevateApproval(d, r, binding, strings.TrimSpace(req.ManagerPIN), req.Approval, "cash_adjustment")
 		actorID, approverID := elev.ActorID, ""
 		switch elev.Outcome {
 		case needsElevation:
-			status := http.StatusForbidden
-			if errors.Is(elev.Err, auth.ErrLockedOut) {
-				status = http.StatusTooManyRequests
-			}
-			writeNoSaleError(w, status, "manager_pin_required", "manager PIN required")
+			writeElevationRefusalJSON(w, r, elev, tok, http.StatusTooManyRequests)
 			return
 		case elevated:
 			approverID = elev.ApproverID
@@ -112,7 +117,6 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 		// EnsureRegister self-heal), so the open lands in the same
 		// (business date, till) cloud-rollup key as that device's sales.
 		repo := data.NewPOSRepo(d.Db)
-		registerID := tillRegisterIDBestEffort(ctx, d)
 		if registerID == "" {
 			if regID, err := repo.EnsureRegister(ctx); err == nil {
 				registerID = regID

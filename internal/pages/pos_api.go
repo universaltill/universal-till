@@ -3085,6 +3085,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var payments []pos.PaymentInput
+		// requestTips sums the tips the request's own legs carry, for the
+		// slip guard applied once the total is known (a tip is at most the
+		// bill, on the split path as on the quick-pay row).
+		var requestTips int64
 		for _, p := range in.Payments {
 			// ut-docs#1795: canonicalize case here, once, before ANY use --
 			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
@@ -3125,6 +3129,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid tip amount", http.StatusBadRequest)
 				return
 			}
+			requestTips += p.Tip // bounded: each tip is at most its leg's amount
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				// ut-docs#923: a genuine internal/setup failure (the FK-upsert
 				// itself hit a DB-layer error), not a reachable business
@@ -3161,6 +3166,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				ReaderRowID: strings.TrimSpace(p.Reader),
 			})
 		}
+		// Cashier tip entry (form-encoded quick-pay legs only; a split leg
+		// carries its own JSON `tip`). tip_bp is a percent of the payable
+		// total in basis points, tip an amount in minor units; an amount wins.
+		// Applied after the total is known, below.
+		var formTipBP, formTipMinor int64
+		formTipLeg := -1
 		// Fallback for form-encoded tender buttons (hx-vals)
 		if len(payments) == 0 {
 			if err := r.ParseForm(); err == nil {
@@ -3209,6 +3220,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						return
 					}
 				}
+				if method != "" && method != "voucher" && formVoucherID == "" && common.TipsEnabled(r.Context(), d.Settings) {
+					var tipOK bool
+					formTipBP, formTipMinor, tipOK = parseFormTip(r.Form.Get("tip_bp"), r.Form.Get("tip"))
+					if !tipOK {
+						http.Error(w, "invalid tip amount", http.StatusBadRequest)
+						return
+					}
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -3218,6 +3237,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
 						return
 					}
+					formTipLeg = len(payments)
 					payments = append(payments, pos.PaymentInput{
 						MethodID:  method,
 						Amount:    money.FromMinor(amount),
@@ -3304,6 +3324,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for i := range payments {
 			if !payments[i].Amount.IsPositive() {
 				payments[i].Amount = total
+			}
+		}
+		// The tip rides on the leg it was entered for: Amount includes it
+		// (core's one convention, #2571) and TipAmount is the breakdown. A
+		// percent is of the payable total, integer half-up; a tip above 100%
+		// of the total is refused as a slip (nothing recorded yet).
+		if requestTips > total.Minor() {
+			http.Error(w, "invalid tip amount", http.StatusBadRequest)
+			return
+		}
+		if formTipLeg >= 0 && (formTipBP > 0 || formTipMinor > 0) {
+			tip := formTipMinor
+			if tip == 0 {
+				tip = pos.TipForPercentBP(total, formTipBP).Minor()
+			}
+			if tip > total.Minor() {
+				http.Error(w, "invalid tip amount", http.StatusBadRequest)
+				return
+			}
+			if tip > 0 {
+				payments[formTipLeg].Amount = payments[formTipLeg].Amount.Add(money.FromMinor(tip))
+				payments[formTipLeg].TipAmount = money.FromMinor(tip)
 			}
 		}
 
@@ -3813,15 +3855,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// Which moves are allowed from the sale's current status is
 	// pos.UpdateSaleStatus's rule (ut-docs#3368: a completed sale can only be
 	// voided; never reopened, marked refunded or completed here — 409).
-	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
 		type In struct {
 			SaleID      string `json:"saleId"`
 			Status      string `json:"status"` // open|parked|voided (refunded/completed are refused)
 			Reason      string `json:"reason,omitempty"`
 			OverridePIN string `json:"override_pin,omitempty"`
+			Approval    string `json:"approval,omitempty"` // single-use token from the refusal's error.approval (ut-docs#7140)
 		}
 		var in In
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		// 4 KiB: the body is a few short strings; an oversize one is refused
+		// before any lookup, PIN check or token mint (ut-docs#7152).
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
@@ -3830,25 +3880,41 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		// Voiding is a cancellation the reports count, so it
-		// needs the refund permission or a manager's PIN (ut-docs#3368) —
-		// the same action the refund page gates on. API-only route (no UI
-		// calls it), so a refusal is a plain 403, not a PIN dialog.
-		actorID, blockedActorID := getSessionUserID(r), ""
+		// needs the refund permission or a manager's approval (ut-docs#3368).
+		// The approval is bound, single-use and request-specific (ut-docs#7140):
+		// endpoint, session user, sale, status, reason and the sale's current
+		// status. API-only route (no UI calls it), so a refusal is the JSON
+		// envelope with the token in error.approval; the caller re-sends the
+		// same body plus "approval" and the manager PIN.
+		actorID, blockedActorID, expectedFrom := getSessionUserID(r), "", ""
 		if in.Status == "voided" {
-			elev := checkOrElevate(d, r, "refund", in.OverridePIN)
-			if elev.Outcome == needsElevation {
-				key := elevationErrorKey(elev.Err)
-				if key == "" {
-					key = "common.error.manager_or_admin_required"
+			from, err := data.NewPOSRepo(d.Db).SaleStatus(r.Context(), nil, in.SaleID)
+			if err != nil {
+				if errors.Is(err, data.ErrSaleNotFound) {
+					common.LogAndLocalizedError(w, r, http.StatusNotFound, "pos.error.sale_not_found", "pos-api", err)
+					return
 				}
-				common.LocalizedError(w, r, http.StatusForbidden, key)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)
+				return
+			}
+			// An impossible move (already voided/refunded, unknown status)
+			// answers 409 before any prompt, PIN check or token spend.
+			if !pos.SaleStatusTransitionAllowed(from, in.Status) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.sale_status_transition", "pos-api", pos.ErrSaleStatusTransition)
+				return
+			}
+			binding := approvalBinding("/api/pos/sale/status", getSessionUserID(r), []string{"refund"},
+				[]elevationHiddenField{{"saleId", in.SaleID}, {"status", in.Status}, {"reason", in.Reason}}, from)
+			elev, tok := checkOrElevateApproval(d, r, binding, in.OverridePIN, in.Approval, "refund")
+			if elev.Outcome == needsElevation {
+				writeElevationRefusalJSON(w, r, elev, tok, http.StatusForbidden)
 				return
 			}
 			if elev.Outcome == elevated {
-				actorID, blockedActorID = elev.ApproverID, elev.ActorID
+				actorID, blockedActorID, expectedFrom = elev.ApproverID, elev.ActorID, from
 			}
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
+		if err := pos.UpdateSaleStatusFrom(r.Context(), d.Db, in.SaleID, expectedFrom, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own
@@ -4660,6 +4726,34 @@ func maskTxnRef(ref string) string {
 		return "…"
 	}
 	return "…" + ref[len(ref)-4:]
+}
+
+// parseFormTip reads the tip fields of a form-encoded quick-pay leg: tip_bp (a
+// percent in basis points, 0..10000) and tip (minor units, >= 0). Empty fields
+// mean no tip. ok is false for a malformed or out-of-range value. When both are
+// set the typed amount wins and the percent is dropped.
+func parseFormTip(bpRaw, minorRaw string) (bp, minor int64, ok bool) {
+	parse := func(raw string, max int64) (int64, bool) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return 0, true
+		}
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 || v > max {
+			return 0, false
+		}
+		return v, true
+	}
+	var okBP, okMinor bool
+	bp, okBP = parse(bpRaw, 10000)
+	minor, okMinor = parse(minorRaw, math.MaxInt64/4)
+	if !okBP || !okMinor {
+		return 0, 0, false
+	}
+	if minor > 0 {
+		bp = 0
+	}
+	return bp, minor, true
 }
 
 // resetApprovalExtras (ut-docs#7096) is everything New sale would destroy that

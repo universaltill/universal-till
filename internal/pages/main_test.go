@@ -6,9 +6,12 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/tetratelabs/wazero"
+
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -91,7 +94,9 @@ func TestMain(m *testing.M) {
 		panic("TestMain: data temp dir: " + err.Error())
 	}
 	paths.Init(dataDir)
+	plugins.SharedCompileCacheForTest = wazero.NewCompilationCache() // ut-docs#7091: compile each WASM guest once per binary
 	code := m.Run()
+	plugins.SharedCompileCacheForTest = nil
 	_ = os.RemoveAll(secretsDir)
 	_ = os.RemoveAll(dataDir)
 	os.Exit(code)
