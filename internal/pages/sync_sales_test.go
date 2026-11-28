@@ -862,6 +862,10 @@ func pushSettleHarness(t *testing.T, now time.Time) (primaryDp, replicaDp *commo
 	server := httptest.NewServer(primaryMux)
 	t.Cleanup(server.Close)
 	_, rdp := newSyncSalesTestDeps(t)
+	// A real replica has a sync.primary_url; the push steps check it (ut-docs#5922).
+	if err := rdp.Settings.Set(ctx, "sync.primary_url", server.URL); err != nil {
+		t.Fatal(err)
+	}
 	prev := salesPushNow
 	salesPushNow = func() time.Time { return now }
 	t.Cleanup(func() { salesPushNow = prev })

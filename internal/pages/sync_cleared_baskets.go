@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -139,17 +140,17 @@ func registerSyncClearedBaskets(mux *http.ServeMux, d *common.Deps) {
 // the primary, and advance it only on a 200. Any other answer — including
 // 404/401 from an older primary that doesn't know the route — leaves the
 // cursor where it is, so the clears are retried next tick rather than dropped.
-func syncPushClearedBaskets(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
+func syncPushClearedBaskets(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) bool {
 	repo := data.NewPOSRepo(d.Db)
 	cur, _, _ := d.Settings.Get(ctx, clearedBasketPushCursorKey)
 	afterAt, afterID := parseNoSalePushCursor(strings.TrimSpace(cur))
 	clears, err := repo.LocalClearedBasketsSince(ctx, afterAt, afterID, clearedBasketPushBatch)
 	if err != nil {
 		logging.L().Errorf("sync cleared-basket push: read local clears: %v", err)
-		return
+		return false
 	}
 	if len(clears) == 0 {
-		return
+		return false
 	}
 	batch := make([]journalClearedBasket, 0, len(clears))
 	for _, e := range clears {
@@ -160,19 +161,23 @@ func syncPushClearedBaskets(ctx context.Context, d *common.Deps, client *http.Cl
 	}
 	raw, err := json.Marshal(batch)
 	if err != nil {
-		return
+		return false
+	}
+	if !stillReplica(ctx, d) {
+		promotedMidPush()
+		return true
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimSuffix(primary, "/")+"/api/sync/cleared-baskets", bytes.NewReader(raw))
 	if err != nil {
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, err := client.Do(req)
 	if err != nil {
 		logging.L().Infof("sync cleared-basket push: primary unreachable (%v) — will retry", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -180,12 +185,15 @@ func syncPushClearedBaskets(ctx context.Context, d *common.Deps, client *http.Cl
 		// on every tick until it upgrades (the contract's skew window), and
 		// Error lines fill the Problems panel.
 		logging.L().Warnf("sync cleared-basket push rejected: %s — will retry", resp.Status)
-		return
+		return false
 	}
 	last := clears[len(clears)-1]
-	_ = d.Settings.Set(ctx, clearedBasketPushCursorKey, last.CreatedAt+"|"+last.ID)
-	// A successful push is contact with the main till, as for sales.
-	now := recordMainContact(ctx, d, time.Now())
-	_ = d.Settings.Set(ctx, "sync.last_push_at", now)
+	// A successful push is contact with the main till, as for sales. One
+	// guarded write: a promote mid-request writes none of it (#5922).
+	if err := recordPushIfReplica(ctx, d, time.Now(), map[string]string{clearedBasketPushCursorKey: last.CreatedAt + "|" + last.ID}); errors.Is(err, data.ErrNotReplica) {
+		promotedMidPush()
+		return true
+	}
 	logging.L().Infof("sync push: %d cleared basket(s) journaled to the primary", len(batch))
+	return false
 }

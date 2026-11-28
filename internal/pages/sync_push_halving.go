@@ -103,7 +103,9 @@ func salesPushBatchSize(ctx context.Context, d *common.Deps) int {
 // storeSalesPushBatchSize persists a smaller size after a 413, or doubles a
 // learned size back towards the max after a tick the primary fully accepted.
 // It writes only on change.
-func storeSalesPushBatchSize(ctx context.Context, d *common.Deps, fetched, final int, accepted bool) {
+// It returns data.ErrNotReplica when a promote has landed (nothing written);
+// other errors are dropped, as before (ut-docs#5922).
+func storeSalesPushBatchSize(ctx context.Context, d *common.Deps, fetched, final int, accepted bool) error {
 	next := fetched
 	switch {
 	case final < fetched:
@@ -112,26 +114,37 @@ func storeSalesPushBatchSize(ctx context.Context, d *common.Deps, fetched, final
 		next = min(2*fetched, salesPushMaxBatch)
 	}
 	if next == fetched {
-		return
+		return nil
 	}
-	_ = d.Settings.Set(ctx, salesPushBatchKey, strconv.Itoa(next))
+	if err := d.Settings.SetIfReplica(ctx, map[string]string{salesPushBatchKey: strconv.Itoa(next)}); errors.Is(err, data.ErrNotReplica) {
+		return err
+	}
+	return nil
 }
 
 // holdOversizedSale records a sale the primary refused alone (413 at one
 // sale): the queue stays behind it, the chip warns and one keyed Problem names
 // it. The cursor is untouched, so the sale and every later one are retried each
 // tick until the main till accepts them.
-func holdOversizedSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, id, receiptNo string) {
+//
+// The held-sale write is always made (one small guarded transaction per tick
+// while a sale is held) so a promote mid-request is refused before the Problem
+// is raised: it returns data.ErrNotReplica and warns nothing (ut-docs#5922).
+func holdOversizedSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, id, receiptNo string) error {
 	prev, _, _ := d.Settings.Get(ctx, salesPushHeldKey)
-	if strings.TrimSpace(prev) != id {
-		_ = d.Settings.Set(ctx, salesPushHeldKey, id)
+	if err := d.Settings.SetIfReplica(ctx, map[string]string{salesPushHeldKey: id}); err != nil {
+		if errors.Is(err, data.ErrNotReplica) {
+			return err
+		}
+		logging.L().Warnf("sync push: record held sale: %v", err)
 	}
 	if strings.TrimSpace(prev) == id && logging.HasOpenProblem(SalePushTooLargeProblemKey) {
-		return
+		return nil
 	}
 	cur, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
 	queued, _ := countQueuedSales(ctx, repo, cur)
 	logging.L().WarnProblemf(SalePushTooLargeProblemKey,
 		"sync push: sale %s (receipt %s) is too large for the main till to accept (HTTP 413 for that sale alone) — it and %d later sale(s) stay on this till and are retried every tick until the main till accepts it",
 		id, receiptNo, max(queued-1, 0))
+	return nil
 }
