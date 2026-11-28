@@ -45,6 +45,8 @@ var knownIconNames = map[string]bool{
 	"contrast":     true, // ut-docs#3440: session-chip "My display" link
 	"credit-card":  true, // ut-docs#3090: Settings "Payments" tile
 	"hard-drive":   true, // ut-docs#3121: the low-disk status chip
+	"printer":      true, // Mac-instance batch: httpx printer glyph
+	"key":          true, // Mac-instance batch: httpx key glyph
 	"gift":         true, // ut-docs#4251: the Gift vouchers menu tile
 	// ut-docs#5366 (ADR-0176): the Notices bell and the inbox's severity /
 	// sender glyphs; drawn in httpx/icons.go like every name here.

@@ -125,6 +125,7 @@ func (*CloudOutboxRepo) DropInheritedOpenMarks(ctx context.Context, q SyncQuerie
 //     marks: the handler's 409 check runs outside this transaction.
 //  2. MarkUnsentPromotedFields (#6240), after the drop so its "no open
 //     mark" gate no longer sees the stale marks.
+//  3. queued plugin records are rejected "till_promoted" (ut-docs#3697).
 //
 // Sealed (in-flight) marks are kept on purpose: the cloud replays a sealed
 // change_id idempotently and its answer re-bases the row, and a sealed
@@ -153,7 +154,12 @@ func (r *SettingsRepo) PromoteReplica(ctx context.Context) error {
 				}
 			}
 		}
-		_, err := repo.MarkUnsentPromotedFields(ctx, tx, time.Now().UTC().Format(time.RFC3339))
-		return err
+		now := time.Now().UTC()
+		if _, err := repo.MarkUnsentPromotedFields(ctx, tx, now.Format(time.RFC3339)); err != nil {
+			return err
+		}
+		// ut-docs#3697: queued plugin records can never reach the old main
+		// till now; the plugin's own local rows stay valid.
+		return RejectAllPendingRecords(ctx, tx, RecordReasonTillPromoted, now)
 	})
 }

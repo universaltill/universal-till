@@ -7,12 +7,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/shoptemplate"
 )
 
 // The salon fold-in (ADR-0190, ut-docs#6332 S5) must not change one byte a
@@ -172,5 +174,26 @@ func serviceLegacySetup(t *testing.T, d *common.Deps) {
 	useRealShopTemplates(t, d)
 	if err := d.ReloadPlugins(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestServiceLedgerShopGetsHardwareTileDescription: a service shop that has
+// accepted a template (ledger set) gets the #7205 Hardware tile description;
+// the legacy replay shop (golden) does not (ADR-0190 byte identity).
+func TestServiceLedgerShopGetsHardwareTileDescription(t *testing.T) {
+	const desc = "Receipt printer and the tills linked to this shop."
+	ledger := salonSurfaces(t, func(t *testing.T, d *common.Deps) {
+		serviceLegacySetup(t, d)
+		if err := d.Settings.Set(t.Context(), shoptemplate.LedgerKey, `{"id":"service","version":1,"seeded":{},"at":"`+time.Now().UTC().Format(time.RFC3339)+`"}`); err != nil {
+			t.Fatal(err)
+		}
+		d.ReloadTemplate(t.Context())
+	})
+	if !strings.Contains(ledger["settings_nav.html"], desc) {
+		t.Error("a template-ledger service shop's Hardware tile must carry its description")
+	}
+	legacy := salonSurfaces(t, serviceLegacySetup)
+	if strings.Contains(legacy["settings_nav.html"], desc) {
+		t.Error("a legacy service shop's Hardware tile must stay plain")
 	}
 }

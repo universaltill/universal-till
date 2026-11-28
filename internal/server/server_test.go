@@ -1419,3 +1419,36 @@ func TestRunDailyBackupFreshCheckSkipsFutureFile(t *testing.T) {
 		t.Fatalf("%d backups, want 2 (fresh real backup -> no new snapshot)", len(list))
 	}
 }
+
+// Review M2 (ut-docs#3697): the hourly housekeeping check sweeps the
+// plugin-records outbox and refreshes its Problem on every till, whatever
+// its role, and on every hour (not only when the daily sweep is due).
+func TestRunHousekeeping_SweepsPluginRecordsEveryHour_3697(t *testing.T) {
+	now := time.Now().UTC()
+	fakeDisk(t, 1<<40, 1<<40)
+	dbPath, _ := housekeepingLayout(t, now, 0, 0)
+	d, err := appdb.Open(testsupport.MigratedDBFile(t, "hk_records.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	var s housekeeping.Schedule
+	runHousekeeping(&s, d.DB, dbPath, now) // the daily sweep has now run
+	if _, err := data.NewPluginRecordsRepo(d.DB).Enqueue(context.Background(), "p.hk", "entries", "old", []byte(`{}`), now.Add(-31*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	key := plugins.RecordsProblemKey("p.hk")
+	logging.ResolveProblems(key)
+	t.Cleanup(func() { logging.ResolveProblems(key) })
+	runHousekeeping(&s, d.DB, dbPath, now.Add(time.Hour))
+	var st string
+	if err := d.DB.QueryRow(`SELECT status FROM plugin_record_outbox WHERE record_id = 'old'`).Scan(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st != "rejected" {
+		t.Fatalf("expired row on a till with no main = %s, want rejected", st)
+	}
+	if !logging.HasOpenProblem(key) {
+		t.Fatal("housekeeping must raise the rejected-records Problem")
+	}
+}

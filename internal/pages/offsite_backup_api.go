@@ -84,6 +84,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 		if gate == offsitebackup.GateOpen {
 			view["choice"] = get(data.OffsiteKeyInCloudKey)
 			view["blocked"] = get(data.OffsiteEscrowBlockedKey) == "1"
+			view["held"] = get(data.OffsiteCopyHeldKey) == "1"
 			view["linkCopy"] = get(data.OffsiteLinkCopyKey)
 			view["hasKey"] = s.HasKey()
 		}
@@ -173,11 +174,19 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		s := svc()
+		prev, _, _ := s.Settings.Get(r.Context(), data.OffsiteKeyInCloudKey)
 		if err := s.Settings.Set(r.Context(), data.OffsiteKeyInCloudKey, choice); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
 		auditFor(r)("cloud_key_choice", map[string]any{"choice": choice})
+		// Off never deletes a copy the cloud holds (ADR-0199 D17). The cloud may
+		// hold one even when this till never sent it (after a restore or a link the
+		// choice is undecided), so assume it until ApplyKeyChoice hears the cloud's
+		// answer: the card never claims "only on this till" falsely (ut-docs#7200).
+		if choice == data.OffsiteKeyInCloudOff && strings.TrimSpace(prev) != data.OffsiteKeyInCloudOff {
+			_ = s.Settings.Set(r.Context(), data.OffsiteCopyHeldKey, "1")
+		}
 		msg := ""
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()

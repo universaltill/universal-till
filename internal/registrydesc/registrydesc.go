@@ -82,6 +82,15 @@ var regionCard = map[string]string{
 	"settings-payments-tips": "settings-payments",
 }
 
+// CardForRegion returns the Settings card id a registry region belongs to:
+// the region itself when it is a card, else the card it is contained in.
+func CardForRegion(region string) string {
+	if card, ok := regionCard[region]; ok {
+		return card
+	}
+	return region
+}
+
 // ClassForRegion returns the base class a registry region carries: the class
 // of the CoreSettings row of that id, or of the card it is contained in.
 // ok is false when the region names no card (the registry generator fails).
