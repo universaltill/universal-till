@@ -502,19 +502,25 @@ func disableDemoRowButtonsScript(rowClass string) string {
 // never happen for a cashier session with nothing pending. Keeps whatever
 // ORDER settingsnav.Resolve produced (a `layout` plugin's reorder still
 // applies) — this only removes rows, never reorders the survivors.
-func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard, showStaffLinks bool) []settingsnav.Row {
+func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard, showStaffLinks, canTills bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
-		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
-		"settings-privacy":     !isManager,      // ADR-0200: the Privacy card is managers-only
-		"settings-diagnostics": !isManager,      // ADR-0092 §7, ut-docs#2169
-		"settings-menulayout":  !isManager,
-		"settings-payments":    !hasPayMethods,
-		"settings-data":        !showDataCard,
-		"settings-all":         !isManager,
-		"settings-cloud-staff": !isManager,               // ut-docs#2557: manager-only, like the card
-		"settings-staff-links": !showStaffLinks,          // ut-docs#3208: user_management || permission_management
-		"settings-notices":     !accountLinkOutAllowed(), // ut-docs#6622: the inbox is off on store channels
+		// ut-docs#7173: the five Tills & devices sections that need the
+		// sync_management action (the old /tills page's gate).
+		"settings-tills-this":    !canTills,
+		"settings-tills-others":  !canTills,
+		"settings-tills-old":     !canTills,
+		"settings-tills-add":     !canTills,
+		"settings-tills-readers": !canTills,
+		"settings-privacy":       !isManager, // ADR-0200: the Privacy card is managers-only
+		"settings-diagnostics":   !isManager, // ADR-0092 §7, ut-docs#2169
+		"settings-menulayout":    !isManager,
+		"settings-payments":      !hasPayMethods,
+		"settings-data":          !showDataCard,
+		"settings-all":           !isManager,
+		"settings-cloud-staff":   !isManager,               // ut-docs#2557: manager-only, like the card
+		"settings-staff-links":   !showStaffLinks,          // ut-docs#3208: user_management || permission_management
+		"settings-notices":       !accountLinkOutAllowed(), // ut-docs#6622: the inbox is off on store channels
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
 	for _, row := range rows {
@@ -927,7 +933,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			settingsnav.ResolveClassed(locale, d.SettingsAmendmentsSnapshot(), settingsTemplateClassFunc(tmpl)),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 			canManageUsers || canEditPermissions,
+			canPerform(d, r, "sync_management"),
 		)
+		// ut-docs#7173: the count tag on Old entries comes from what is
+		// already known (local roster + the cached account list): never a
+		// fetch, so /settings makes no network call for it (ADR-0003).
+		for i := range settingsNav {
+			if settingsNav[i].Key == "settings-tills-old" {
+				if n := oldEntriesCountCached(r.Context(), d); n > 0 {
+					settingsNav[i].Badge = strconv.Itoa(n)
+				}
+			}
+		}
 		// ut-docs#3946: each settings.sections plugin entry is a section of
 		// its own, under a Plugins group, instead of a panel drawn under
 		// whichever core section is open.
@@ -1108,10 +1125,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"reconnectPanel":  reconnectPanelView(r, d),
 			// ADR-0222: the same sentence as the status-bar chip, and the code
 			// field open when its button brought the person here.
-			"healNotice":    healNoticeView(r, d, locale),
-			"openReconnect": r.URL.Query().Get("reconnect") == "1" || healNeedsCode(healChipStatus()),
+			"healNotice": healNoticeView(r, d, locale),
 			// ut-docs#6959: unknown counts as unclaimed (Claim button stays).
 			"storeClaimed": storeHasOwner(r.Context(), d.Settings),
+			// ut-docs#7173: the Tills & devices sections that need sync_management
+			// render only for a session that has it, and read ?need= / ?refresh=
+			// (the old /tills query) from this page's own URL.
+			"canTills":     canPerform(d, r, "sync_management"),
+			"tillsNeed":    tillsNeedFromQuery(r),
+			"tillsRefresh": r.URL.Query().Get("refresh") == "1",
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

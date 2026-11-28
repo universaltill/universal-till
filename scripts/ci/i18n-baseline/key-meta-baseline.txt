@@ -2374,7 +2374,6 @@ settings.enrol.cloud_sync_off
 settings.enrol.device
 settings.enrol.failed
 settings.enrol.fleet_empty
-settings.enrol.fleet_loading
 settings.enrol.fleet_title
 settings.enrol.fleet_unavailable
 settings.enrol.forbidden
@@ -2543,10 +2542,7 @@ settings.telemetry.title
 settings.theme.apply
 settings.theme.help_per_till
 settings.theme.title
-settings.tills.help
 settings.tills.name_label
-settings.tills.open
-settings.tills.register_help
 settings.tills.register_label
 settings.tills.register_unset
 settings.title
@@ -3125,7 +3121,6 @@ tills.role.satellite
 tills.show_qr
 tills.the_primary
 tills.this_till
-tills.title
 tills.tls.not_pinned
 tills.tls.pinned
 tills.update.downloading

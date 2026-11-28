@@ -249,8 +249,10 @@ func TestSettingsRegistrationCard_CloudSyncOffNotice(t *testing.T) {
 	if strings.Contains(body, "Cloud sync is off.") || strings.Contains(body, `hx-post="/api/enrol/check-plan"`) {
 		t.Fatal("paid till still shows the cloud-sync-off notice")
 	}
-	if !strings.Contains(body, `hx-get="/api/enrol/devices"`) {
-		t.Fatal("paid till: the card no longer loads the fleet list")
+	// ut-docs#7173: the account's list lives in the Other tills / Old entries
+	// sections (loaded when shown); Settings itself makes no network call.
+	if strings.Contains(body, `hx-get="/api/enrol/devices"`) {
+		t.Fatal("paid till: Settings itself must not load the fleet list (it is the Other tills section's)")
 	}
 }
 

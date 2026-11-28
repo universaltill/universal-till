@@ -22,7 +22,7 @@ func TestClassValid(t *testing.T) {
 }
 
 func TestEveryCoreRowDeclaresValidClass(t *testing.T) {
-	want := map[string]int{KindSettings: 37, KindMenu: 24, KindItems: 5, KindRail: 4}
+	want := map[string]int{KindSettings: 39, KindMenu: 24, KindItems: 5, KindRail: 4}
 	for kind, rows := range allRows() {
 		if len(rows) != want[kind] {
 			t.Errorf("%s has %d rows, want %d: update the class tables with the new row", kind, len(rows), want[kind])
@@ -102,7 +102,9 @@ func TestFixedClassTablesNameRealRows(t *testing.T) {
 // behaviour (common) until a template says otherwise.
 func TestCoreSettingsBaseClasses(t *testing.T) {
 	want := map[string]Class{
-		"registration": ClassCommon, "settings-privacy": ClassCommon, "subscription": ClassCommon,
+		"settings-tills-this": ClassCommon, "settings-tills-shop": ClassCommon, "settings-tills-others": ClassCommon,
+		"settings-tills-old": ClassCommon, "settings-tills-add": ClassCommon, "settings-tills-readers": ClassCommon,
+		"settings-privacy":     ClassCommon,
 		"settings-issuereport": ClassAdvanced, "settings-diagnostics": ClassAdvanced,
 		"settings-menulayout": ClassCommon, "settings-update": ClassCommon, "settings-about": ClassCommon,
 		"settings-theme": ClassEssential, "settings-display": ClassCommon,
@@ -111,9 +113,9 @@ func TestCoreSettingsBaseClasses(t *testing.T) {
 		"settings-catalog-pre-pack-unit-price": ClassAdvanced, "settings-sell-screen": ClassCommon,
 		"settings-stock-tracking": ClassCommon, "settings-backup": ClassEssential,
 		"settings-data": ClassAdvanced, "settings-retention": ClassAdvanced, "settings-cloud-staff": ClassAdvanced,
-		"settings-printer": ClassCommon, "settings-tills": ClassCommon, "settings-invoice": ClassCommon,
+		"settings-printer": ClassCommon, "settings-invoice": ClassCommon,
 		"settings-idle-lock": ClassCommon, "settings-staff-links": ClassCommon,
-		"settings-kiosk-idle-reset": ClassCommon, "settings-kiosk-payment-mode": ClassCommon,
+		"settings-kiosk":     ClassCommon,
 		"settings-telemetry": ClassAdvanced, "settings-notices": ClassCommon,
 		"settings-store-name": ClassEssential, "settings-currency": ClassEssential,
 		"settings-language": ClassEssential, "settings-staff-languages": ClassCommon,

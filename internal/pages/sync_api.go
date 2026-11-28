@@ -557,21 +557,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// unlimited, as before). Its own instance: unrelated to pair-request.
 	shortCodeLimiter := newPairRateLimiter(time.Minute, 5)
 
-	// Tills page (manager): enrolled replicas + Add-till QR.
+	// ut-docs#7173: the old five-tab /tills page is now sections of the
+	// Settings tree; every old URL keeps working through a 303. A person
+	// without sync_management lands on /settings, as before.
 	mux.HandleFunc("GET /tills", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
-		m, err := tillsPageData(w, r, d, tillsTabFromRequest(r))
-		if err != nil {
-			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
-			return
-		}
-		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
-		m["theme"] = d.ResolvedTheme(r)
-		m["menuItems"] = d.MenuSnapshot()
-		httpx.Render("ui/pages/tills.html", m)(w, r)
+		http.Redirect(w, r, tillsRedirectTarget(r), http.StatusSeeOther)
 	})
 
 	// Issue a one-time enrolment token; responds with the short code + this
@@ -1121,11 +1115,6 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 
 	// Revoke a replica (manager, primary only).
 	mux.HandleFunc("POST /api/sync/tills/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
-		// A manager session, or a manager PIN typed on the spot (ut-docs#7098).
-		actor, ok := authorizeTillRemoval(w, r, d)
-		if !ok {
-			return
-		}
 		// ut-docs#405: the shop's till roster now syncs to every replica
 		// (adminTables), so .Tills on a replica's own /tills page is no
 		// longer always empty — without this check a replica could revoke
@@ -1137,6 +1126,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// ("replicas never write ... directly").
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "revoke must be done on the primary till", http.StatusConflict)
+			return
+		}
+		// ut-docs#7098 + #7173: the manager PIN, enforced here and not only in
+		// the browser (see authorizeTillRemoval). After the cheap primary-only
+		// refusal above so a replica never burns lockout attempts.
+		actor, ok := authorizeTillRemoval(w, r, d)
+		if !ok {
 			return
 		}
 		id := r.PathValue("id")

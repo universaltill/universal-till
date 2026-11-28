@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#2902: Settings saves that only change their own card used to
 // reload the whole page; they now re-render only a region around the form
@@ -46,13 +46,13 @@ test('settings: invoice, telemetry and till-name saves refresh their region, no 
   await expect(page.locator('#settings-telemetry')).toBeVisible();
   await expect(page.locator('#settings-telemetry-region form')).toBeVisible();
 
-  // Till name (Tills card, two forms with a region each).
-  await page.goto('/tills?tab=this');
+  // Till name (This till section: two forms with a region each, ONE Save, ut-docs#7173).
+  await gotoTillsSection(page, 'this');
   await page.evaluate(() => { (window as any).__ut2902 = 'still-here'; });
   const tn = page.locator('#settings-till-name-region');
   await tn.locator('form').evaluate((f) => f.setAttribute('data-stale', '1'));
   await tn.locator('input[name="name"]').fill('Probe Till 2902');
-  await tn.getByRole('button').click();
+  await page.getByTestId('tills-this-save').click();
   await expect(tn.locator('form[data-stale]')).toHaveCount(0);
   await expect(page.locator('#settings-till-name-region input[name="name"]')).toHaveValue('Probe Till 2902');
   await expect(page.locator('#till-name-msg .pos-notice.success')).toBeVisible();

@@ -20,12 +20,13 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewTillsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("POST /api/sync/tills/revoke-stale", func(w http.ResponseWriter, r *http.Request) {
-		actor, ok := authorizeTillRemoval(w, r, d)
-		if !ok {
-			return
-		}
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "revoke must be done on the primary till", http.StatusConflict)
+			return
+		}
+		// Cheap refusal first, so a replica never burns lockout attempts.
+		actor, ok := authorizeTillRemoval(w, r, d)
+		if !ok {
 			return
 		}
 		devs, ok := accountFleet(r.Context(), d, true)

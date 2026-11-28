@@ -52,12 +52,13 @@ func TestSettingsRegistration_ClaimedShowsLinkedState6959(t *testing.T) {
 	if !strings.Contains(body, `data-testid="store-linked"`) || !strings.Contains(body, "This store is linked to your Universal Till ID.") {
 		t.Errorf("claimed shop lacks the linked line")
 	}
-	tag := pairDetailsTag6959.FindString(body)
-	if tag == "" {
-		t.Fatalf("pair form must sit in <details id=pair-details>")
+	// ut-docs#7173: the reconnect block is always visible (accent card, no
+	// <details> fold); the id stays so old links and the heal button land.
+	if tag := pairDetailsTag6959.FindString(body); tag != "" {
+		t.Errorf("reconnect block must be a plain visible block, not <details>: %s", tag)
 	}
-	if strings.Contains(tag, "open") {
-		t.Errorf("pair details must be collapsed when claimed: %s", tag)
+	if !strings.Contains(body, `id="pair-details"`) {
+		t.Fatalf("reconnect block (id=pair-details) missing")
 	}
 	if !strings.Contains(body, `hx-post="/api/enrol/pair"`) || !strings.Contains(body, "Reconnect this till to a shop") {
 		t.Errorf("pair form / reconnect summary missing when claimed")

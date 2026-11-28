@@ -34,8 +34,14 @@ type syncLinkFixture struct {
 func newSyncLinkFixture(t *testing.T) *syncLinkFixture {
 	t.Helper()
 	dp := newSyncPairingGateTestDeps(t)
+	// fleetCache is process-wide: an account list another test left behind
+	// would mark this fixture's tills as "old entries" (order-dependent under
+	// -shuffle, ut-docs#7173).
+	resetFleetCache()
+	t.Cleanup(resetFleetCache)
 	mux := http.NewServeMux()
 	registerSyncAPI(mux, dp)
+	registerTillsTabs(mux, dp) // ut-docs#7173: section fragments
 	adminRepo := registerSyncAdmin(mux, dp)
 	cfg := fleetlink.DefaultConfig()
 	cfg.PingInterval = 50 * time.Millisecond
@@ -190,8 +196,10 @@ func TestSyncLink_RevokeClosesTheLink(t *testing.T) {
 	if _, err := nextLinkFrame(t, c); err != nil {
 		t.Fatal(err)
 	}
-	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+tillID+"/revoke", nil),
-		auth.User{ID: "u1", Role: "manager"})
+	seedDataAPIManager(t, f.dp.Db)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+tillID+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "u1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	f.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {

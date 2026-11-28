@@ -368,7 +368,9 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /api/sync/vouchers/{id}":                  true,
 	"GET /sync-quarantine":                         true,
 	"GET /tills":                                   true,
-	"GET /ui/tills/tab/{id}":                       true, // ut-docs#7057: the Tills & devices tabs are manager tools
+	"GET /ui/tills/tab/{id}":                       true, // ut-docs#7057: legacy tab route, kept one release
+	"GET /ui/tills/section/{id}":                   true, // ut-docs#7173: the Tills & devices sections are manager tools
+	"POST /api/sync/tills/verify-pin":              true, // ut-docs#7173: the inline manager-PIN check of a removal
 	"POST /api/sync/tills/revoke-stale":            true, // ut-docs#7057: bulk remove of tills not in the account
 	"GET /ui/tills/pending-pairings":               true,
 	"GET /ui/tills/reader-requests":                true, // ut-docs#6538: card reader pairing is a manager tool

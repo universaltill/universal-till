@@ -23,16 +23,16 @@ func TestTillsThis_HealBannerHasTheSentenceAndOneButton(t *testing.T) {
 	for _, c := range []struct {
 		name, reason, sentence, button, href string
 	}{
-		{"cannot prove", credheal.ReasonCannotProve, "because it can&#39;t prove who it is.", "Reconnect with a code", "/settings?reconnect=1#pair-details"},
-		{"removed", credheal.ReasonRemoved, "ask the shop owner for a code", "Enter a code", "/settings?reconnect=1#pair-details"},
-		{"replaced", credheal.ReasonReplaced, "Another till replaced this one", "Join as an additional till", "/tills?tab=add&amp;need=join"},
-		{"role conflict", credheal.ReasonRoleConflict, "so this till can&#39;t reconnect as the main till.", "Join as an additional till", "/tills?tab=add&amp;need=join"},
+		{"cannot prove", credheal.ReasonCannotProve, "because it can&#39;t prove who it is.", "Reconnect with a code", "/settings#pair-details"},
+		{"removed", credheal.ReasonRemoved, "ask the shop owner for a code", "Enter a code", "/settings#pair-details"},
+		{"replaced", credheal.ReasonReplaced, "Another till replaced this one", "Join as an additional till", "/settings?need=join#settings-tills-add"},
+		{"role conflict", credheal.ReasonRoleConflict, "so this till can&#39;t reconnect as the main till.", "Join as an additional till", "/settings?need=join#settings-tills-add"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			mux, d := tillsTabsMux(t, nil, nil)
 			claimStore(t, d)
 			pinHealStatus(t, needsPerson(c.reason))
-			body := tabsGet(mux, "/tills?tab=this").Body.String()
+			body := tabsGet(mux, "/ui/tills/section/this").Body.String()
 			i := strings.Index(body, `data-testid="tills-heal-banner"`)
 			if i < 0 {
 				t.Fatalf("no heal banner: %s", body)
@@ -61,7 +61,7 @@ func TestTillsThis_HealingAndWaitingHaveNoBannerNoButton(t *testing.T) {
 	} {
 		mux, _ := tillsTabsMux(t, nil, nil)
 		pinHealStatus(t, st)
-		body := tabsGet(mux, "/tills?tab=this").Body.String()
+		body := tabsGet(mux, "/ui/tills/section/this").Body.String()
 		if strings.Contains(body, `data-testid="tills-heal-banner"`) || strings.Contains(body, "Reconnect with a code") {
 			t.Fatalf("%s: a self-healing till shows no banner or button: %s", st.State, body)
 		}
@@ -74,12 +74,12 @@ func TestTillsThis_HealingAndWaitingHaveNoBannerNoButton(t *testing.T) {
 func TestTillsThis_SaysWhenItReconnectedByItself(t *testing.T) {
 	mux, _ := tillsTabsMux(t, nil, nil)
 	pinHealStatus(t, credheal.Status{State: credheal.StateOK, LastHealedAt: time.Now().Add(-2 * time.Hour)})
-	body := tabsGet(mux, "/tills?tab=this").Body.String()
+	body := tabsGet(mux, "/ui/tills/section/this").Body.String()
 	if !strings.Contains(body, `data-testid="tills-last-reconnected"`) || !strings.Contains(body, "Reconnected by itself on ") {
 		t.Fatalf("no history line: %s", body)
 	}
 	pinHealStatus(t, credheal.Status{State: credheal.StateOK})
-	if body := tabsGet(mux, "/tills?tab=this").Body.String(); strings.Contains(body, "Reconnected by itself") {
+	if body := tabsGet(mux, "/ui/tills/section/this").Body.String(); strings.Contains(body, "Reconnected by itself") {
 		t.Fatalf("history line without a heal: %s", body)
 	}
 }
@@ -95,7 +95,7 @@ func TestBackupsCard_SaysReconnectingByItselfVersusAPersonStep(t *testing.T) {
 	}{
 		{"healing", credheal.Status{State: credheal.StateHealing, Reason: credheal.ReasonReconnecting}, true, "Copies to your account are paused while this till reconnects. They start again by themselves.", false, "Reconnect it with a code"},
 		{"cannot prove", needsPerson(credheal.ReasonCannotProve), true, "Reconnect it with a code.", true, "paused while"},
-		{"ownerless", needsPerson(credheal.ReasonCannotProve), false, "Reconnect it in Settings &gt; Till registration.", true, "paused while"},
+		{"ownerless", needsPerson(credheal.ReasonCannotProve), false, "Reconnect it in Settings &gt; Tills &amp; devices &gt; Shop and sync.", true, "paused while"},
 		{"shop deleted", needsPerson(credheal.ReasonStoreDeleted), true, "This shop was deleted from its online account", false, "Reconnect it"},
 		{"in use", needsPerson(credheal.ReasonInUseElsewhere), true, "in use on two devices", true, "paused while"},
 	} {
@@ -131,18 +131,11 @@ func TestSettings_HealNoticeAndTheCodeFieldOpenFromTheButton(t *testing.T) {
 	if !strings.Contains(plain, `data-testid="heal-notice"`) || !strings.Contains(plain, "because it can&#39;t prove who it is.") {
 		t.Fatalf("no heal notice in Till registration: %s", plain)
 	}
-	if !strings.Contains(plain, `id="pair-details" open`) {
-		t.Fatalf("a state that says 'type the code here' must open the code field itself")
+	// ut-docs#7173: the code field is always visible, never folded.
+	if !strings.Contains(plain, `id="pair-details"`) || strings.Contains(plain, `<details id="pair-details"`) {
+		t.Fatalf("the reconnect block must be visible on the page, not folded")
 	}
-	pinHealStatus(t, needsPerson(credheal.ReasonReplaced))
-	if strings.Contains(renderSettingsAs(t, mux, mgrUser, false), `id="pair-details" open`) {
-		t.Fatalf("replaced says join, not a code: the code field stays folded")
-	}
-	pinHealStatus(t, needsPerson(credheal.ReasonCannotProve))
 	rec := getAs(mux, "/settings?reconnect=1", &mgrUser)
-	if !strings.Contains(rec.Body.String(), `id="pair-details" open`) {
-		t.Fatalf("?reconnect=1 must render the code field open: %s", rec.Body.String())
-	}
 	if strings.Contains(rec.Body.String(), "autofocus") {
 		t.Fatalf("nothing may pop a keyboard unasked (ux-notes 3.11)")
 	}

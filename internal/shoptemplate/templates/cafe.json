@@ -8,8 +8,7 @@
   "label_key": "setup.shop_type.cafe",
   "summary_key": "shoptemplate.cafe.summary",
   "settings": {
-    "settings-kiosk-idle-reset": "advanced",
-    "settings-kiosk-payment-mode": "advanced",
+    "settings-kiosk": "advanced",
     "settings-order-no": "essential",
     "settings-order-type-prompt": "essential",
     "settings-printer": "essential",

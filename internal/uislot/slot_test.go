@@ -1065,3 +1065,27 @@ func TestParseAmendmentsJSON_RoleMustBePreset(t *testing.T) {
 		t.Fatalf("a misspelled role field must still be refused as unknown, got: %v", err)
 	}
 }
+
+// ut-docs#7173: a layout plugin installed before the Tills tree still names
+// the retired cards; it is followed to the card that replaced each one, not
+// refused.
+func TestParseSettingsAmendments_RetiredKeysFollowTheirReplacement(t *testing.T) {
+	for old, want := range map[string]string{
+		"settings-tills":              "settings-tills-this",
+		"registration":                "settings-tills-shop",
+		"subscription":                "settings-tills-shop",
+		"settings-kiosk-idle-reset":   "settings-kiosk",
+		"settings-kiosk-payment-mode": "settings-kiosk",
+	} {
+		got, err := ParseSettingsAmendments("com.example.layout", map[string]any{
+			"slot":       "settings",
+			"amendments": []any{map[string]any{"key": old, "group": "layout.salon.settings_group"}},
+		})
+		if err != nil {
+			t.Fatalf("%s: unexpected refusal: %v", old, err)
+		}
+		if len(got) != 1 || got[0].Key != want {
+			t.Errorf("%s: want key %s, got %+v", old, want, got)
+		}
+	}
+}

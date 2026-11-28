@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoTillsSection } from './helpers';
 
 // ut-docs#1294: the main till's own Tills row shows its discovery id as
 // "Till ID: <uuid>" — the same label and string the LAN scan prints for it,
@@ -13,7 +13,7 @@ for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 740 }]) {
   test(`tills: main till row shows the scan's Till ID at ${vp.width}x${vp.height}`, async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize(vp);
-    await page.goto('/tills?tab=others');
+    await gotoTillsSection(page, 'others');
 
     const line = page.getByTestId('tills-main-discovery-id');
     await expect(line).toHaveCount(1);
@@ -38,13 +38,13 @@ for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 740 }]) {
       route.fulfill({ json: { data: { primaries: [{ name: 'Front', till_id: id, base_url: 'http://192.168.1.42:8080' }] }, error: null } }),
     );
     // The scan lives on the Add a till tab (join form); the roster stays on Other tills.
-    await page.goto('/tills?tab=add&need=join');
+    await gotoTillsSection(page, 'add', '?need=join');
     await page.locator('#discover-btn').click();
     const item = page.locator('#discover-results li').first();
     await expect(item).toContainText(`Till ID: ${id}`);
     await expect(item.locator('bdi')).toHaveText(id);
 
-    await page.goto('/tills?tab=others');
+    await gotoTillsSection(page, 'others');
     // The 10 s roster poll re-renders the same value (minted once, then read).
     await page.waitForResponse((r) => r.url().includes('/ui/tills/roster'), { timeout: 15_000 });
     await expect(page.getByTestId('tills-main-discovery-id').locator('bdi')).toHaveText(id);

@@ -18,15 +18,15 @@ for (const vp of [
     test(`pair control fits the registration card at ${vp.width}x${vp.height} (${lang})`, async ({ page }) => {
       const assertClean = watchConsole(page);
       await page.setViewportSize(vp);
-      await page.goto(`/settings?lang=${lang}#registration`);
-      const input = page.locator('#registration #pair-code');
-      const button = page.locator('#registration form[hx-post="/api/enrol/pair"] button[type="submit"]');
+      await page.goto(`/settings?lang=${lang}#settings-tills-shop`);
+      const input = page.locator('#pair-details #pair-code');
+      const button = page.locator('#pair-details form[hx-post="/api/enrol/pair"] button[type="submit"]');
       await expect(input).toBeVisible();
       await expect(button).toBeVisible();
 
       const g = await page.evaluate(() => {
         const box = (e: Element | null) => e!.getBoundingClientRect();
-        const card = box(document.querySelector('#registration'));
+        const card = box(document.querySelector('#pair-details'));
         const inp = box(document.querySelector('#pair-code'));
         const btnEl = document.querySelector('#pair-code ~ button') as HTMLElement;
         const btn = box(btnEl);
@@ -40,7 +40,7 @@ for (const vp of [
         };
       });
       expect(g.overflow, 'horizontal page overflow').toBeLessThanOrEqual(0);
-      expect(g.inside, 'input and button stay inside #registration').toBe(true);
+      expect(g.inside, 'input and button stay inside #pair-details').toBe(true);
       expect(g.overlap, 'input and button overlap').toBe(false);
       expect(g.btnClipped, 'Pair button label clipped').toBe(false);
       expect(g.btnHeight, 'touch-sized Pair button').toBeGreaterThanOrEqual(44);
@@ -57,7 +57,7 @@ test('empty code is blocked client-side; a code the till cannot pair with shows 
   page.on('request', (r) => {
     if (r.method() === 'POST' && r.url().includes('/api/enrol/pair')) posts.push(r.postData() ?? '');
   });
-  await page.goto('/settings#registration');
+  await page.goto('/settings#settings-tills-shop');
   const input = page.locator('#pair-code');
   const button = page.locator('#pair-code ~ button');
 

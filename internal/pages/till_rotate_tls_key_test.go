@@ -79,7 +79,6 @@ func TestTillRotateTLSKey_StartsRotationAndTellsLinkedTills(t *testing.T) {
 	f := newSyncLinkFixture(t)
 	registerTillRotateTLSKey(f.mux, f.dp)
 	registerTillsRoster(f.mux, f.dp)
-	registerTillsTabs(f.mux, f.dp) // the network key now sits on the Settings tab (ut-docs#7057)
 	c := servingCert(t)
 	tillID := f.enrol(t, "Counter", "bearer-t2")
 	if _, err := f.dp.Db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('u-manager','mgr','Manager','x','manager')`); err != nil {

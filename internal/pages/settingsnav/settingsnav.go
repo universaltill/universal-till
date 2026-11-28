@@ -40,6 +40,13 @@ type Row struct {
 	// (ut-docs#3090): a uislot.SettingsCategories Key, or "g-<group>" for a
 	// `layout` plugin's own group, which becomes a category of its own.
 	Cat string
+	// Sub marks a row drawn indented under the row above it (ut-docs#7173:
+	// Old entries under Other tills). Core-only: set from subRows, never
+	// from a plugin amendment, so the amendment schema is untouched.
+	Sub bool
+	// Badge is a short count tag drawn after the label ("" = none). The
+	// page fills it from local or cached data only (never a fetch).
+	Badge string
 	// Tag is "" unless a shop-type template is in effect (ResolveClassed
 	// with a non-nil ClassFunc): TagRecommended for an essential row,
 	// TagTucked for a row the template moved to More settings.
@@ -48,6 +55,9 @@ type Row struct {
 	// demoted (its "Something missing?" hint goes on that category's page).
 	HomeCat string
 }
+
+// subRows are the core rows drawn as a sub-row of the row before them.
+var subRows = map[string]bool{"settings-tills-old": true}
 
 // Template tags carried by Row.Tag.
 const (
@@ -111,7 +121,6 @@ func catOf(group string) (id string, rank int) {
 var emojiPrefix = map[string]string{
 	"settings-data":      "🧹 ",
 	"settings-retention": "🗄️ ",
-	"settings-tills":     "🔗 ",
 	"settings-invoice":   "🧾 ",
 }
 
@@ -155,6 +164,7 @@ func ResolveClassed(locale string, amendments []uislot.Amendment, classOf ClassF
 			Label: emojiPrefix[e.Key] + rowLabel(locale, e),
 			Group: group,
 			Cat:   cat,
+			Sub:   subRows[e.Key],
 		}
 		if classOf != nil && !strings.HasPrefix(cat, "g-") && !uislot.FixedClassFor(uislot.KindSettings, e.Key) {
 			switch classOf(e.Key, e.Class) {

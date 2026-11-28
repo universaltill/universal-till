@@ -51,15 +51,20 @@ func registerSupersedes(ctx context.Context, d *common.Deps) map[string]string {
 	return out
 }
 
-// authorizeTillRemoval admits a session that may manage syncing, else a manager
-// PIN in the form. It answers the refusal itself and returns the acting user:
-// the PIN's manager when a PIN was used, so the audit names who removed it.
+// authorizeTillRemoval is the ONE PIN rule of every removal route (revoke,
+// revoke-stale, cloud-remove, verify-pin; ut-docs#7098 + #7173, owner
+// 2026-11-27): a fresh manager PIN is required whoever is signed in, so a
+// person at an unlocked till cannot remove an entry without it (ADR-0087). The
+// PIN comes from the form as override_pin (the inline panel) or manager_pin
+// (older callers). A signed-in manager types their own PIN; a cashier session
+// can remove too when a manager types theirs. The refusal is answered here and
+// the acting user is the PIN's manager, so the audit names who removed it.
 func authorizeTillRemoval(w http.ResponseWriter, r *http.Request, d *common.Deps) (actor string, ok bool) {
-	if canPerform(d, r, "sync_management") {
-		return getSessionUserID(r), true
-	}
 	_ = r.ParseForm()
-	pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+	pin := strings.TrimSpace(r.Form.Get("override_pin"))
+	if pin == "" {
+		pin = strings.TrimSpace(r.Form.Get("manager_pin"))
+	}
 	if pin == "" {
 		common.LocalizedError(w, r, http.StatusForbidden, "tills.list.error.pin_missing")
 		return "", false

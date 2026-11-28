@@ -103,7 +103,7 @@
          the texts the script shows for them ride on the list. No template =
          none of these attributes, byte-identical to before. */}}
     <ul id="settings-nav-index" hidden aria-hidden="true"{{ if .settingsTmpl.Active }} data-tag-recommended="{{ .settingsTmpl.TagRec }}" data-tag-tucked="{{ .settingsTmpl.TagTucked }}" data-chip="{{ .settingsTmpl.ChipText }}" data-intro="{{ .settingsTmpl.TagIntro }}"{{ end }}>
-      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }} data-cat="{{ .Cat }}"{{ if .Tag }} data-tag="{{ .Tag }}"{{ end }}{{ if .HomeCat }} data-home="{{ .HomeCat }}"{{ end }}>{{ .Label }}</li>{{ end }}
+      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }} data-cat="{{ .Cat }}"{{ if .Sub }} data-sub="1"{{ end }}{{ if .Badge }} data-badge="{{ .Badge }}"{{ end }}{{ if .Tag }} data-tag="{{ .Tag }}"{{ end }}{{ if .HomeCat }} data-home="{{ .HomeCat }}"{{ end }}>{{ .Label }}</li>{{ end }}
     </ul>
     {{ if .settingsTmpl.Active }}
     <p class="settings-more-hint muted" id="settings-more-hint" data-testid="settings-more-hint" hidden>{{ .settingsTmpl.MissingText }} <a class="settings-more-hint-link" href="#cat-advanced">{{ .settingsTmpl.MissingLink }}</a></p>
@@ -122,8 +122,22 @@
      request, no second /settings render. A till that does not render the
      card (a cashier) simply has nothing to swap. */}}
 <span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-select-oob="#settings-privacy" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
-<div class="card" id="registration">
-  <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
+{{ if .canTills }}
+<div class="card" id="settings-tills-this">
+  <h2>{{ T "settings.tills_tree.this" }}</h2>
+  <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
+  <div id="tills-this-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/this" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+</div>
+{{ end }}
+{{/* ut-docs#7173: Shop and sync = the old Till registration + Subscription cards
+     and the old Tills > Settings tab, as one section. #registration,
+     #subscription, #pair-details and #network stay as anchors inside it. */}}
+<div class="card" id="settings-tills-shop">
+  <h2>{{ T "settings.tills_tree.shop" }} {{ helpLink "claim" }}</h2>
+<div id="registration">
+  <h3 class="visually-hidden">{{ T "settings.enrol.title" }}</h3>
   {{/* ut-docs#6955 / ut-docs#7057: "other devices on this network" moved to Tills & devices, Settings tab. */}}
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
        subscription is stale or lapsed — explained in place, nothing hidden.
@@ -165,17 +179,7 @@
     {{ if .keyRefused }}<p class="muted" data-testid="reconnect-key-refused">{{ T "settings.till_registration.key_refused" }}</p>{{ end }}
   </div>
   {{ end }}
-  {{/* The device ID and key fingerprint support asks for: a manager sees them
-       in every state (registered, not registered, blocked, locked out). Public
-       identifiers, not secrets. Values are LTR even in an RTL locale. */}}
-  {{ with .registerFacts }}
-  <dl class="register-facts set-gap-s" data-testid="register-facts">
-    {{ if .deviceID }}<div><dt>{{ T "settings.enrol.device" }}</dt><dd data-testid="register-facts-device"><bdi dir="ltr"><code>{{ .deviceID }}</code></bdi></dd></div>{{ end }}
-    <div><dt>{{ T "settings.till_registration.fingerprint" }}</dt>
-      {{ if .fingerprint }}<dd data-testid="register-facts-fingerprint"><bdi dir="ltr"><code>{{ .fingerprint }}</code></bdi></dd>
-      {{ else }}<dd class="muted">{{ .fingerprintUnavailable }}</dd>{{ end }}</div>
-  </dl>
-  {{ end }}
+  {{/* ut-docs#7173: device ID and key fingerprint moved to This till > Technical details. */}}
   {{ if .reconnectPanel }}
   <div class="set-gap-s reconnect-actions" id="reconnect-actions">
     <button type="button" class="btn btn-touch" hx-post="/api/enrol/reconnect" hx-target="#reconnect-msg" hx-swap="innerHTML"
@@ -215,13 +219,6 @@
     {{ end }}
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if and enroldevice (not .registerFacts) }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
-    {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call
-         (enroll.Fleet), so an unpaid till does not load it. */}}
-    {{ if not .cloudSyncOff }}
-    <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" class="set-gap-s">
-      <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
-    </div>
-    {{ end }}
     {{/* ADR-0148 §5 (ut-docs#3615): only a paid store checks in with the
          cloud. Elevation-wired like an explicit operator registration (ut-docs#867). */}}
     {{ if .cloudSyncOff }}
@@ -272,17 +269,28 @@
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
   {{ end }}
+</div>
+  {{/* ut-docs#2569 (ADR-0060 §6): plan, status and the paused-features banner
+       (subscription_block.html). Manager-only, as the Subscription card was; the
+       status-bar chip links to #subscription. */}}
+  {{ if .isManager }}
+  <div class="tills-group" id="subscription">
+    <h3>{{ T "tills.shop.plan_heading" }}</h3>
+    {{/* ut-docs#4285: Check now re-renders this body in place. */}}
+    <div id="subscription-check" aria-live="polite">{{ template "subscription_block.html" . }}</div>
+  </div>
+  {{ end }}
   <!-- ADR-0116 D5/D6 (ut-docs#3523): "Pair with a shop". Unconditional: it is
        the way back for an unpaired, revoked or retired till whatever its
        registration state, and the POST is elevation-wired (ut-docs#867). -->
   {{/* ut-docs#6959: collapsed under "Reconnect" once the store is linked;
        open, as before, otherwise. */}}
-  {{ if .storeClaimed }}<details class="set-divider" id="pair-details"{{ if .openReconnect }} open{{ end }}>{{ else }}<div class="set-divider" id="pair-details">{{ end }}
-    {{ if .storeClaimed }}
-    <summary style="cursor:pointer;min-block-size:44px;padding-block:.6rem;font-weight:600">{{ T "settings.enrol.reconnect_title" }}</summary>
-    {{ else }}
-    <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
-    {{ end }}
+  {{/* ut-docs#7173: a visible, labelled card (it was a <details> once the
+       store was linked, so people could not find it). Same endpoint, same
+       #pair-code / #pair-msg / #pair-busy; the id #pair-details stays so every
+       old link lands here. */}}
+  <div class="tills-action" id="pair-details" role="group" aria-labelledby="pair-details-h">
+    <h3 id="pair-details-h">{{ T "settings.enrol.reconnect_title" }}</h3>
     <p class="muted">{{ T "settings.enrol.pair_help_2" }}</p>
     <!-- Pair is destructive and not idempotent: it clears this till's cloud
          identity before the (single-use) code reaches the cloud, so a second
@@ -301,8 +309,52 @@
       <span id="pair-busy" class="htmx-indicator muted" role="status">{{ T "settings.enrol.pair_busy" }}</span>
     </form>
     <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
-  {{ if .storeClaimed }}</details>{{ else }}</div>{{ end }}
+  </div>
+  {{/* Sync and network: LAN access, network key, sales copy, quarantine and
+       "stand alone" load when this section is first shown (nothing is fetched
+       on page load, ADR-0003). */}}
+  {{ if .canTills }}
+  <div class="tills-group" id="tills-sync-body" data-tills-body hx-get="/ui/tills/section/sync" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+  {{ end }}
 </div>
+{{ if .canTills }}
+<div class="card settings-wide" id="settings-tills-others">
+  <h2>{{ T "tills.tab.others" }}</h2>
+  <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
+  <div id="tills-others-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/others{{ if .tillsRefresh }}?refresh=1{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+</div>
+{{ end }}
+{{ if .canTills }}
+<div class="card" id="settings-tills-old">
+  <h2>{{ T "settings.tills_tree.old" }}</h2>
+  <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
+  <div id="tills-old-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/old{{ if .tillsRefresh }}?refresh=1{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+</div>
+{{ end }}
+{{ if .canTills }}
+<div class="card" id="settings-tills-add">
+  <h2>{{ T "tills.tab.add" }}</h2>
+  <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
+  <div id="tills-add-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/add{{ if .tillsNeed }}?need={{ .tillsNeed }}{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+</div>
+{{ end }}
+{{ if .canTills }}
+<div class="card" id="settings-tills-readers">
+  <h2>{{ T "tills.tab.readers" }}</h2>
+  <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
+  <div id="tills-readers-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/readers" hx-trigger="ut:load-section" hx-swap="innerHTML">
+    <p class="muted">{{ T "tills.tree.checking" }}</p>
+  </div>
+</div>
+{{ end }}
 {{/* ADR-0200 (ut-docs#6559): Settings > Privacy. The registration notice
      (checkin-notice-v2, owner-approved) tells a shop to "switch off
      "Send usage facts"" in Settings > Privacy, so this card and that switch
@@ -355,18 +407,6 @@
     </div>
   </div>
   {{ end }}
-</div>
-{{ end }}
-{{/* ut-docs#2569 (ADR-0060 §6): Settings → Subscription — plan, status and
-     the paused-features banner (web/ui/partials/subscription_block.html).
-     Manager-only, like #settings-diagnostics below (the sidebar row is
-     filtered the same way in filterSettingsNavForRender). The chip in the
-     status bar links here. */}}
-{{ if .isManager }}
-<div class="card" id="subscription">
-  <h2>{{ T "subscription.title" }} {{ helpLink "claim" }}</h2>
-  {{/* ut-docs#4285: Check now re-renders this body in place. */}}
-  <div id="subscription-check" aria-live="polite">{{ template "subscription_block.html" . }}</div>
 </div>
 {{ end }}
 {{ if .canReportIssue }}
@@ -2390,21 +2430,6 @@
 })();
 </script>
 {{ end }}
-<!-- ut-docs#7057: this till's name, register, role, the tills list, pairing
-     and the network settings moved to the one Tills & devices page (/tills).
-     The card stays as the way in, and a link to #settings-tills lands on
-     /tills?tab=this (script below). -->
-<div class="card" id="settings-tills">
-  <h2>🔗 {{ T "settings.cat.devices.label" }}</h2>
-  <p id="settings-till-role"><strong>{{ T "settings.tills.role_label" }}: {{ T .TillRoleKey }}</strong>
-    {{ if .MainTillAddr }}<br><span class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</span>{{ end }}</p>
-  <p class="muted">{{ T "settings.tills.help" }}</p>
-  <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
-</div>
-<script>
-// ut-docs#7057: the old Tills card moved to /tills; a hash cannot reach the server.
-if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); }
-</script>
 <!-- ut-docs#866: invoice seller identity is elevation-wired — the card
      renders for every session (server-side checkOrElevate is the real
      gate). -->
@@ -2476,9 +2501,16 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
   </div>
 </div>
 {{ end }}
-<div class="card" id="settings-kiosk-idle-reset">
-  <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
-  <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
+{{/* ut-docs#7173: Kiosk = the two kiosk cards as one section (self-order kiosk). Each part keeps
+     its old id as an anchor (#settings-kiosk-idle-reset, #settings-kiosk-payment-mode), its
+     form, endpoint, lock region and message span. ut-docs#867: both are
+     elevation-wired, so the card renders for every session. */}}
+<div class="card" id="settings-kiosk">
+  <h2>{{ T "settings.tills_tree.kiosk" }} {{ helpLink "self-order" }}</h2>
+  <p class="muted">{{ T "settings.kiosk.shopwide" }}</p>
+  <div class="tills-group" id="settings-kiosk-idle-reset">
+    <h3>{{ T "settings.kiosk_idle_reset.title" }}</h3>
+    <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-idle-reset"{{ if index $.lockedRegions "settings-kiosk-idle-reset" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-idle-reset" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" data-after-request="fail save-error:settings-save-error">
@@ -2494,14 +2526,9 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     <span id="kiosk-idle-reset-msg" aria-live="polite"></span>
   </form>
   </fieldset>
-</div>
-<!-- ut-docs#582: self-order kiosk checkout mode -- "kiosk" (the existing
-     card/contactless payment picker) or "counter" ("pay at counter": the
-     kiosk sends the order to the kitchen but never charges anything, a
-     human takes payment at the till). Same elevation-wired shape as
-     kiosk-idle-reset above. -->
-<div class="card" id="settings-kiosk-payment-mode">
-  <h2>{{ T "settings.kiosk.payment_mode" }} {{ helpLink "self-order" }}</h2>
+  </div>
+  <div class="tills-group" id="settings-kiosk-payment-mode">
+    <h3>{{ T "settings.kiosk.payment_mode" }}</h3>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-payment-mode"{{ if index $.lockedRegions "settings-kiosk-payment-mode" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-payment-mode" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" data-after-request="fail save-error:settings-save-error">
@@ -2514,6 +2541,7 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     <span id="kiosk-payment-mode-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  </div>
 </div>
 <div class="card" id="settings-telemetry">
   <h2>{{ T "settings.telemetry.title" }} {{ helpLink "telemetry" }}</h2>
@@ -2823,6 +2851,7 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
   // distinct pages here, only a disclosure affordance within one fully
   // rendered page.
   var shell = document.getElementById('settings-shell');
+  var T = { toTidy: "{{ T "settings.tills_tree.old_count_sr" }}" };
   var grid = document.getElementById('settings-grid');
   var tree = document.getElementById('settings-tree');
   var noResults = document.getElementById('settings-noresults');
@@ -2876,6 +2905,8 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
         label: (li.textContent || '').replace(/\s+/g, ' ').trim(),
         group: li.getAttribute('data-group') || '',
         cat: li.getAttribute('data-cat') || '',
+        sub: li.getAttribute('data-sub') === '1',
+        badge: li.getAttribute('data-badge') || '',
         tag: li.getAttribute('data-tag') || '',
         home: li.getAttribute('data-home') || ''
       });
@@ -2900,11 +2931,31 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     prevGroup = row.group;
     var li = document.createElement('li');
     li.setAttribute('data-cat', row.cat);
+    // ut-docs#7173: a sub-row (Old entries) is indented under the row above.
+    if (row.sub) li.className = 'settings-tree-sub';
     var a = document.createElement('a');
     a.href = '#' + card.id;
     a.className = 'settings-tree-link';
     a.setAttribute('data-section', card.id);
     a.textContent = row.label;
+    // ut-docs#7173: a count tag (Old entries): the digit is decoration, the
+    // words after it are what a screen reader hears. tills-tree.js keeps it
+    // in step after a removal.
+    if (row.badge) {
+      var tag = document.createElement('span');
+      tag.className = 'tag warn count';
+      tag.setAttribute('data-tree-count', '1');
+      tag.setAttribute('data-n', row.badge);
+      var digit = document.createElement('span');
+      digit.setAttribute('aria-hidden', 'true');
+      digit.textContent = row.badge;
+      var words = document.createElement('span');
+      words.className = 'visually-hidden';
+      words.textContent = ' ' + T.toTidy.replace('%d', row.badge);
+      tag.appendChild(digit);
+      tag.appendChild(words);
+      a.appendChild(tag);
+    }
     li.appendChild(a);
     tree.appendChild(li);
     navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent, cat: row.cat, tag: row.tag, home: row.home });
@@ -2948,6 +2999,9 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     });
     if (!target) return null;
     current = target;
+    // ut-docs#7173: a lazy Tills & devices section loads the first time it is
+    // shown (tills-tree.js listens); nothing is fetched on page load.
+    try { target.card.dispatchEvent(new CustomEvent('ut:section-shown', { bubbles: false })); } catch (e) { /* old webview */ }
     if (opts.select !== false) shell.classList.add('has-selection');
     if (opts.updateHash) {
       // replaceState, not pushState: a section click must not add a
@@ -3083,7 +3137,14 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
     var id = null;
     if (hash) {
       var el = null;
-      try { el = document.getElementById(decodeURIComponent(hash)); } catch (e) { el = null; }
+      // ut-docs#7173: old ids that are no longer an element anywhere (the
+      // Tills hop card, the old Tills > Settings anchors) land on the section
+      // that took their function over.
+      var aliases = { 'settings-tills': 'settings-tills-this', 'account': 'settings-tills-shop', 'network': 'settings-tills-shop',
+                      'kiosk': 'settings-kiosk', 'notices': 'settings-notices' };
+      try { hash = decodeURIComponent(hash); } catch (e) { /* keep as is */ }
+      if (!document.getElementById(hash) && aliases[hash]) hash = aliases[hash];
+      try { el = document.getElementById(hash); } catch (e) { el = null; }
       if (el) {
         var card = el.closest('#settings-grid > .card');
         if (card) {
@@ -3335,6 +3396,11 @@ if (location.hash === '#settings-tills') { location.replace('/tills?tab=this'); 
   }
 })();
 </script>
+{{/* ut-docs#7173: lazy Tills & devices sections, the one Save on This till,
+     "Remove all" for old entries, the tree's count tag; ut-docs#7097: the
+     roster's live cells. */}}
+<script defer src="/public/tills-live.js?v={{ assetv "public/tills-live.js" }}"></script>
+<script defer src="/public/tills-tree.js?v={{ assetv "public/tills-tree.js" }}"></script>
 {{ end }}
 {{/* ut-docs#2981: the note inside a set-lock fieldset (settings_shopwide_lock.go)
      while this additional till cannot reach its main till. */}}

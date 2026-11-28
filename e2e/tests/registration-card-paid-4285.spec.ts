@@ -80,7 +80,7 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
   test('the card is not blanked: registered text and the fleet list load inside it', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
-    await page.goto('/settings#registration');
+    await page.goto('/settings#settings-tills-shop');
     const card = page.locator('#registration');
 
     // Get the till onto a paid plan through the real cloudsync path:
@@ -95,21 +95,18 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
       }
     }
 
-    // The fleet list is rendered only once the cached entitlement allows
-    // cloud sync; reload until the check-in has landed.
-    const fleet = card.locator('div[hx-get="/api/enrol/devices"]');
+    // ut-docs#7173: the "Tills registered to this store" fleet list is gone
+    // (the tills are Other tills / Old entries now), so the card is judged by
+    // its own text: reload until the check-in has landed.
     await expect(async () => {
       await page.reload();
-      await expect(fleet).toHaveCount(1, { timeout: 1000 });
+      await expect(card).toContainText('This till is registered', { timeout: 1000 });
     }).toPass({ timeout: 20_000 });
 
-    // The point of the spec: the fleet list's own load request filled its
-    // div (before the fix it swapped in nothing and the div went empty).
-    await expect(fleet).toContainText('No other tills registered yet.');
-    await expect(card).toContainText('This till is registered');
+    // The point of the spec: the card is not blanked by the renewal re-read.
     await expect(card).toContainText('e2e-store');
     await expect(card.getByText('Cloud sync is off', { exact: false })).toHaveCount(0);
-    await expect(fleet).toBeVisible();
+    await expect(card).toBeVisible();
 
     // The renewal re-read is a sibling, not attributes on the card.
     await expect(card).not.toHaveAttribute('hx-select', /.*/);
@@ -124,10 +121,10 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
   });
 
   // ut-docs#6959: a claimed shop shows the linked state, not the Claim
-  // button, and the Pair form is folded under "Reconnect this till to a shop".
-  test('claimed shop: linked line, no Claim button, Reconnect collapsed (ut-docs#6959)', async ({ page }) => {
+  // button, and the Pair form sits in the visible "Reconnect this till to a shop" block.
+  test('claimed shop: linked line, no Claim button, Reconnect visible (ut-docs#6959, ut-docs#7173)', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/settings#registration');
+    await page.goto('/settings#settings-tills-shop');
     const card = page.locator('#registration');
     await expect(async () => {
       await page.reload();
@@ -135,11 +132,13 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     }).toPass({ timeout: 20_000 });
     await expect(card.getByTestId('store-linked')).toContainText('This store is linked to your Universal Till ID.');
     await expect(card.locator('button[hx-post="/api/enrol/claim-code"]')).toHaveCount(0);
-    const details = card.locator('details#pair-details');
-    await expect(details).not.toHaveAttribute('open', /.*/);
-    await expect(card.locator('#pair-code')).toBeHidden();
-    await details.locator('summary').click();
-    await expect(card.locator('#pair-code')).toBeVisible();
+    // ut-docs#7173: Reconnect is a visible, labelled block (no <details>, no
+    // collapse): the code field is on screen without a click.
+    const reconnect = page.locator('#settings-tills-shop #pair-details');
+    await expect(reconnect).toBeVisible();
+    await expect(page.locator('details#pair-details')).toHaveCount(0);
+    await expect(reconnect.getByRole('heading', { name: /reconnect this till to a shop/i })).toBeVisible();
+    await expect(reconnect.locator('#pair-code')).toBeVisible();
     assertClean();
   });
 });

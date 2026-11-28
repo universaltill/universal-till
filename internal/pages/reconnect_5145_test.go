@@ -119,7 +119,7 @@ func TestChip_LockedOutVariantWords(t *testing.T) {
 func TestSettings_LockoutPanelAndFacts(t *testing.T) {
 	mux, d, _ := newLockedOutTill(t, okRegister("x"))
 	deviceID := enroll.CurrentStatus().DeviceID
-	body := getAs(mux, "/settings", &mgrUser).Body.String()
+	body := getAs(mux, "/settings", &mgrUser).Body.String() + tillsSection(t, mux, d, "this", &mgrUser)
 	fp, _ := tillKeyFingerprint()
 	for _, want := range []string{
 		`data-testid="reconnect-panel"`, "This till is no longer connected to your shop. Selling works as normal.",
@@ -146,7 +146,8 @@ func TestSettings_NoPanelWithoutLockoutAndFactsStillShown(t *testing.T) {
 	if strings.Contains(body, `data-testid="reconnect-panel"`) || strings.Contains(body, `hx-post="/api/enrol/reconnect"`) {
 		t.Fatal("panel shown without a lock-out")
 	}
-	if !strings.Contains(body, `data-testid="register-facts"`) || !strings.Contains(body, enroll.CurrentStatus().DeviceID) {
+	facts := tillsSection(t, mux, d, "this", &mgrUser)
+	if !strings.Contains(facts, `data-testid="register-facts"`) || !strings.Contains(facts, enroll.CurrentStatus().DeviceID) {
 		t.Fatal("a registered till's manager must always see the device ID and fingerprint")
 	}
 	_ = d
@@ -186,7 +187,7 @@ func TestSettings_FactsShownWhenBlocked(t *testing.T) {
 	useTempDataDir(t)
 	mux, _, d := newFullAuthDeps(t)
 	blockUntil(t, d, time.Now().Add(30*time.Hour))
-	body := getAs(mux, "/settings", &mgrUser).Body.String()
+	body := tillsSection(t, mux, d, "this", &mgrUser)
 	if !strings.Contains(body, `data-testid="register-facts"`) || !strings.Contains(body, "Key fingerprint") {
 		t.Fatal("blocked till: facts missing")
 	}

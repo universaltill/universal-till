@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { ensureOperator, watchConsole } from './helpers';
+import { ADMIN_PIN, ensureOperator, watchConsole } from './helpers';
 
 // ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
 // scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
@@ -184,7 +184,7 @@ test.describe('nav rail Lock button stays reachable with an enrolled-till sync c
     // assertion below, so a failed assertion still leaves the server clean
     // for whatever spec runs next — this test's own job is measuring the
     // rail with the chip PRESENT, not leaving it enrolled afterward.
-    const revokeResp = await api.post(`/api/sync/tills/${enrolled.till_id}/revoke`);
+    const revokeResp = await api.post(`/api/sync/tills/${enrolled.till_id}/revoke`, { form: { override_pin: ADMIN_PIN } });
     expect(revokeResp.ok(), `revoke: ${revokeResp.status()} ${await revokeResp.text()}`).toBe(true);
 
     expect(

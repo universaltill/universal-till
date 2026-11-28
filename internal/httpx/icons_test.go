@@ -98,6 +98,11 @@ func TestNoTwoNavDestinationsShareAnIcon(t *testing.T) {
 		if iconHrefs[icon] == nil {
 			iconHrefs[icon] = map[string]bool{}
 		}
+		// ut-docs#7173: the Tills & devices sections are one page (/settings);
+		// the fragment picks the section, it is not another destination.
+		if strings.HasPrefix(href, "/settings#settings-tills") || strings.HasPrefix(href, "/settings?") && strings.Contains(href, "#settings-tills") {
+			href = "/settings#settings-tills"
+		}
 		iconHrefs[icon][href+" ("+source+")"] = true
 	}
 

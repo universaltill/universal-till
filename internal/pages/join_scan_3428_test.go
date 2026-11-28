@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,7 +24,7 @@ import (
 var joinScanIDs = map[string][]string{
 	"/setup": {"setup-join-scan", "setup-join-scan-overlay", "setup-join-scan-video", "setup-join-scan-status",
 		"setup-join-scan-close", "setup-join-scan-type", "setup-join-scanned"},
-	"/tills": {"tills-join-scan", "tills-join-scan-overlay", "tills-join-scan-video", "tills-join-scan-status",
+	"/ui/tills/section/add?need=join": {"tills-join-scan", "tills-join-scan-overlay", "tills-join-scan-video", "tills-join-scan-status",
 		"tills-join-scan-close", "tills-join-scan-type", "tills-join-scanned"},
 }
 
@@ -76,17 +78,27 @@ func assertJoinScanMarkup(t *testing.T, path string) {
 		t.Errorf("%s: scan button must precede input[name=code] (btn=%d code=%d)", path, bi, ci)
 	}
 	// The scanned host goes in via textContent: no hardcoded English, no token slot.
-	if !regexp.MustCompile(`<script[^>]*src="[^"]*qr-scan\.js`).MatchString(body) {
+	// The Tills section is a lazy fragment inside Settings; the scripts come
+	// from the page that hosts it (ut-docs#7173).
+	scripts := body
+	if strings.HasPrefix(path, "/ui/tills/") {
+		b, err := os.ReadFile(filepath.Join("web", "ui", "layouts", "base.html"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		scripts = string(b)
+	}
+	if !regexp.MustCompile(`<script[^>]*src="[^"]*qr-scan\.js`).MatchString(scripts) {
 		t.Errorf("%s: qr-scan.js not loaded", path)
 	}
-	if !regexp.MustCompile(`<script[^>]*src="[^"]*join-scan\.js`).MatchString(body) {
+	if !regexp.MustCompile(`<script[^>]*src="[^"]*join-scan\.js`).MatchString(scripts) {
 		t.Errorf("%s: join-scan.js not loaded", path)
 	}
 }
 
 func TestSetupJoinFormHasScanButton(t *testing.T) { assertJoinScanMarkup(t, "/setup") }
 func TestTillsJoinFormHasScanButton(t *testing.T) {
-	assertJoinScanMarkup(t, "/tills?tab=add&need=join")
+	assertJoinScanMarkup(t, "/ui/tills/section/add?need=join")
 }
 
 func TestJoinScanStringsInEnglishLocale(t *testing.T) {

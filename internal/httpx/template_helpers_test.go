@@ -579,7 +579,7 @@ func TestBaseLayoutPluginUpdateChipOnAJoinedTillPointsAtTheMainTill(t *testing.T
 		t.Fatalf("expected a link to the main till's Plugins page, got %q", chip)
 	}
 	CrossDeviceLinkActionable = func() bool { return false }
-	if chip := chipOf(t); !strings.Contains(chip, `href="/tills"`) {
+	if chip := chipOf(t); !strings.Contains(chip, `href="/settings#settings-tills-others"`) {
 		t.Fatalf("on a kiosk (no way back from another device's UI) expected the local Tills page, got %q", chip)
 	}
 }

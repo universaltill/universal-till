@@ -268,7 +268,7 @@ func TestSetupJoin_RefusesWithoutReplaceConfirmWhenTillHasSales(t *testing.T) {
 
 func getTillsPage(t *testing.T, mux *http.ServeMux) string {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/add?need=join", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

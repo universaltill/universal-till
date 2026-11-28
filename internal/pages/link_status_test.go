@@ -123,7 +123,7 @@ func renderChip(t *testing.T, v linkView) string {
 }
 
 // Each state renders its own words, colour hook and data-link-state; none
-// relies on colour alone, and each is a real link to /tills (no hover on a
+// relies on colour alone, and each is a real link into the Tills & devices tree (no hover on a
 // touchscreen).
 func TestLinkChip_RendersEachState(t *testing.T) {
 	since := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
@@ -134,10 +134,10 @@ func TestLinkChip_RendersEachState(t *testing.T) {
 		avoid []string
 	}{
 		{"linked", linkView{State: linkLinked},
-			[]string{`data-link-state="linked"`, "sb-link is-linked", "Main till linked", `href="/tills"`},
+			[]string{`data-link-state="linked"`, "sb-link is-linked", "Main till linked", `href="/settings#settings-tills-others"`},
 			[]string{"not reachable", "Update waiting"}},
 		{"polling", linkView{State: linkPolling},
-			[]string{`data-link-state="polling"`, "sb-link is-polling", "Main till: polling", `href="/tills"`},
+			[]string{`data-link-state="polling"`, "sb-link is-polling", "Main till: polling", `href="/settings#settings-tills-others"`},
 			[]string{"not reachable", "linked"}},
 		{"unreachable since", linkView{State: linkUnreachable, Since: since},
 			[]string{`data-link-state="unreachable"`, "sb-link is-unreachable", "sb-main-till", "Main till not reachable since", "selling offline"},
@@ -148,17 +148,17 @@ func TestLinkChip_RendersEachState(t *testing.T) {
 			[]string{"plugin updates wait for it"}, nil},
 		// ut-docs#2738: short chip text, the explanation in the hint.
 		{"following the main till", linkView{State: linkLinked, Update: linkUpdateFollowing, Target: "1.4.0"},
-			[]string{`data-link-state="linked"`, "Updating to v1.4.0 soon", "updates itself to match the main till when no sale is open", `href="/tills"`},
+			[]string{`data-link-state="linked"`, "Updating to v1.4.0 soon", "updates itself to match the main till when no sale is open", `href="/settings#settings-tills-others"`},
 			[]string{"Waiting for the main till", "needed", "Update waiting"}},
 		{"polling and following", linkView{State: linkPolling, Update: linkUpdateFollowing, Target: "1.4.0"},
 			[]string{`data-link-state="polling"`, "Main till: polling", "Updating to v1.4.0 soon"}, nil},
 		{"manual update needed", linkView{State: linkLinked, Update: linkUpdateManual, Target: "1.4.0"},
 			[]string{`data-link-state="linked"`, "Update to v1.4.0 needed", "The main till runs v1.4.0. Install it on this till in Settings",
 				`href="/settings#settings-update"`},
-			[]string{"soon", "Update waiting", `href="/tills"`}},
+			[]string{"soon", "Update waiting", `href="/tills`}},
 		// ut-docs#5162: a restored copy has no bearer; a notice, not a modal.
 		{"restored copy: join again", linkView{State: linkRejoin},
-			[]string{`data-link-state="rejoin"`, "Join the main till again", "This till no longer uses its old connection", `href="/tills"`, "is-unreachable"},
+			[]string{`data-link-state="rejoin"`, "Join the main till again", "This till no longer uses its old connection", `href="/settings#settings-tills-shop"`, "is-unreachable"},
 			[]string{"polling", "not reachable", "<dialog"}},
 		{"waiting for the main till to update", linkView{State: linkLinked, Update: linkMainUpdateWaiting},
 			[]string{"Waiting for the main till to update"}, []string{"Update waiting", "soon", "needed"}},
@@ -379,7 +379,7 @@ func TestTillsRoster_ShowsEachPeerLive(t *testing.T) {
 func TestTillsPage_PollsRosterUnlessFocusedAndFormatsBothDates(t *testing.T) {
 	f := newSyncLinkFixture(t)
 	f.enrol(t, "Counter", "token-abc")
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil), auth.User{ID: "u1", Role: "manager"})
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil), auth.User{ID: "u1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	f.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

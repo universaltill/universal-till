@@ -58,5 +58,13 @@
   {
     "text": "Slate",
     "reason": "built-in theme name (themes.go availableThemes: titleCase of the theme key, never a T key) shown in the theme pickers on /my-display and Settings — theme names are product names, identical in every locale; collides only by spelling with catalog.color.slate (ut-docs#3440)"
+  },
+  {
+    "text": "This till",
+    "reason": "settings tree row/heading (settings.tills_tree.this); German comes via Weblate (ADR-0160), no clean base key shares the meaning"
+  },
+  {
+    "text": "Kiosk",
+    "reason": "settings tree row/heading (settings.tills_tree.kiosk); German comes via Weblate (ADR-0160), window_mode_kiosk is a different setting"
   }
 ]

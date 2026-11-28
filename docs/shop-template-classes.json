@@ -18,8 +18,7 @@
       "rarely_needed_cards": [
         "settings-about",
         "settings-invoice",
-        "settings-kiosk-idle-reset",
-        "settings-kiosk-payment-mode",
+        "settings-kiosk",
         "settings-notices"
       ],
       "rarely_needed_keys": [
@@ -37,8 +36,7 @@
       "rarely_needed_cards": [
         "settings-about",
         "settings-invoice",
-        "settings-kiosk-idle-reset",
-        "settings-kiosk-payment-mode",
+        "settings-kiosk",
         "settings-notices"
       ],
       "rarely_needed_keys": [
@@ -57,8 +55,7 @@
         "settings-about",
         "settings-idle-lock",
         "settings-invoice",
-        "settings-kiosk-idle-reset",
-        "settings-kiosk-payment-mode",
+        "settings-kiosk",
         "settings-notices",
         "settings-order-no",
         "settings-order-type-prompt",
@@ -66,7 +63,11 @@
         "settings-sell-screen",
         "settings-staff-languages",
         "settings-staff-links",
-        "settings-tills"
+        "settings-tills-add",
+        "settings-tills-old",
+        "settings-tills-others",
+        "settings-tills-readers",
+        "settings-tills-this"
       ],
       "rarely_needed_keys": [
         "invoice.seller_address",
@@ -96,8 +97,7 @@
       "version": 1,
       "rarely_needed_cards": [
         "settings-about",
-        "settings-kiosk-idle-reset",
-        "settings-kiosk-payment-mode",
+        "settings-kiosk",
         "settings-notices",
         "settings-order-no",
         "settings-order-type-prompt"
@@ -115,8 +115,7 @@
       "version": 1,
       "rarely_needed_cards": [
         "settings-about",
-        "settings-kiosk-idle-reset",
-        "settings-kiosk-payment-mode",
+        "settings-kiosk",
         "settings-notices",
         "settings-order-no",
         "settings-order-type-prompt",

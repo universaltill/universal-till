@@ -14,8 +14,7 @@
     }
   ],
   "settings": {
-    "settings-kiosk-idle-reset": "advanced",
-    "settings-kiosk-payment-mode": "advanced",
+    "settings-kiosk": "advanced",
     "settings-order-no": "advanced",
     "settings-order-type-prompt": "advanced",
     "settings-sell-screen": "advanced",
@@ -30,7 +29,7 @@
     "settings-printer": {
       "group": "layout.salon.settings_group"
     },
-    "settings-tills": {
+    "settings-tills-this": {
       "group": "layout.salon.settings_group"
     }
   },
@@ -95,7 +94,7 @@
         "group": "layout.salon.settings_group"
       },
       {
-        "key": "settings-tills",
+        "key": "settings-tills-this",
         "group": "layout.salon.settings_group"
       }
     ]

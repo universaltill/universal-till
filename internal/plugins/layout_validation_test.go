@@ -264,7 +264,7 @@ const frozenSalonLayoutManifest = `{
         "amendments": [
           { "key": "settings-theme", "order": 50 },
           { "key": "settings-printer", "group": "layout.salon.settings_group" },
-          { "key": "settings-tills", "group": "layout.salon.settings_group" }
+          { "key": "settings-tills-this", "group": "layout.salon.settings_group" }
         ]
       }
     }
@@ -355,8 +355,8 @@ func TestFrozenSalonLayoutManifest_InstallsAndDeclaresItsAmendments(t *testing.T
 	if !ok || printerRow.Slot != uislot.SettingsSlot || printerRow.Group == "" {
 		t.Fatalf("salon layout must re-group the settings-printer row, got %+v", printerRow)
 	}
-	tillsRow, ok := byKey["settings-tills"]
+	tillsRow, ok := byKey["settings-tills-this"]
 	if !ok || tillsRow.Slot != uislot.SettingsSlot || tillsRow.Group != printerRow.Group {
-		t.Fatalf("salon layout must group settings-tills with settings-printer under the SAME group key, got printer=%+v tills=%+v", printerRow, tillsRow)
+		t.Fatalf("salon layout must group settings-tills-this with settings-printer under the SAME group key, got printer=%+v tills=%+v", printerRow, tillsRow)
 	}
 }

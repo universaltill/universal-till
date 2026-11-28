@@ -152,7 +152,7 @@ func TestPendingPairingsUI_EmptyStateWhenNonePending(t *testing.T) {
 	if strings.Contains(body, "<table") {
 		t.Fatalf("expected the empty-state branch (no table) when nothing is pending, got: %s", body)
 	}
-	if !strings.Contains(body, `hx-trigger="every 30s [!utPairingBusy()]`) {
+	if !strings.Contains(body, `hx-trigger="every 30s [!utPairingBusy()`) {
 		t.Fatalf("expected the list to keep polling even when empty, got: %s", body)
 	}
 }
@@ -269,8 +269,8 @@ func TestPairingNoticeUI_RendersCountAndFingerprintWhenPending(t *testing.T) {
 	if !strings.Contains(body, `data-fingerprint="`) || strings.Contains(body, `data-fingerprint=""`) {
 		t.Fatalf("expected a non-empty data-fingerprint, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/tills?tab=add"`) {
-		t.Fatalf("expected a link to /tills?tab=add, got: %s", body)
+	if !strings.Contains(body, `href="/settings#settings-tills-add"`) {
+		t.Fatalf("expected a link to the Add a till section, got: %s", body)
 	}
 }
 

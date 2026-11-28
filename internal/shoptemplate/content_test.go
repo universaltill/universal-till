@@ -113,7 +113,7 @@ const (
 	ess = uislot.ClassEssential
 )
 
-var kioskAdv = map[string]uislot.Class{"settings-kiosk-idle-reset": adv, "settings-kiosk-payment-mode": adv}
+var kioskAdv = map[string]uislot.Class{"settings-kiosk": adv}
 
 func merge(ms ...map[string]uislot.Class) map[string]uislot.Class {
 	out := map[string]uislot.Class{}
@@ -175,7 +175,8 @@ var contentCases = []struct {
 		id: "market_stall",
 		settings: merge(kioskAdv, map[string]uislot.Class{
 			"settings-order-no": adv, "settings-order-type-prompt": adv, "settings-sell-screen": adv,
-			"settings-stock-tracking": ess, "settings-printer": adv, "settings-tills": adv,
+			"settings-stock-tracking": ess, "settings-printer": adv, "settings-tills-this": adv, "settings-tills-others": adv,
+			"settings-tills-old": adv, "settings-tills-add": adv, "settings-tills-readers": adv,
 			"settings-invoice": adv, "settings-idle-lock": adv, "settings-staff-links": adv,
 			"settings-staff-languages": adv, "settings-about": adv, "settings-notices": adv,
 		}),
@@ -314,7 +315,7 @@ var salonLegacy = map[string][]LegacyEntryWant{
 	uislot.SettingsSlot: {
 		{Key: "settings-theme", Order: ip(50)},
 		{Key: "settings-printer", Group: "layout.salon.settings_group"},
-		{Key: "settings-tills", Group: "layout.salon.settings_group"},
+		{Key: "settings-tills-this", Group: "layout.salon.settings_group"},
 	},
 }
 

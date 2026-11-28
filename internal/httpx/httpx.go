@@ -1566,15 +1566,13 @@ var renderFiles = []string{
 	// exact markup, so it's a partial riding along here too.
 	"ui/partials/window_mode_status.html",
 	// ut-docs#2742: same reasoning — GET /ui/tills/roster's 10 s poll and
-	// tills.html's own page render both need this exact roster markup.
+	// the Other tills section's own render both need this exact roster markup.
 	"ui/partials/tills_roster.html",
-	"ui/partials/tills_nav.html",
 	"ui/partials/tills_network_key.html",
 	"ui/partials/tills_tab_add.html",
-	"ui/partials/tills_tab_body.html",
-	"ui/partials/tills_tab_frame.html",
-	"ui/partials/tills_others_list.html", // ut-docs#7098: the Other tills banner + list, included by tills_tab_others.html
-	"ui/partials/tills_tab_others.html",
+	"ui/partials/tills_section_others.html",
+	"ui/partials/tills_section_old.html",
+	"ui/partials/tills_pin_panel.html",
 	"ui/partials/tills_tab_readers.html",
 	"ui/partials/tills_tab_settings.html",
 	"ui/partials/tills_tab_this.html",
@@ -1726,11 +1724,19 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 
 		writePageTitleHeader(w, data)
 		locale := ResolveLocale(w, r)
-		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), withTranslateMode(FuncsFor(locale), r), page))
+		files := append([]string{page}, partialDeps[page]...)
+		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), withTranslateMode(FuncsFor(locale), r), files...))
 		if err := t.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// partialDeps names the partials a standalone-rendered partial includes by
+// {{ template }}: RenderPartial parses only the one file otherwise.
+// ut-docs#7173: the live roster's Revoke uses the inline PIN panel.
+var partialDeps = map[string][]string{
+	"ui/partials/tills_roster.html": {"ui/partials/tills_pin_panel.html"},
 }
 
 // RenderContentFragment renders just the "content" define block of a full

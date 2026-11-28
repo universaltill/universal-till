@@ -21,13 +21,13 @@ import (
 // healChipClock is a var so tests can pin "now" for the waiting date.
 var healChipClock = time.Now
 
-// Where the one button lands. The code field is Settings > Till registration's
-// "Reconnect" block, rendered open by ?reconnect=1 (ux-notes 3.11, option a).
+// Where the one button lands. The code field is Settings > Tills & devices > Shop and sync's
+// "Reconnect this till to a shop" card (ut-docs#7173: always visible).
 const (
-	healHrefCode     = "/settings?reconnect=1#pair-details"
-	healHrefRegister = "/settings#registration"
-	healHrefJoin     = "/tills?tab=add&need=join"
-	healHrefThis     = "/tills?tab=this"
+	healHrefCode     = "/settings#pair-details"
+	healHrefRegister = "/settings#settings-tills-shop"
+	healHrefJoin     = "/settings?need=join#settings-tills-add"
+	healHrefThis     = "/settings#settings-tills-this"
 )
 
 // healView is what the partials render.
@@ -105,18 +105,4 @@ func healNoticeView(r *http.Request, d *common.Deps, locale string) map[string]a
 		out["button"], out["href"] = hv.Button, hv.Href
 	}
 	return out
-}
-
-// healNeedsCode says the state's sentence tells the person to type a code on
-// Settings > Till registration, so that page opens the code field itself
-// (a manager arriving by the menu must not hunt for a folded section).
-func healNeedsCode(st credheal.Status) bool {
-	if !st.ShowsChip() || st.State == credheal.StateHealing || st.State == credheal.StateWaiting {
-		return false
-	}
-	switch st.Reason {
-	case credheal.ReasonReplaced, credheal.ReasonRoleConflict, credheal.ReasonStoreDeleted:
-		return false
-	}
-	return true
 }

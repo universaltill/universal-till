@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,7 +52,10 @@ func parseEnrol(t *testing.T, rec *httptest.ResponseRecorder) enrolOut {
 func revokeTill(t *testing.T, mux *http.ServeMux, id string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil))
+	// one PIN rule for every removal (ut-docs#7098 + #7173): a manager's PIN.
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
 	if rec.Code >= 300 {
 		t.Fatalf("revoke: %d %s", rec.Code, rec.Body.String())
 	}

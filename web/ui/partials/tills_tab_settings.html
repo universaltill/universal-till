@@ -1,10 +1,9 @@
-{{/* Tab "Settings for this page" (ut-docs#7057): what governs the tills as a
-     group. LAN access, the network key, the copy of every sale and the
-     quarantine list moved here; the kiosk, notices and shop-account cards
-     stay in Settings (shop-wide locks and elevation live there) and are
-     linked from here. */}}
-<h2 tabindex="-1" data-tills-heading>{{ T "nav.settings" }}</h2>
-<section id="network" aria-labelledby="tills-set-network">
+{{/* Section "Sync and network" of Shop and sync (ut-docs#7057, ut-docs#7173):
+     what governs the tills as a group. LAN access, the network key, the copy
+     of every sale and the quarantine list. The old link list to the kiosk,
+     notices and shop-account cards is gone: the tree is the list. #network
+     stays as the anchor of this block. */}}
+<section id="network" aria-labelledby="tills-set-network" data-ut-refresh-url="/ui/tills/section/sync">
   <h3 id="tills-set-network">{{ T "tills.settings.network" }}</h3>
   {{/* ut-docs#6955: who on the network may reach this till (managers only; the fragment 403s otherwise). */}}
   <div class="card"><div hx-get="/ui/settings/lan-access" hx-trigger="load" hx-swap="innerHTML"></div></div>
@@ -32,14 +31,4 @@
     </form>
   </div>
   {{ end }}
-</section>
-<section aria-labelledby="tills-set-more">
-  <h3 id="tills-set-more">{{ T "tills.settings.more" }}</h3>
-  <ul class="tills-links">
-    <li id="kiosk"><a class="btn secondary" href="/settings#settings-kiosk-idle-reset">{{ T "tills.settings.kiosk_idle" }}</a>
-        <a class="btn secondary" href="/settings#settings-kiosk-payment-mode">{{ T "tills.settings.kiosk_payment" }}</a></li>
-    <li id="notices"><a class="btn secondary" href="/settings#settings-notices">{{ T "tills.settings.notices" }}</a></li>
-    <li id="account"><a class="btn secondary" href="/settings#registration">{{ T "tills.settings.registration" }}</a>
-        <a class="btn secondary" href="/settings#subscription">{{ T "tills.settings.subscription" }}</a></li>
-  </ul>
 </section>

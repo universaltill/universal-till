@@ -14,8 +14,7 @@
     }
   ],
   "settings": {
-    "settings-kiosk-idle-reset": "advanced",
-    "settings-kiosk-payment-mode": "advanced",
+    "settings-kiosk": "advanced",
     "settings-order-no": "advanced",
     "settings-order-type-prompt": "advanced",
     "settings-about": "advanced",

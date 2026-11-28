@@ -567,11 +567,11 @@ func TestJoinForms_HaveAddressField(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newSyncAPITestDeps(t)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/tills/section/add?need=join", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /tills: %d %s", rec.Code, rec.Body.String())
 	}
-	assertJoinFormFields(t, "/tills?tab=add&need=join", rec.Body.String())
+	assertJoinFormFields(t, "/ui/tills/section/add?need=join", rec.Body.String())
 
 	withOSLocale(t, "", "")
 	smux, _, _ := newFullAuthDeps(t)

@@ -71,15 +71,18 @@ func TestSyncManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 	registerPendingPairingsUI(mux, dp)
 	registerDiscoveryAPI(mux, dp)
 	registerPairingJoinAPI(mux, dp)
+	registerTillsTabs(mux, dp)
 
 	cases := []struct {
 		name, method, path string
 		denyCode           int    // the gate's own refusal status; StatusForbidden unless noted
 		body               string // request body (form-encoded); "" = none
 	}{
-		{name: "tills page", method: http.MethodGet, path: "/tills", denyCode: http.StatusSeeOther}, // deny = redirect, not 403
+		{name: "tills section", method: http.MethodGet, path: "/ui/tills/section/others", denyCode: http.StatusForbidden},
 		{name: "enroll-token", method: http.MethodPost, path: "/api/sync/enroll-token", denyCode: http.StatusForbidden},
-		{name: "tills revoke", method: http.MethodPost, path: "/api/sync/tills/some-till/revoke", denyCode: http.StatusForbidden},
+		// "tills revoke" is not a role gate any more: it takes a manager PIN
+		// whoever is signed in (authorizeTillRemoval, ut-docs#7098 + #7173),
+		// tested in tills_remove_pin_test.go and tills_old_entries_test.go.
 		// ut-docs#557 review Fix 4: /api/sync/promote now validates its body
 		// (confirm=="PROMOTE", and that this till IS actually a replica)
 		// BEFORE ever checking elevation — so, unlike the other cases here,

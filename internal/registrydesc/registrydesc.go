@@ -80,6 +80,9 @@ var regionCard = map[string]string{
 	"receipt-designer": "settings-printer",
 	// The cashier tip form is a fieldset inside the Payments card (ut-docs#7107).
 	"settings-payments-tips": "settings-payments",
+	// ut-docs#7173: the two kiosk groups are anchors inside the one Kiosk card.
+	"settings-kiosk-idle-reset":   "settings-kiosk",
+	"settings-kiosk-payment-mode": "settings-kiosk",
 }
 
 // CardForRegion returns the Settings card id a registry region belongs to:

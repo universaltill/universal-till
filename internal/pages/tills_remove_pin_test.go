@@ -68,12 +68,22 @@ func TestRemoveOldEntryNeedsManagerPINForACashier(t *testing.T) {
 	}
 }
 
-// A manager session needs no PIN; a cashier's PIN of a non-manager never works.
-func TestRemoveOldEntryManagerSessionNeedsNoPIN(t *testing.T) {
+// One PIN rule for every removal (ut-docs#7098 + #7173, owner 2026-11-27): a
+// signed-in manager types a manager PIN too; a session alone removes nothing.
+func TestRemoveOldEntryManagerSessionStillNeedsAPIN(t *testing.T) {
 	mux, dp, ph := removalDeps(t)
-	rec := postRemoval(mux, manager3134, "/api/sync/tills/"+ph.TillID+"/revoke", nil)
+	path := "/api/sync/tills/" + ph.TillID + "/revoke"
+	rec := postRemoval(mux, manager3134, path, nil)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Enter a manager PIN") {
+		t.Fatalf("manager session, no PIN: %d %q", rec.Code, rec.Body.String())
+	}
+	if n := rowCount(t, dp, `SELECT COUNT(*) FROM tills`); n != 1 {
+		t.Fatal("a removal without a PIN removed the till")
+	}
+	// override_pin (the inline panel) and manager_pin (older callers) are the same PIN.
+	rec = postRemoval(mux, manager3134, path, url.Values{"override_pin": {perm3134MgrPIN}})
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("manager session: %d %q", rec.Code, rec.Body.String())
+		t.Fatalf("manager session + PIN: %d %q", rec.Code, rec.Body.String())
 	}
 	if n := rowCount(t, dp, `SELECT COUNT(*) FROM tills`); n != 0 {
 		t.Fatal("till not removed")

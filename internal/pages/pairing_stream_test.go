@@ -280,7 +280,8 @@ func TestPendingPairingsFragment_TriggersGuardedPollAndPush(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := string(raw)
-	want := `hx-trigger="every 30s [!utPairingBusy()], tills-changed[!utPairingBusy()] from:body"`
+	// ut-docs#7173: the poll also pauses while its section is hidden in Settings.
+	want := `hx-trigger="every 30s [!utPairingBusy() && !document.querySelector('.settings-section-hidden #pending-pairings')], tills-changed[!utPairingBusy()] from:body"`
 	if !strings.Contains(b, want) {
 		t.Fatalf("pending_pairings.html missing guarded triggers %s", want)
 	}

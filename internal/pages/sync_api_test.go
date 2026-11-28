@@ -105,9 +105,12 @@ func newSyncAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db), // the revoke route checks a manager PIN (ut-docs#7173 review)
 	}
+	seedDataAPIManager(t, db)
 	mux := http.NewServeMux()
 	registerSyncAPI(mux, dp)
+	registerTillsTabs(mux, dp) // ut-docs#7173: the sections the old /tills page rendered
 	return mux, dp
 }
 
@@ -126,7 +129,7 @@ func TestTillsPage_RendersLocaleFormattedTimestamps(t *testing.T) {
 		t.Fatalf("seed till: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others&lang=de-DE", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others?lang=de-DE", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -263,7 +266,8 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 
 	// Revoking removes it — the same bearer stops working.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+enrollResp.Data.TillID+"/revoke", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+enrollResp.Data.TillID+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 revoking, got %d: %s", rec.Code, rec.Body.String())
@@ -1021,10 +1025,16 @@ func TestSyncJoin_ErrorsAreLocalized(t *testing.T) {
 func TestTillsPage_RequiresManager(t *testing.T) {
 	mux, _ := newSyncAPITestDeps(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil)
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("expected a redirect for a non-manager, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected a 403 for a non-manager on the section fragment, got %d", rec.Code)
+	}
+	// The old page URL sends a non-manager to Settings, as it always did.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tills", nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings" {
+		t.Fatalf("GET /tills for a non-manager = %d -> %q, want 303 /settings", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
@@ -1038,7 +1048,7 @@ func TestTillsPage_ListsEnrolledTills(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1059,7 +1069,7 @@ func TestTillsPage_ShowsPrimaryTillWhenThisDeviceIsThePrimary(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1086,7 +1096,7 @@ func TestTillsPage_ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica(t *test
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -1126,7 +1136,7 @@ func TestTillsPage_TagsThisTillWithinSyncedRosterOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=others", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/others", nil)
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 	if !strings.Contains(body, "Back Counter") || !strings.Contains(body, "Till 3") {
@@ -1158,7 +1168,7 @@ func TestTillsPage_HidesRevokeButtonOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/add?need=join", nil)
 	mux.ServeHTTP(rec, req)
 	if strings.Contains(rec.Body.String(), "/revoke") {
 		t.Fatalf("a replica must not offer a revoke action: %s", rec.Body.String())
@@ -1209,7 +1219,7 @@ func TestTillsPage_HidesAddTillCardOnAReplica(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/add?need=join", nil)
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 	if strings.Contains(body, "/api/sync/enroll-token") {
@@ -1399,7 +1409,7 @@ func TestTillsPage_ListFailureIsLocalized(t *testing.T) {
 		t.Fatalf("drop tills: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/tills?tab=add&need=join", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/section/add?need=join", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -1742,7 +1752,8 @@ func TestRevokeTill_DeleteFailureIsLocalized(t *testing.T) {
 		t.Fatalf("drop tills: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {

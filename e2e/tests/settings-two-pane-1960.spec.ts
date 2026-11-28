@@ -68,7 +68,7 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
     await expect(page.locator('#settings-display')).toBeVisible();
     await expect(page.locator('#registration')).toBeHidden();
     await expect(page.locator('#settings-tree a[data-section="settings-display"]')).toHaveAttribute('aria-current', 'page');
-    await expect(page.locator('#settings-tree a[data-section="registration"]')).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('#settings-tree a[data-section="settings-tills-shop"]')).not.toHaveAttribute('aria-current', 'page');
     // replaceState keeps the URL shareable without a reload.
     await expect(page).toHaveURL(/\/settings#settings-display$/);
     expect(await page.evaluate(() => (window as any).__ut1960), 'no full page navigation happened').toBe('alive');
@@ -83,10 +83,13 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
     // Arrive from a different page so the hash is a real inbound link.
     await page.goto('/settings#settings-printer');
     await expect(page.locator('#settings-printer')).toBeVisible();
+    // ut-docs#7173: #registration is an anchor inside Shop and sync now; the
+    // old id still lands on that section.
     await page.goto('/settings#registration');
     await expect(page.locator('#registration')).toBeVisible();
+    await expect(page.locator('#settings-tills-shop')).toBeVisible();
     await expect(page.locator('#settings-printer')).toBeHidden();
-    await expect(page.locator('#settings-tree a[data-section="registration"]')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('#settings-tree a[data-section="settings-tills-shop"]')).toHaveAttribute('aria-current', 'page');
     assertClean();
   });
 

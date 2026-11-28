@@ -464,7 +464,7 @@ func TestStoreChannel_NoticesNavRowHidden(t *testing.T) {
 	for _, c := range allChannels {
 		withChannel(t, c)
 		has := false
-		for _, r := range filterSettingsNavForRender(settingsNavPlain("en", nil), true, true, true, true, true) {
+		for _, r := range filterSettingsNavForRender(settingsNavPlain("en", nil), true, true, true, true, true, true) {
 			has = has || r.Key == "settings-notices"
 		}
 		if want := c.AccountLinkOutAllowed(); has != want {

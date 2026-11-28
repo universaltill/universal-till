@@ -103,8 +103,11 @@ func TestSettingsEveryCardHasAStableID(t *testing.T) {
 			seen[m[1]] = true
 		}
 		// The two inbound deep-link targets that exist today.
-		if !seen["registration"] {
-			t.Errorf("%s: the registration card lost id=\"registration\" — base.html links to /settings#registration", name)
+		// ut-docs#7173: the old registration card is the Shop and sync card;
+		// #registration lives on as an anchor inside it (checked by the tree
+		// tests), the card id is the tree's.
+		if !seen["settings-tills-shop"] {
+			t.Errorf("%s: the Shop and sync card lost id=\"settings-tills-shop\" — base.html and the heal chip link to /settings#settings-tills-shop", name)
 		}
 		if !seen["settings-update"] {
 			t.Errorf("%s: the Software update card has no id=\"settings-update\" — the #android-update nested anchor needs a section to resolve to", name)

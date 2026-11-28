@@ -4539,7 +4539,9 @@ window.utTabBarFade = function (el) {
 // so a "✓ Saved" confirmation survives the swap. Anything unexpected (no
 // host, a non-2xx such as an expired session, the region missing from the
 // response, a network error) falls back to the old full reload — never
-// worse than before.
+// worse than before. A host inside a lazy fragment carries
+// data-ut-refresh-url (the fragment's own URL) so the fresh copy comes from
+// the fragment, not from the whole page.
 (function () {
   var UT = window.UT = window.UT || {};
   // ut-docs#2788: name the fallback in the till log (UT.reload lives in
@@ -4566,7 +4568,11 @@ window.utTabBarFade = function (el) {
         : (el.getAttribute && el.getAttribute('hx-target') ? document.querySelector(el.getAttribute('hx-target')) : null);
     } catch (e) { msg = null; }
     if (msg && msg.id && cur.contains(msg) && msg.innerHTML.trim()) keep[msg.id] = msg.innerHTML;
-    return fetch(window.location.pathname + window.location.search, { credentials: 'same-origin', cache: 'no-store' })
+    // ut-docs#7173: a region inside a lazy Settings fragment names the URL that
+    // renders it (data-ut-refresh-url); a page-level region has none and
+    // re-fetches the current page, as before.
+    var refreshURL = host.getAttribute('data-ut-refresh-url') || (window.location.pathname + window.location.search);
+    return fetch(refreshURL, { credentials: 'same-origin', cache: 'no-store' })
       .then(function (r) {
         if (!r.ok) throw new Error('status ' + r.status);
         return r.text();
