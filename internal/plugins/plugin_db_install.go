@@ -53,6 +53,7 @@ func migrateDataWith(ctx context.Context, mgr *plugindb.Manager, m *Manifest, co
 	up, err := mgr.MigrateForInstall(ctx, m.ID, fromVersion, m.Version, plugindb.Options{
 		QuotaBytes: int64(m.EffectiveLimits(runtime.GOOS).StorageMB) << 20,
 		Migrations: migs,
+		KeepYears:  retentionYears(m),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("plugin %s: database migration failed, previous version kept: %w", m.ID, err)
@@ -117,4 +118,12 @@ func requireDigestCoveredMigrations(m *Manifest, covered bool) error {
 		return errMigrationsNotCovered
 	}
 	return nil
+}
+
+// retentionYears is the manifest's retention.keep_years, 0 when none.
+func retentionYears(m *Manifest) int {
+	if m == nil || m.Retention == nil {
+		return 0
+	}
+	return m.Retention.KeepYears
 }
