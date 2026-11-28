@@ -248,6 +248,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/store/delete-download":         true,
 	"POST /api/plugins/store/download":                true,
 	"POST /api/plugins/store/install":                 true,
+	"GET /api/plugins/{id}/data/status":               true, // ut-docs#3157: removed-data info; a demo till has none
+	"POST /api/plugins/{id}/data/delete":              true, // ut-docs#3157: hard delete of removed plugin data
 	"POST /api/plugins/{id}/disable":                  true,
 	"POST /api/plugins/{id}/enable":                   true,
 	"POST /api/plugins/{id}/rollback":                 true,
@@ -406,6 +408,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/join":                       true,
 	"POST /api/sync/no-sales":                   true, // ut-docs#3562: replica no-sale journal
 	"POST /api/sync/cleared-baskets":            true, // ut-docs#4711: replica cleared-basket journal
+	"POST /api/sync/plugin-records":             true, // ut-docs#3697: replica plugin-records push
 	"POST /api/sync/orders/{receipt_no}/status": true,
 	"POST /api/sync/pair-request":               true,
 	"POST /api/sync/pair-requests/{id}/approve": true,
@@ -535,6 +538,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/diag/reload-reason": true,
 	// Raw settings key/value editor: takes any key, URL/host settings included.
 	"POST /api/settings/upsert": true,
+	// ut-docs#7098: a demo till has no shop list and keeps its registers.
+	"POST /api/sync/tills/cloud-remove": true,
+	"POST /registers/auto-retire":       true,
 }
 
 // demoAllowedRoutes are the only routes a demo till serves (ADR-0113 §1.4).

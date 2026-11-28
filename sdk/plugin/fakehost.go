@@ -53,6 +53,18 @@ type FakeHost struct {
 	// permission or outside a bound payment dispatch.
 	PaymentCall func(provider, op string, body json.RawMessage) (json.RawMessage, error)
 	TapToPay    func(body json.RawMessage) (json.RawMessage, error)
+	// DBExec and DBQuery stand in for the plugin's own SQLite database
+	// (db_exec / db_query; the fake has no SQL engine). They receive one
+	// statement that already passed the host's refusals (single statement,
+	// no ATTACH/PRAGMA/VACUUM/transaction control, args decoded to nil,
+	// bool, string, int64, float64 or []byte) and return the changed rows or
+	// the JSON rows array. nil → ErrDenied, as without "db:own". A
+	// DBQuery result over 1 MiB is ErrInvalid, as on the till. See fakedb.go.
+	DBExec  func(sql string, args []any) (int64, error)
+	DBQuery func(sql string, args []any) ([]byte, error)
+	// ImportDBQuery answers db_query_h on a db_open_import handle: file is
+	// the ImportFiles entry the handle was opened from. nil → ErrDenied.
+	ImportDBQuery func(file []byte, sql string, args []any) ([]byte, error)
 	// Propose answers action_propose with a proposal id (nil: ErrDenied).
 	Propose func(name string, args json.RawMessage) (string, error)
 
@@ -69,6 +81,18 @@ type FakeHost struct {
 	DeviceID       string
 	DeviceIPs      []string
 	DeviceTimezone string
+
+	// Plugin-records channel (ut-docs#3697). RecordCollections and
+	// SnapshotCollections are the manifest's records_forward lists (empty =
+	// every call is ErrDenied, as for a plugin that declares none); Replica
+	// is this till's role. Outbox is what records_forward queued, in order
+	// (a test may edit Status/Reason to play a main till's answer);
+	// Snapshots is the stored snapshot values.
+	RecordCollections   []string
+	SnapshotCollections []string
+	Replica             bool
+	Outbox              []FakeRecord
+	Snapshots           map[string][]byte
 
 	// InJob makes job_progress succeed (it is ErrNotFound outside a job).
 	InJob bool
@@ -90,7 +114,13 @@ type FakeHost struct {
 	// Calls counts host calls by function name.
 	Calls map[string]int
 
-	next      int32
+	next    int32
+	dbErr   string
+	dbCache struct {
+		key string
+		out []byte
+	}
+	dbImports map[int32]int32
 	httpCache struct{ req, resp []byte }
 	streams   map[int32]*fakeStream
 	tcp       map[int32]io.ReadWriteCloser
@@ -142,7 +172,7 @@ func NewFakeHost() *FakeHost {
 		Storage: map[string][]byte{}, Settings: map[string]string{}, Secrets: map[string]string{},
 		PluginID: "com.example.plugin",
 		Blobs:    map[string][]byte{}, Uploads: map[string][]byte{}, ImportFiles: map[int32][]byte{},
-		ItemImages: map[string]ItemImageFiles{}, images: map[int32]*bytes.Reader{},
+		ItemImages: map[string]ItemImageFiles{}, Snapshots: map[string][]byte{}, images: map[int32]*bytes.Reader{},
 		SecretSettings: map[string]bool{}, Deny: map[string]bool{}, Calls: map[string]int{},
 		streams: map[int32]*fakeStream{}, tcp: map[int32]io.ReadWriteCloser{},
 		uploads: map[int32]*fakeUpload{}, importPos: map[int32]int{},

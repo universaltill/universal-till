@@ -139,7 +139,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// persisted per-till (see the rederiveSettings comment further down).
 	// Moving this call after the UIScale resolution would silently start
 	// persisting UT_UI_SCALE as if a manager had set it.
-	if err := common.SaveState(ctx, setStore, state); err != nil {
+	if err := common.SaveBootState(ctx, setStore, state); err != nil {
 		log.Errorf("persist default settings: %v", err)
 	}
 
@@ -418,6 +418,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// amendments for the shop's type (a plugin reload already does).
 	// Never without the templates: a failed template load must not also take
 	// the salon layout away from a service shop (nothing would replay it).
+	// A till that joined a main till after setup seeds its own per-till
+	// template keys (theme); the wizard never ran on it (ut-docs#6347).
+	seedJoinedTillTemplate(ctx, dp)
 	if shopTemplates != nil && removeRetiredLayoutPlugins(ctx, db, dp.Settings) {
 		if err := dp.ReloadPlugins(ctx); err != nil {
 			log.Warnf("boot: could not reload plugins after removing the retired layout plugin: %v", err)
@@ -555,6 +558,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSalesMirrorStatus(mux, dp)  // ut-docs#5074: this till's copy status (manager)
 	registerSalesMirrorUI(mux, dp)      // ut-docs#5074 M5: the Tills page's sales-copy card
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
+	registerSyncPluginRecords(mux, dp)  // ut-docs#3697: replica plugin records (plugin-records channel)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
 	registerSyncOrders(mux, dp)         // cross-till orders board, primary side (ut-docs#1350)
 	registerSyncTables(mux, dp)         // cross-till table occupancy, read-only, primary side (ut-docs#1392)

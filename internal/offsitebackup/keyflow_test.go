@@ -796,3 +796,38 @@ func (e *tillEnv) linkRestorer() *Restorer {
 		Choice:   func() string { return e.get(data.OffsiteKeyInCloudKey) },
 		OnLinked: func() { e.up.resume(context.Background()) }}
 }
+
+// ut-docs#7200: the card must say whether the cloud holds a copy, so the
+// "only on this till" claim is never made while a copy exists. The till
+// records what the cloud reported (and what it sent) in copy_held.
+func TestCopyHeldFollowsTheCloudAndSurvivesAnOffChoice(t *testing.T) {
+	e := newTillChoice(t, data.OffsiteKeyInCloudOff)
+	e.snapshot()
+	e.round(false)
+	if got := e.get(data.OffsiteCopyHeldKey); got != "" {
+		t.Fatalf("off from the start: copy_held = %q, want none", got)
+	}
+	ctx := context.Background()
+	_ = e.set.Set(ctx, data.OffsiteKeyInCloudKey, data.OffsiteKeyInCloudOn)
+	if err := e.up.ApplyKeyChoice(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.get(data.OffsiteCopyHeldKey); got != "1" {
+		t.Fatalf("after On: copy_held = %q, want 1", got)
+	}
+	_ = e.set.Set(ctx, data.OffsiteKeyInCloudKey, data.OffsiteKeyInCloudOff)
+	if err := e.up.ApplyKeyChoice(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.get(data.OffsiteCopyHeldKey); got != "1" {
+		t.Fatalf("after On then Off the cloud still holds it: copy_held = %q, want 1", got)
+	}
+	// The owner deletes it on my.: the next report clears the flag.
+	e.cloud.keyDEK = nil
+	if err := e.up.ApplyKeyChoice(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.get(data.OffsiteCopyHeldKey); got != "" {
+		t.Fatalf("owner deleted the copy: copy_held = %q, want none", got)
+	}
+}

@@ -41,7 +41,10 @@ func JobCaps(goos string) (perPlugin, global int) {
 // asks (ui.view.ask / ui.action.ask, ut-docs#3160): ADR-0121 §2 says
 // "ui.* calls ... never take a reserved slot".
 func isSalePathEvent(eventType string) bool {
-	if strings.HasPrefix(eventType, "ui.") || isExportClassEvent(eventType) || isImportClassEvent(eventType) {
+	// plugin.records.received.ask (ut-docs#3697) is a record delivery from
+	// the replica sync loop, never part of a sale: it must not take the
+	// reserved slot a tax.rate.ask needs.
+	if strings.HasPrefix(eventType, "ui.") || eventType == RecordsReceivedEvent || isExportClassEvent(eventType) || isImportClassEvent(eventType) {
 		return false
 	}
 	return strings.HasSuffix(eventType, ".ask") ||

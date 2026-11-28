@@ -2,6 +2,8 @@ package pages
 
 import (
 	"errors"
+	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/registeraudit"
 )
 
 // registerView adds the resolved location display name to data.RegisterAdmin
@@ -29,6 +32,16 @@ type registerView struct {
 	// templates can't usefully compare a *string against a string.
 	LocationValue string
 	InUse         bool
+	// Ghost is the register's till and audit verdict (ut-docs#7098).
+	Ghost registerGhost
+	// CanRetire: a Retire button is offered (primary till, active, not this
+	// till's own register, not the last active one). The server still
+	// enforces every guard.
+	CanRetire bool
+	// IsPrimary: this is the main till (the only one that may change registers).
+	IsPrimary bool
+	// RetireHighlight: its till is gone or replaced and retiring is safe.
+	RetireHighlight bool
 }
 
 // redirectRegisters/renderRegistersDialogError mirror
@@ -132,10 +145,34 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#4022: active registers first, inactive ones grouped
 		// under them (leftovers from retired or unpaired tills), each group
 		// keeping ListRegistersForAdmin's name order.
+		// ut-docs#7098: the sweep first (default off, throttled, primary only),
+		// then the verdicts, so a row retired just now already shows retired.
+		primary := d.SyncPrimaryURL(r.Context()) == ""
+		if primary && autoRetireSettings(r.Context(), d) {
+			rows, cloudOK := mergedTillRows(r.Context(), d, true)
+			maybeAutoRetireRegisters(r.Context(), d, rows, cloudOK)
+			regs, err = posRepo.ListRegistersForAdmin(r.Context())
+			if err != nil {
+				httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+				return
+			}
+		}
+		tillRows, _ := mergedTillRows(r.Context(), d, false)
+		verdicts, auditRows, verr := registerVerdicts(r.Context(), d, tillRows, time.Now(), 0)
+		if verr != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", verr)
+			return
+		}
 		views := make([]registerView, 0, len(regs))
 		inactiveViews := make([]registerView, 0)
 		for _, reg := range regs {
-			v := registerView{RegisterAdmin: reg, LocationOptions: locs}
+			v := registerView{RegisterAdmin: reg, LocationOptions: locs, IsPrimary: primary}
+			if res, ok := verdicts[reg.ID]; ok {
+				v.Ghost = registerGhostFor(res, auditRows[reg.ID])
+				v.CanRetire = primary && reg.IsActive && res.State != registeraudit.StateSelf &&
+					!(res.State != registeraudit.StateRetired && activeTotal(verdicts) <= 1)
+				v.RetireHighlight = v.CanRetire && res.RetireSafe
+			}
 			if reg.LocationID != nil {
 				v.LocationName = locNames[*reg.LocationID]
 				v.LocationValue = *reg.LocationID
@@ -165,6 +202,11 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			"inactive":       inactiveViews,
 			"stockLocations": locs,
 			"errKey":         errKey,
+			"isPrimary":      primary,
+			// ut-docs#7098: the optional auto-retire control and its one-time notice.
+			"autoRetire":     autoRetireSettings(r.Context(), d),
+			"autoRetireDays": autoRetireDays(r.Context(), d),
+			"autoRetireNote": takeAutoRetireNotice(r.Context(), d),
 		}
 		// ut-docs#2116: /registers is one of the /admin tree's six
 		// destinations -- an htmx request from that panel (NOT a stale
@@ -272,31 +314,74 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		id := r.PathValue("id")
 		_ = r.ParseForm()
 		activate := r.PostFormValue("active") == "1"
-		if !activate {
-			// A shop must always have somewhere to open a shift/take a sale --
-			// mirrors the last-active-location guard in locations_page.go.
-			// Deliberately NOT gated on RegisterInUse: a register with
-			// shift/sale history should still be deactivatable (retiring a
-			// till keeps its history).
-			activeCount, err := posRepo.CountActiveRegisters(r.Context())
-			if err != nil {
-				http.Error(w, "failed to check active registers", http.StatusInternalServerError)
+		if activate {
+			// ut-docs#7098: also clears the retired history, so the link table
+			// never calls an active register retired.
+			if err := posRepo.ReactivateRegister(r.Context(), id, actor.ID); err != nil {
+				renderRegistersDialogError(w, r, "registers.error.update")
 				return
 			}
-			if activeCount <= 1 {
-				renderRegistersDialogError(w, r, "registers.error.last_active")
-				return
-			}
+			audit(r, actor.ID, id, "register_activate")
+			redirectRegisters(w, r, "/registers")
+			return
 		}
-		if err := posRepo.SetRegisterActive(r.Context(), id, activate); err != nil {
+		// Retire: the one guarded path (ut-docs#7098). A register with shift/sale
+		// history is still retired (history stays); the repo refuses the shop's
+		// own register, the last active one, an open shift and unsent sales.
+		// The row's Retire button posts reason=manual and gets its errors on
+		// the page (/registers?err=); the edit dialog's Deactivate keeps its
+		// in-dialog message.
+		fromRow := r.PostFormValue("reason") != ""
+		fail := func(key string) {
+			if fromRow {
+				redirectRegisters(w, r, "/registers?err="+key)
+				return
+			}
+			renderRegistersDialogError(w, r, key)
+		}
+		if _, err := posRepo.RetireRegister(r.Context(), id, data.RetiredManual, "", data.RetireOpts{ActorID: actor.ID}); err != nil {
+			switch {
+			case errors.Is(err, data.ErrRetireSelf):
+				fail("registers.error.retire_self")
+			case errors.Is(err, data.ErrRetireLast):
+				if fromRow {
+					fail("registers.error.retire_last")
+				} else {
+					fail("registers.error.last_active")
+				}
+			case errors.Is(err, data.ErrRetireOpenShift):
+				fail("registers.error.retire_open_shift")
+			case errors.Is(err, data.ErrRetireUnsent):
+				fail("registers.error.retire_unsent")
+			default:
+				fail("registers.error.update")
+			}
+			return
+		}
+		redirectRegisters(w, r, "/registers")
+	})
+
+	// ut-docs#7098: the auto-retire switch (default off). Manager, primary only.
+	mux.HandleFunc("POST /registers/auto-retire", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := requireManager(w, r)
+		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		on := r.PostFormValue("enabled") == "1"
+		v := "0"
+		if on {
+			v = "1"
+		}
+		if err := d.Settings.Set(r.Context(), settingAutoRetireEnabled, v); err != nil {
 			renderRegistersDialogError(w, r, "registers.error.update")
 			return
 		}
-		action := "register_deactivate"
-		if activate {
-			action = "register_activate"
-		}
-		audit(r, actor.ID, id, action)
-		redirectRegisters(w, r, "/registers")
+		audit(r, actor.ID, "auto_retire", "register_auto_retire_"+map[bool]string{true: "on", false: "off"}[on])
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<span class="muted" role="status">%s</span>`, html.EscapeString(httpx.T(httpx.RequestLocale(r), "registers.auto_retire.saved")))
 	})
 }

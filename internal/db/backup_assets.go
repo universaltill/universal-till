@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -49,6 +50,12 @@ func SnapshotWithAssets(db *sql.DB, dbPath, assetsRoot string) (string, error) {
 	}
 	if err := embedBackupAssets(dest, assetsRoot); err != nil {
 		return dest, fmt.Errorf("add photos to backup: %w", err)
+	}
+	// Plugin databases and blobs (ut-docs#3157), under <data>/plugin-data.
+	pctx, cancel := context.WithTimeout(context.Background(), pluginDataBackupDeadline)
+	defer cancel()
+	if err := EmbedBackupPluginData(pctx, dest, pluginDataRootFor(assetsRoot)); err != nil {
+		return dest, fmt.Errorf("add plugin data to backup: %w", err)
 	}
 	return dest, nil
 }

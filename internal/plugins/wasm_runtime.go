@@ -324,6 +324,13 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	if w == nil {
 		return
 	}
+	// Plugin databases: idle ones are closed, stale pre-upgrade copies and
+	// crash leftovers swept (ut-docs#3157). Never on the sale path.
+	dm := DataManager()
+	dm.CloseIdle(60 * time.Second)
+	if err := dm.SweepPreUpgrade(30*24*time.Hour, 2); err != nil {
+		logging.L().Warnf("wasm sync: sweep pre-upgrade copies: %v", err)
+	}
 	repo := data.NewPluginRepo(db)
 	rows, err := repo.ListInstalledPlugins(ctx)
 	if err != nil {
@@ -377,6 +384,8 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			importFiles.CloseAll(id)
 			// ... nor a plugin view upload (ut-docs#3793).
 			uploads.CloseAll(id)
+			// ... nor an open plugin database (ut-docs#3157).
+			closePluginData(id)
 		}
 	}
 	for id := range active {
@@ -707,6 +716,7 @@ func (w *WasmRuntime) Close(ctx context.Context) {
 	if db != nil {
 		SharedBus(db).ResetSubscribers() // closes every open channel — drainers exit
 	}
+	closeAllPluginData()
 
 	done := make(chan struct{})
 	go func() {
@@ -772,6 +782,9 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 		// Staged plugin view uploads belong to the old module's asks and
 		// jobs too (ut-docs#3793).
 		uploads.CloseAll(pluginID)
+		// The plugin's database handle is dropped too; the next call
+		// reopens the file (ut-docs#3157).
+		closePluginData(pluginID)
 	}
 	w.modules[pluginID] = compiled
 	w.versions[pluginID] = version
@@ -909,6 +922,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	defer hs.blobs.closeAll()
 	// And item image handles (ADR-0121 R1).
 	defer hs.itemImages.closeAll()
+	// Import databases never outlive the event; a live store that was used
+	// gets a PASSIVE checkpoint so the WAL stays small (ut-docs#3157).
+	defer hs.dbev.finish(pluginID)
 	// event_publish delivery is asynchronous (ADR-0121 §3): what the guest
 	// published is enqueued only now that the instance has exited, however
 	// it ended — the host already answered 0 for each event. The call slot

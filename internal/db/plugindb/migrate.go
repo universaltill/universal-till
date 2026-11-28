@@ -129,13 +129,8 @@ func migrate(ctx context.Context, c *sql.Conn, ms []Migration, now time.Time) (e
 		return err
 	}
 	_ = rows.Close()
-	for v, sum := range applied {
-		if v > len(ms) {
-			return fmt.Errorf("%w: applied version %d, artifact carries %d", ErrMigrationBehind, v, len(ms))
-		}
-		if ms[v-1].Checksum() != sum {
-			return fmt.Errorf("%w: version %d (%s)", ErrMigrationTampered, v, ms[v-1].Name)
-		}
+	if err = checkApplied(applied, ms); err != nil {
+		return err
 	}
 	for _, m := range ms {
 		if _, done := applied[m.Version]; done {
@@ -161,4 +156,17 @@ func migrate(ctx context.Context, c *sql.Conn, ms []Migration, now time.Time) (e
 		}
 	}
 	return tx.Commit()
+}
+
+// checkApplied compares the ledger with the artifact's migrations.
+func checkApplied(applied map[int]string, ms []Migration) error {
+	for v, sum := range applied {
+		if v < 1 || v > len(ms) {
+			return fmt.Errorf("%w: applied version %d, artifact carries %d", ErrMigrationBehind, v, len(ms))
+		}
+		if ms[v-1].Checksum() != sum {
+			return fmt.Errorf("%w: version %d (%s)", ErrMigrationTampered, v, ms[v-1].Name)
+		}
+	}
+	return nil
 }

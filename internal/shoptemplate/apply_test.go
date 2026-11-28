@@ -184,3 +184,103 @@ func TestSeedWhitelistRejectsPaymentFiscalTaxAuthKeys(t *testing.T) {
 		}
 	}
 }
+
+// A seed off the closed whitelist (sale.sensitive and an unregistered key
+// both are) is refused twice over, by the whitelist, not the tier check (that
+// one is the last case below): the set will not build (so no Resolved
+// carries it), and a hand-built Resolved that does is skipped by Apply and
+// never written, however the key is spelled.
+func TestSeedKeyNonNormalOrUnknownIsRefused(t *testing.T) {
+	for _, key := range []string{"sale.sensitive", "sale.not_in_registry"} {
+		_, err := Build([]*Template{{
+			Schema: 1, ID: "x", Version: 1, ShopTypes: []string{"retail"}, LabelKey: "lbl", SummaryKey: "sum",
+			Seed: []Seed{{Key: key, Value: "off"}},
+		}}, newFakeCatalog(), false)
+		want := `seed: key "` + key + `" is not on the closed seed whitelist`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: Build err = %v, want %q", key, err, want)
+		}
+
+		st := newMemStore()
+		if err := Apply(t.Context(), st, &Resolved{id: "x", version: 1, seeds: []Seed{{Key: key, Value: "off"}}}); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		if _, ok := st.vals[key]; ok {
+			t.Fatalf("%s was seeded by Apply", key)
+		}
+		if !strings.Contains(st.vals[LedgerKey], `"seeded":{}`) {
+			t.Fatalf("%s: ledger = %s, want empty seeded map", key, st.vals[LedgerKey])
+		}
+	}
+	// A whitelisted key whose registry row is not normal is refused at build.
+	cat := newFakeCatalog()
+	delete(cat.normal, "sale.order_type_prompt")
+	if _, err := Build([]*Template{{
+		Schema: 1, ID: "x", Version: 1, ShopTypes: []string{"retail"}, LabelKey: "lbl", SummaryKey: "sum",
+		Seed: []Seed{{Key: "sale.order_type_prompt", Value: "off"}},
+	}}, cat, false); err == nil || !strings.Contains(err.Error(), `seed: key "sale.order_type_prompt" must be a registry row of tier normal (got "")`) {
+		t.Fatalf("whitelisted key with a non-normal registry row: err = %v, want the exact tier-normal refusal", err)
+	}
+}
+
+func TestApplyPerTillSeedsOnlyThemeAndMarker(t *testing.T) {
+	st := newMemStore()
+	r := resolvedWith(t, "retail", Seed{Key: "sale.order_type_prompt", Value: "off"}, Seed{Key: "theme", Value: "dark"})
+	if err := ApplyPerTill(t.Context(), st, r); err != nil {
+		t.Fatal(err)
+	}
+	if st.vals["theme"] != "dark" || !st.perTill["theme"] {
+		t.Fatalf("theme = %q perTill=%v, want dark per till", st.vals["theme"], st.perTill["theme"])
+	}
+	if st.vals[ThemeSeededKey] != "dark" || !st.perTill[ThemeSeededKey] {
+		t.Fatalf("marker = %q perTill=%v, want dark per till", st.vals[ThemeSeededKey], st.perTill[ThemeSeededKey])
+	}
+	if _, ok := st.vals["sale.order_type_prompt"]; ok {
+		t.Fatal("per-till apply wrote a shop-wide key")
+	}
+	if _, ok := st.vals[LedgerKey]; ok {
+		t.Fatal("per-till apply wrote the ledger")
+	}
+	if len(st.vals) != 2 {
+		t.Fatalf("wrote %v, want exactly theme and its marker", st.vals)
+	}
+}
+
+func TestApplyPerTillOnceAndNeverOverwrites(t *testing.T) {
+	r := resolvedWith(t, "retail", Seed{Key: "theme", Value: "dark"})
+
+	st := newMemStore()
+	st.vals["theme"] = "light"
+	if err := ApplyPerTill(t.Context(), st, r); err != nil {
+		t.Fatal(err)
+	}
+	if st.vals["theme"] != "light" {
+		t.Fatalf("existing theme overwritten: %q", st.vals["theme"])
+	}
+
+	st = newMemStore()
+	if err := ApplyPerTill(t.Context(), st, r); err != nil {
+		t.Fatal(err)
+	}
+	st.vals["theme"] = "high-contrast" // the cashier changed it afterwards
+	if err := ApplyPerTill(t.Context(), st, r); err != nil {
+		t.Fatal(err)
+	}
+	if st.vals["theme"] != "high-contrast" {
+		t.Fatalf("second per-till apply re-seeded: %q", st.vals["theme"])
+	}
+}
+
+func TestApplyPerTillNoThemeOrNilWritesNothing(t *testing.T) {
+	st := newMemStore()
+	if err := ApplyPerTill(t.Context(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	r := resolvedWith(t, "retail", Seed{Key: "sale.order_type_prompt", Value: "off"})
+	if err := ApplyPerTill(t.Context(), st, r); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.vals) != 0 {
+		t.Fatalf("wrote %v with no theme seed", st.vals)
+	}
+}

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/binary"
@@ -21,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -382,6 +384,24 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			writeReaderError(w, http.StatusConflict, readerErrRoleMismatch)
 			return
 		}
+		// ut-docs#7098: "this is the same device as that old entry". The manager's
+		// choice (replace_of) is validated now, while they look at it, and again
+		// at enrolment; it is stored with this approval only.
+		replaceOf := strings.TrimSpace(r.Form.Get("replace_of"))
+		if replaceOf != "" {
+			if isReader {
+				http.Error(w, "a card reader request cannot replace a till", http.StatusBadRequest)
+				return
+			}
+			wantRole := finalRole
+			if wantRole == "" {
+				wantRole = pending.RequestedRole
+			}
+			if status, key := validateReplaceChoice(r.Context(), d, replaceOf, pending.DeviceName, wantRole); key != "" {
+				common.LocalizedError(w, r, status, key)
+				return
+			}
+		}
 		tok := ""
 		if isReader {
 			// A reader gets no enrolment token (nothing a till could
@@ -403,7 +423,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		} else {
 			tok = tokens.issue()
 		}
-		if err := repo.ApproveWithRole(r.Context(), id, tok, finalRole, pairingRequestTTL); err != nil {
+		if err := repo.ApproveWithReplace(r.Context(), id, tok, finalRole, replaceOf, pairingRequestTTL); err != nil {
 			if tok != "" {
 				tokens.consume(tok) // burn the now-orphaned token; don't leak a live credential
 			}
@@ -560,6 +580,41 @@ func commitmentMatches(secret, commitment string) bool {
 // operator's explicit choice) bypasses the PIN check and falls back to
 // whatever session actor (if any) is present, same precedence refund
 // uses. Returns ok=false having already written the error response.
+// validateReplaceChoice checks a manager's "replace this old entry" choice
+// (ut-docs#7098) for a request named newName that will enrol as role: the
+// target must be a till row, not live right now (replaceLiveWindow), of the
+// SAME role (a replace never changes it), and newName must be free or the
+// target's own. It returns an HTTP status and i18n key on refusal, "" key when
+// the choice is fine. Used at approval and again at enrolment.
+func validateReplaceChoice(ctx context.Context, d *common.Deps, tillID, newName, role string) (int, string) {
+	repo := data.NewTillsRepo(d.Db)
+	list, err := repo.ListTills(ctx)
+	if err != nil {
+		return http.StatusInternalServerError, "pairings.error.server"
+	}
+	var target *data.TillRow
+	for i := range list {
+		if list[i].ID == tillID {
+			target = &list[i]
+		}
+	}
+	if target == nil {
+		return http.StatusNotFound, "tills.pending.replace_gone"
+	}
+	if target.SeenWithin(time.Now(), replaceLiveWindow) {
+		return http.StatusConflict, "tills.pending.replace_live"
+	}
+	if role != "" && role != target.Role {
+		return http.StatusConflict, "tills.pending.replace_role"
+	}
+	if taken, terr := repo.NameTakenExcept(ctx, newName, tillID); terr != nil {
+		return http.StatusInternalServerError, "pairings.error.server"
+	} else if taken || strings.EqualFold(strings.TrimSpace(newName), tillNameOrDefault(ctx, d, httpx.DefaultLocale())) {
+		return http.StatusUnprocessableEntity, "sync.error.name_taken"
+	}
+	return 0, ""
+}
+
 func authorizePairingManager(w http.ResponseWriter, r *http.Request, svc *auth.Service) (actorID string, ok bool) {
 	actorID = getSessionUserID(r)
 	if auth.Disabled(os.Getenv("UT_AUTH")) {

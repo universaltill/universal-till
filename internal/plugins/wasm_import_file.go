@@ -102,6 +102,15 @@ func (r *importFileRegistry) Get(pluginID string, handle int32) (*os.File, bool)
 	return sf.f, ok
 }
 
+// Path returns the staged temp file's path for (pluginID, handle). The key
+// is the caller's own id, so db_open_import can only reach its own files.
+func (r *importFileRegistry) Path(pluginID string, handle int32) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sf, ok := r.byPlugin[pluginID][handle]
+	return sf.path, ok
+}
+
 // Close closes and removes one handle, deleting its temp file from disk;
 // unknown handles are a no-op (import_file_close is idempotent, so
 // host-side cleanup and a well-behaved guest's own close can both run).

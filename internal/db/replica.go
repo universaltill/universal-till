@@ -175,6 +175,12 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	if err := DeleteTillCloudIdentity(sqlDB); err != nil {
 		return false, fmt.Errorf("clear inherited cloud identity: %w", err)
 	}
+	// ut-docs#6347: the theme is per till and never synced (ut-docs#2783); the
+	// snapshot's copy is the main till's look. Drop it and its seeded marker so
+	// this till's own template seed runs on an unset theme.
+	if err := DeletePerTillLook(sqlDB); err != nil {
+		return false, fmt.Errorf("clear inherited theme: %w", err)
+	}
 	if id.DeviceID != "" {
 		if err := set("marketplace.device_id", id.DeviceID); err != nil {
 			return false, fmt.Errorf("apply identity device: %w", err)

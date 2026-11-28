@@ -23,6 +23,9 @@ type Undo struct {
 	Applied    map[string]string `json:"applied"`
 	Prev       map[string]string `json:"prev"`
 	ExpiresAt  string            `json:"expires_at"`
+	// Dismissed hides the banner only; the record, and so Undo (reachable
+	// from the Shop type card), stays until it expires (ut-docs#7193).
+	Dismissed bool `json:"dismissed,omitempty"`
 }
 
 // NewUndo builds the record for a change made at `at`.

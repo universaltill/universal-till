@@ -580,6 +580,21 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	return store.SetMany(ctx, StateKV(ctx, store, st))
 }
 
+// SaveBootState is SaveState for the boot-time "persist resolved defaults"
+// call: identical, except it does not write the theme when no theme row exists
+// yet. An unset theme means "the config default" (LoadState falls back to it),
+// and persisting it would make the row look chosen, so the joined-till
+// per-till template seed — which never overwrites a set theme — could not
+// take effect (ut-docs#6347). Every other key is written as SaveState does.
+func SaveBootState(ctx context.Context, store *settings.Store, st RuntimeState) error {
+	kv := StateKV(ctx, store, st)
+	if cur, ok, err := store.Get(ctx, KeyTheme); err != nil || !ok || strings.TrimSpace(cur) == "" {
+		delete(kv, KeyTheme)
+	}
+	// settings-write:allow boot-time twin of SaveState (ut-docs#6347)
+	return store.SetMany(ctx, kv)
+}
+
 // StateKV is the settings rows SaveState writes for st, with SaveState's
 // window-mode/launch-on-startup read-back already applied. Split out for
 // the additional-till write-through (ut-docs#2948), which must route the

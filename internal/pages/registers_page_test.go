@@ -320,6 +320,10 @@ func TestRegistersPage_DeactivateWithHistoryIsAllowed(t *testing.T) {
 		t.Fatalf("seed sale: %v", err)
 	}
 
+	// ut-docs#7098: a sale not yet sent to the cloud blocks a retire; a sent one does not.
+	if _, err := d.Db.Exec(`UPDATE sales SET sync_status = 'synced' WHERE id = 'sale-651'`); err != nil {
+		t.Fatalf("mark sale synced: %v", err)
+	}
 	rec = postForm(mux, "/api/registers/"+historyID+"/active", url.Values{"active": {"0"}}, &manager)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/registers" {
 		t.Fatalf("deactivate with history: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
@@ -376,9 +380,11 @@ func TestRegistersPage_ShowsInUseHintForRegisterWithHistory(t *testing.T) {
 	rowFor := func(nameIdx int) string {
 		// A table row is short; 400 chars comfortably spans one row's
 		// cells without reaching into the next register's row.
-		end := nameIdx + 400
-		if end > len(body) {
-			end = len(body)
+		// ut-docs#7098: the row grew (till, status line, Retire button), so
+		// cut at the row's own end instead of a fixed width.
+		end := len(body)
+		if i := strings.Index(body[nameIdx:], "</tr>"); i >= 0 {
+			end = nameIdx + i
 		}
 		return body[nameIdx:end]
 	}

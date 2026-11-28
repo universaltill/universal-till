@@ -12,7 +12,8 @@ import (
 // templateStateInterval is how often StartTemplateStateReconcile checks that
 // the template layout matches the shop's type — the same 30 s cadence as the
 // replica's admin pull, so a pulled shop type lands within one more tick.
-const templateStateInterval = 30 * time.Second
+// A var so a test can drive a real tick without waiting 30 s.
+var templateStateInterval = 30 * time.Second
 
 // StartTemplateStateReconcile keeps the shop-type template layout in step
 // with shop.type and the apply-once ledger while the till runs (ut-docs#2793,
@@ -36,6 +37,8 @@ func StartTemplateStateReconcile(ctx context.Context, d *common.Deps, wg *sync.W
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// The shop type of a joined till can arrive with an admin pull.
+				seedJoinedTillTemplate(ctx, d)
 				if d.ReloadTemplateIfChanged(ctx) {
 					logging.L().Infof("shop template: layout now follows the shop's current type")
 				}

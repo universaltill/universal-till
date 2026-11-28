@@ -99,6 +99,22 @@ type Manifest struct {
 	Hosts           []string         `json:"hosts,omitempty"`
 	ChannelContract int              `json:"channel_contract,omitempty"`
 	Channel         *ManifestChannel `json:"channel,omitempty"`
+
+	// RecordsForward (ut-docs#3697, ADR-0149 §3): the collections a plugin
+	// may forward to the main till and the snapshot collections it may
+	// publish; needs the records:sync permission. omitempty, so a manifest
+	// without it marshals byte-identically to before and old signatures
+	// verify. ut-cloud's internal/signing.CanonicalManifest must mirror it
+	// (same position, same tags), and the nested type too.
+	RecordsForward *ManifestRecordsForward `json:"records_forward,omitempty"`
+}
+
+// ManifestRecordsForward names the plugin-records collections (and snapshot
+// collections) a plugin declares. Names: ^[a-z][a-z0-9_]{0,31}$, at most 8
+// each, unique.
+type ManifestRecordsForward struct {
+	Collections []string `json:"collections,omitempty"`
+	Snapshots   []string `json:"snapshots,omitempty"`
 }
 
 // ManifestLimits are a plugin's resource requests (ADR-0121 §2). 0 means
@@ -827,7 +843,7 @@ var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
-	"/shifts", "/reports", "/backups", "/about",
+	"/shifts", "/reports", "/backups", "/about", "/registers",
 	// ut-docs#6455: tap-to-pay "Check again" (POST /pay/tap/check) and the
 	// manager's resolve (POST /manager/pay/tap/resolve) are literal-child
 	// routes with no catch-all of their own.

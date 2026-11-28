@@ -142,7 +142,7 @@ test.describe('existing shop (legacy, no template yet)', () => {
     await expect(preview).toBeVisible();
     await expect(preview.locator('#shop-type-preview-title')).toContainText('Retail shop');
     // Retail hides Tables and Kitchen stations from the menu; the preview says so, and says nothing is lost.
-    await expect(preview).toContainText('Will move to More settings');
+    await expect(preview).toContainText('Will be tucked away');
     await expect(preview).toContainText('Nothing about payments, tax, staff or PINs is ever changed by a shop type.');
     // Value suggestions are opt-in: never pre-ticked.
     for (const cb of await preview.locator('input[name="apply_values[]"]').all()) {
