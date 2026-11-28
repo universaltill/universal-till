@@ -79,6 +79,11 @@ type Options struct {
 	// BusyWait is how long a caller waits for the single connection before
 	// ErrBusy; 0 means 5 s.
 	BusyWait time.Duration
+	// KeepYears is the plugin's manifest retention.keep_years. > 0 opens the
+	// database with synchronous=FULL (a committed row survives a power cut:
+	// fiscal/retention records, ut-docs#7230); 0 keeps NORMAL. A store that
+	// is already open is raised to FULL, never lowered while open.
+	KeepYears int
 }
 
 // Store is one plugin's hardened database. Safe for concurrent use; calls are
@@ -91,6 +96,7 @@ type Store struct {
 	busyWait atomic.Int64 // nanoseconds
 	lastUsed atomic.Int64 // unix nanoseconds
 	quota    atomic.Int64 // the quota last applied to the connection
+	full     atomic.Bool  // synchronous=FULL is applied to the connection
 	db       *sql.DB
 	conn     *sql.Conn
 }
@@ -216,11 +222,36 @@ func openFileChecked(p string) error {
 	return nil
 }
 
+// syncLevel is the PRAGMA synchronous value for a plugin: FULL (2) when it
+// must keep records for keep_years, else NORMAL (1). FULL fsyncs the WAL on
+// every commit: slower on an SD card, but no committed record is lost to a
+// power cut, which a fiscal/retention plugin cannot accept (ut-docs#7230).
+func syncLevel(keepYears int) int {
+	if keepYears > 0 {
+		return 2
+	}
+	return 1
+}
+
+// raiseSync applies synchronous=FULL to an already-open store.
+func (s *Store) raiseSync(ctx context.Context) error {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if _, err := s.conn.ExecContext(ctx, `PRAGMA synchronous=2`); err != nil {
+		return err
+	}
+	s.full.Store(true)
+	return nil
+}
+
 // openStore opens (and optionally migrates) dir/plugin.db. dir must already be
 // a vetted real directory (Manager.safeDir).
 func openStore(ctx context.Context, id, dir string, o Options, now time.Time) (*Store, error) {
 	p := filepath.Join(dir, DBFileName)
-	// synchronous=NORMAL (1): in WAL mode this can never corrupt the database
+	// synchronous=NORMAL (1), or FULL (2) when o.KeepYears > 0: in WAL mode this can never corrupt the database
 	// (the WAL is still fsynced at each checkpoint); the only cost is that the
 	// last few commits may be lost on a power cut, and the database is never
 	// left inconsistent. FULL would fsync the WAL on every autocommit
@@ -239,8 +270,8 @@ func openStore(ctx context.Context, id, dir string, o Options, now time.Time) (*
 		return nil, err
 	}
 	dsn := fmt.Sprintf("file:%s?mode=rw&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"+
-		"&_pragma=synchronous(1)&_pragma=temp_store(0)&_pragma=secure_delete(1)&_pragma=trusted_schema(0)&_pragma=journal_size_limit(%d)&_txlock=immediate",
-		escapePath(p), journalSizeLimit)
+		"&_pragma=synchronous(%d)&_pragma=temp_store(0)&_pragma=secure_delete(1)&_pragma=trusted_schema(0)&_pragma=journal_size_limit(%d)&_txlock=immediate",
+		escapePath(p), syncLevel(o.KeepYears), journalSizeLimit)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -255,6 +286,7 @@ func openStore(ctx context.Context, id, dir string, o Options, now time.Time) (*
 		return nil, err
 	}
 	s := &Store{id: id, path: p, db: db, conn: conn, sem: make(chan struct{}, 1)}
+	s.full.Store(o.KeepYears > 0)
 	s.busyWait.Store(int64(o.BusyWait))
 	s.touch()
 	fail := func(err error) (*Store, error) { _ = s.Close(); return nil, err }

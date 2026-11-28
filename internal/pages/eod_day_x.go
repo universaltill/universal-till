@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/print"
+	"github.com/universaltill/universal-till/internal/settlementfee"
 )
 
 // ut-docs#5800: the till-wide "day so far" X report on Reports -> End of day.
@@ -99,10 +100,17 @@ func registerEODDayX(mux *http.ServeMux, d *common.Deps) {
 		cfg := printerConfig(ctx, d)
 		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
 		doc := buildEODDayXDoc(rep, shopNameOrEmpty(ctx, d), cfg.Charset, articleMode, articleCap)
+		// ut-docs#7160: imported card-fee lines, screen only (nil when the
+		// cloud sent none or is unreachable).
+		var feeLines []settlementfee.Line
+		if to, perr := time.Parse(time.RFC3339, rep.To); perr == nil {
+			feeLines = eodFeeLines(ctx, d, to)
+		}
 		httpx.RenderPartial("ui/partials/reports_eod_day_x.html", map[string]any{
-			"Preview": print.RenderText(doc),
-			"From":    rep.From,
-			"To":      rep.To,
+			"FeeLines": feeLines,
+			"Preview":  print.RenderText(doc),
+			"From":     rep.From,
+			"To":       rep.To,
 			"Empty": rep.SalesCount == 0 && rep.RefundCount == 0 && rep.CancelCount == 0 &&
 				rep.ClearedBasketCount == 0 && rep.NoSaleCount == 0,
 		})(w, r)

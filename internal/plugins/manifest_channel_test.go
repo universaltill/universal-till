@@ -78,7 +78,7 @@ func TestParseManifest_ChannelContractExample(t *testing.T) {
 	if m.Channel == nil || m.Channel.Kind != "webshop" || m.Channel.AccountSuffix != ".demo-shop.example" {
 		t.Fatalf("channel block not parsed: %+v", m.Channel)
 	}
-	if m.Channel.Capabilities["stock"] != "push" || !m.Channel.StockLocations {
+	if string(m.Channel.Capabilities["stock"]) != `"push"` || !m.Channel.StockLocations {
 		t.Fatalf("capabilities not parsed: %+v", m.Channel.Capabilities)
 	}
 	if v := m.Channel.Webhooks.Verify; v.Header != "X-Demo-Hmac" || v.Encoding != "base64" {
@@ -352,9 +352,137 @@ func TestParseManifest_ChannelItemCreateCapability(t *testing.T) {
 			if err != nil {
 				t.Fatalf("item_create %q must be accepted: %v", dir, err)
 			}
-			if got := mf.Channel.Capabilities["item_create"]; got != dir {
+			if got := string(mf.Channel.Capabilities["item_create"]); got != `"`+dir+`"` {
 				t.Fatalf("item_create = %q, want %q", got, dir)
 			}
 		})
+	}
+}
+
+// ADR-0215 / ut-docs#6989: a delivery channel manifest (fixed hosts, store_ref,
+// non-string capabilities, inject scheme, webhook route and canonical form) is
+// signed by ut-cloud over its own canonical bytes. A till that re-marshals it
+// through Manifest must keep every one of those fields, or the signature no
+// longer verifies. All data is invented.
+const deliveryChannelManifest = `{
+  "id": "com.universaltill.channel-demo-delivery",
+  "name": "Demo delivery channel",
+  "version": "0.1.0",
+  "canonical_type": "channel",
+  "runtime": "wasm",
+  "entrypoint": "./bin/plugin.wasm",
+  "device_arch": "any",
+  "hosts": ["cloud"],
+  "channel_contract": 1,
+  "permissions": ["net:{account}"],
+  "channel": {
+    "kind": "delivery",
+    "account_model": "fixed",
+    "hosts": {"live": {"api": "api.demo-delivery.example", "auth": "auth.demo-delivery.example"},
+              "sandbox": {"api": "api-sandbox.demo-delivery.example", "auth": "auth-sandbox.demo-delivery.example"}},
+    "store_ref": "^[A-Za-z0-9_-]{1,64}$",
+    "auth": {"grants": ["client_credentials"], "token_url": "https://{auth}/oauth2/token",
+             "scopes": ["orders"],
+             "inject": {"header": "Authorization", "scheme": "Bearer"}},
+    "capabilities": {"orders": "pull", "modifiers": true, "accept_window_s": 600, "prep": "order"},
+    "webhooks": {"route": "app", "topics": ["order.created"],
+                 "verify": {"header": "X-Sig", "alg": "hmac-sha256", "encoding": "hex",
+                            "canonical": "{sequence_header} + \" \" + body", "sequence_header": "X-Seq"}},
+    "schedules": [{"event": "reconcile", "every_s": 60, "jitter_s": 15}]
+  }
+}`
+
+// jsonSubset reports the first path at which want has a value that got lacks
+// or changes (extra keys in got are allowed, e.g. empty required strings).
+func jsonSubset(want, got any, path string) string {
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok {
+			return path
+		}
+		for k, wv := range w {
+			gv, present := g[k]
+			if !present {
+				return path + "." + k
+			}
+			if p := jsonSubset(wv, gv, path+"."+k); p != "" {
+				return p
+			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			return path
+		}
+		for i := range w {
+			if p := jsonSubset(w[i], g[i], path+"[]"); p != "" {
+				return p
+			}
+		}
+	default:
+		if want != got {
+			return path
+		}
+	}
+	return ""
+}
+
+func TestDeliveryChannelManifest_RoundTripsWithoutDroppingFields(t *testing.T) {
+	var want any
+	if err := json.Unmarshal([]byte(deliveryChannelManifest), &want); err != nil {
+		t.Fatal(err)
+	}
+	var m Manifest
+	if err := json.Unmarshal([]byte(deliveryChannelManifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	a, err := json.Marshal(&m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got any
+	if err := json.Unmarshal(a, &got); err != nil {
+		t.Fatal(err)
+	}
+	if p := jsonSubset(want, got, "$"); p != "" {
+		t.Fatalf("re-marshal dropped or changed %s (the signature covers these bytes):\n%s", p, a)
+	}
+	// Second pass is byte-identical to the first.
+	var back Manifest
+	if err := json.Unmarshal(a, &back); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(&back)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("delivery manifest bytes are not stable:\n%s\n%s", a, b)
+	}
+	// Field order in the signed bytes matches ut-cloud's CanonicalChannel.
+	order := []string{`"kind"`, `"account"`, `"account_suffix"`, `"account_model"`, `"hosts":{"live"`, `"store_ref"`, `"auth":{"grants"`, `"capabilities"`, `"webhooks"`, `"schedules"`}
+	last := -1
+	for _, f := range order {
+		i := strings.Index(string(a)[strings.Index(string(a), `"channel":`):], f)
+		if i < 0 || i < last {
+			t.Fatalf("channel field %s missing or out of order (%d after %d):\n%s", f, i, last, a)
+		}
+		last = i
+	}
+	for _, f := range []string{`"scheme":"Bearer"`, `"route":"app"`, `"canonical":`, `"sequence_header":"X-Seq"`, `"modifiers":true`, `"accept_window_s":600`} {
+		if !strings.Contains(string(a), f) {
+			t.Fatalf("missing %s in %s", f, a)
+		}
+	}
+}
+
+func TestParseManifest_DeliveryChannelIsAccepted(t *testing.T) {
+	m, err := ParseManifest(strings.NewReader(deliveryChannelManifest))
+	if err != nil {
+		t.Fatalf("a delivery channel manifest must parse: %v", err)
+	}
+	if m.Channel.Kind != "delivery" || m.Channel.AccountModel != "fixed" || m.Channel.Hosts["live"].API != "api.demo-delivery.example" {
+		t.Fatalf("delivery block not parsed: %+v", m.Channel)
+	}
+	if err := m.RefuseOnTill(); !errors.Is(err, ErrCloudHostedPlugin) {
+		t.Fatalf("a till must still refuse a cloud-hosted plugin, got %v", err)
 	}
 }

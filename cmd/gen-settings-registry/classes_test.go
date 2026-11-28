@@ -62,20 +62,62 @@ func TestShopTemplateClassesJSON_ProtectedNeverDemoted(t *testing.T) {
 	}
 }
 
-// retail demotes the order-number card; kiosk idle reset is a card the retail
-// template names advanced, so its keys are rarely needed for retail only.
+// retail demotes exactly these cards and keys (pinned so a template edit that
+// changes retail's Advanced set is a deliberate, reviewed change). The kiosk
+// cards are demoted for retail too, since retail names them advanced.
 func TestShopTemplateClassesJSON_RetailDemotesOrderNo(t *testing.T) {
 	raw, err := shopTemplateClassesJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var d classesDoc
-	_ = json.Unmarshal(raw, &d)
-	r := d.ShopTypes["retail"]
-	if !slices.Contains(r.RarelyNeededCards, "settings-order-no") {
-		t.Errorf("retail cards = %v, want settings-order-no", r.RarelyNeededCards)
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("unmarshal classes json: %v", err)
 	}
-	if len(r.RarelyNeededKeys) == 0 {
-		t.Error("retail has demoted cards but no keys")
+	r, ok := d.ShopTypes["retail"]
+	if !ok {
+		t.Fatal("retail missing from shop_types")
+	}
+	wantCards := []string{"settings-about", "settings-kiosk-idle-reset", "settings-kiosk-payment-mode", "settings-notices", "settings-order-no", "settings-order-type-prompt"}
+	wantKeys := []string{"kiosk.idle_reset_seconds", "kiosk.payment_mode", "notices.enabled", "sale.display_no_scheme", "sale.order_type_prompt"}
+	if !slices.Equal(r.RarelyNeededCards, wantCards) {
+		t.Errorf("retail cards = %v, want %v", r.RarelyNeededCards, wantCards)
+	}
+	if !slices.Equal(r.RarelyNeededKeys, wantKeys) {
+		t.Errorf("retail keys = %v, want %v", r.RarelyNeededKeys, wantKeys)
+	}
+}
+
+// ADR-0190: a template never hides an auth/payment/fiscal/tax key, even when
+// it demotes the card holding it (market_stall demotes settings-idle-lock).
+func TestShopTemplateClassesJSON_NeverFlagsSecurityKeys(t *testing.T) {
+	raw, err := shopTemplateClassesJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d classesDoc
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	for st, tc := range d.ShopTypes {
+		for _, k := range tc.RarelyNeededKeys {
+			if neverRarely(k) {
+				t.Errorf("%s flags %s as rarely needed", st, k)
+			}
+		}
+	}
+	if !neverRarely("auth.idle_lock_minutes") {
+		t.Error("auth.idle_lock_minutes must be protected")
+	}
+}
+
+// The generator must create the output directory before writing.
+func TestWriteClassesCreatesDir(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "docs", "x", "classes.json")
+	if err := writeClassesJSON(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal(err)
 	}
 }

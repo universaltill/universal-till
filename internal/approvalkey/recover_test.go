@@ -30,8 +30,10 @@ func TestRecoverMessageMatchesGoldenVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub != m["public_key"] || kid != m["kid"] || sig != m["signature"] {
-		t.Fatalf("kid/pub/sig = %q %q %q, want %q %q %q", kid, pub, sig, m["kid"], m["public_key"], m["signature"])
+	// The shared vector carries no kid: it is derived from the public key.
+	rawPub, _ := base64.RawURLEncoding.DecodeString(m["public_key"])
+	if pub != m["public_key"] || kid != KID(ed25519.PublicKey(rawPub)) || sig != m["signature"] {
+		t.Fatalf("kid/pub/sig = %q %q %q, want %q %q", kid, pub, sig, m["public_key"], m["signature"])
 	}
 }
 

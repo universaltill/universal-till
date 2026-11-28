@@ -41,6 +41,14 @@ func cloudApplyChannelOrder(ctx context.Context, d *common.Deps, o cloudsync.Cha
 		return "", fmt.Errorf("no stock location configured")
 	}
 	in.LocationID = locs[0].ID
+	// Delivery orders only (ADR-0215): the shop's unmapped-line policy. Only
+	// the exact value "placeholder" relaxes the default; anything else (unset,
+	// a typo) rejects, the safe side.
+	if in.Delivery != nil && d.Settings != nil {
+		if v, _, _ := d.Settings.Get(ctx, data.DeliveryUnmappedPolicyKey); v == data.DeliveryUnmappedPlaceholder {
+			in.UnmappedPolicy = v
+		}
+	}
 
 	res, err := data.NewChannelOrdersRepo(d.Db).Apply(ctx, in)
 	if err != nil {
@@ -55,6 +63,17 @@ func cloudApplyChannelOrder(ctx context.Context, d *common.Deps, o cloudsync.Cha
 	}
 	if in.CurrencyMismatch {
 		log.Warnf("channel order %s (%s): currency %s differs from the shop currency; recorded as received", in.OrderNumber, in.PluginKey, in.Currency)
+	}
+	// Never the note or any customer text: ids and the order number only.
+	if res.AutoRejected {
+		log.Warnf("delivery order %s (%s): a line matches no item here, so the order is rejected with a reason (setting %s); no stock moved", in.OrderNumber, in.PluginKey, data.DeliveryUnmappedPolicyKey)
+		select {
+		case d.CloudSyncNow <- struct{}{}: // send the reject now, not at the next tick
+		default:
+		}
+	}
+	if res.LateCancel {
+		log.Warnf("delivery order %s (%s): late cancel, the platform cancelled it after preparing started; the food may already be made", in.OrderNumber, in.PluginKey)
 	}
 	for _, id := range res.Unmatched {
 		log.Warnf("channel order %s (%s): line %s matches no item here; recorded without moving stock", in.OrderNumber, in.PluginKey, id)

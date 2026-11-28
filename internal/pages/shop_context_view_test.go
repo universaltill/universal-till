@@ -2,7 +2,9 @@ package pages
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -51,8 +53,12 @@ func TestShopContextView_RealProvider(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(out) != want {
-				t.Fatalf("%s result:\n got  %s\n want %s", name, out, want)
+			w := want
+			if name == "shop.context.v2" { // ut-docs#7231: + country (unset here) and today's business date
+				w = strings.TrimSuffix(want, "}]") + `,"country":"","business_date":"` + time.Now().Format("2006-01-02") + `"}]`
+			}
+			if string(out) != w {
+				t.Fatalf("%s result:\n got  %s\n want %s", name, out, w)
 			}
 		}
 	}

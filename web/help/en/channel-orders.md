@@ -6,7 +6,7 @@ order: 16
 public: true
 summary: "Orders taken on your web shop or marketplaces and recorded on this till: what was ordered, how it is progressing and what it did to your stock."
 routes: [/channel-orders, /channel-orders/{id}]
-keywords: [online orders, web shop, webshop, marketplace, channel, shopify, order number, refund, restock, stock, not a sale, accept, pick, pack, ship, tracking, cancel, discount, discount code, promotion, campaign]
+keywords: [delivery order, delivery platform, collection, kitchen, rejected, preparing, ready, collected, online orders, web shop, webshop, marketplace, channel, shopify, order number, refund, restock, stock, not a sale, accept, pick, pack, ship, tracking, cancel, discount, discount code, promotion, campaign]
 ---
 
 # Online orders
@@ -24,6 +24,17 @@ Orders taken on your web shop or marketplaces and recorded on this till: what wa
 7. **Cancel it.** **Cancel order…** opens a form: choose a reason, decide whether the items go back into stock (ticked by default) and tap **Cancel this order**. This also cancels the order at the online shop and cannot be undone. A shipped order cannot be cancelled.
 8. **Waiting to be sent.** After a tap, a dashed chip such as **Shipping not sent yet** appears and the status stays as it was. The action is saved on this till and sent to the online shop as soon as the till is online. The status changes when the shop confirms it, and stock changes only then.
 9. **If the shop says no.** A notice tells you why (for example, the order was already cancelled) and the order shows **Not accepted** in the list. Tap **Dismiss** once you have read it. If the online shop cannot take a shipment or a cancel automatically, the notice asks you to make the same change in the online shop's own admin.
+
+## Delivery orders
+
+Orders from a food delivery platform appear in the same list, marked **Delivery** or **Collection** on the order. They follow their own steps: **New**, then **Accepted** or **Rejected**, then **Preparing**, **Ready** and **Collected**. An order can also be **Cancelled** by the platform.
+
+- The order shows the time by which the platform wants it accepted, the chosen options under each item, and any note from the customer. Read the note before you accept: it can be an allergy. A note is shown as plain text only.
+- The customer's note may contain personal and health information, so this till erases it for you: it is blanked 24 hours after the order is finished (the shop can set 1 to 72 hours, never more), or, for an order that never finishes, 14 days after it arrived (a scheduled order: 72 hours after its start time). The till does this on its own clock, also when it starts up, so a till that was switched off clears the note when it is next switched on. The order, its items and totals stay; only the note goes. An order still open is never blanked early. Copies in a till backup, or old data the storage has not yet overwritten, can outlive the blanking, so do not promise a customer that every trace is gone.
+- If the customer's data is erased while an order is still open, the order is closed first and says **Order withdrawn**, then the note is erased.
+- If the platform cancels an order after the kitchen has started, the order says **Cancelled after cooking started** so you know the food may already be made.
+- If an item on a delivery order is not in your catalogue, this till rejects the order for you and says so on the order, and your stock is not changed.
+- Delivery orders are not till sales and take nothing from the drawer. The fulfilment buttons above are for web shop orders; delivery orders are accepted, rejected and moved on from the delivery screens.
 
 ## Notes
 

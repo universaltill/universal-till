@@ -143,6 +143,11 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 }
 
+// DeliveryNoteSweepInterval is how often the till re-checks delivery-note
+// deadlines while running (it also checks at start-up and before the order
+// screens show a note).
+const DeliveryNoteSweepInterval = 15 * time.Minute
+
 // Start boots the HTTP server and every background job it owns. wg is marked
 // Done, per job/goroutine, once each has fully exited (ctx cancelled) —
 // including this function's own graceful-shutdown goroutine — so a caller
@@ -190,6 +195,39 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 					return
 				case <-ticker.C:
 					run()
+				}
+			}
+		}()
+	}
+
+	// Delivery-note erasure (ADR-0215 Decision 9, legal review R3a): the till
+	// blanks a delivery order's customer note at its deadline on its own
+	// clock. Runs at start-up (a till switched off overnight catches up at
+	// once) and every 15 minutes. Local SQL only, no network, no note text in
+	// the log.
+	if db != nil {
+		wg.Add(1)
+		go func() {
+			defer logging.RecoverAndLog("server.deliveryNotes")
+			defer wg.Done()
+			sweep := func() {
+				jobCtx, cancel := context.WithTimeout(ctx, time.Minute)
+				defer cancel()
+				if n, err := data.EraseExpiredDeliveryNotesNow(jobCtx, db); err != nil {
+					log.Printf("[DeliveryNotes] erasure failed: %v", err)
+				} else if n > 0 {
+					log.Printf("[DeliveryNotes] erased the customer notes of %d delivery orders", n)
+				}
+			}
+			sweep()
+			ticker := time.NewTicker(DeliveryNoteSweepInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					sweep()
 				}
 			}
 		}()

@@ -185,8 +185,9 @@ func TestSeedWhitelistRejectsPaymentFiscalTaxAuthKeys(t *testing.T) {
 	}
 }
 
-// A seed whose registry row is not tier normal, or is absent from the
-// registry, is refused twice over: the set will not build (so no Resolved
+// A seed off the closed whitelist (sale.sensitive and an unregistered key
+// both are) is refused twice over, by the whitelist, not the tier check (that
+// one is the last case below): the set will not build (so no Resolved
 // carries it), and a hand-built Resolved that does is skipped by Apply and
 // never written, however the key is spelled.
 func TestSeedKeyNonNormalOrUnknownIsRefused(t *testing.T) {
@@ -195,8 +196,9 @@ func TestSeedKeyNonNormalOrUnknownIsRefused(t *testing.T) {
 			Schema: 1, ID: "x", Version: 1, ShopTypes: []string{"retail"}, LabelKey: "lbl", SummaryKey: "sum",
 			Seed: []Seed{{Key: key, Value: "off"}},
 		}}, newFakeCatalog(), false)
-		if err == nil || !strings.Contains(err.Error(), "seed: key") {
-			t.Fatalf("%s: Build err = %v, want a seed refusal", key, err)
+		want := `seed: key "` + key + `" is not on the closed seed whitelist`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: Build err = %v, want %q", key, err, want)
 		}
 
 		st := newMemStore()
@@ -216,8 +218,8 @@ func TestSeedKeyNonNormalOrUnknownIsRefused(t *testing.T) {
 	if _, err := Build([]*Template{{
 		Schema: 1, ID: "x", Version: 1, ShopTypes: []string{"retail"}, LabelKey: "lbl", SummaryKey: "sum",
 		Seed: []Seed{{Key: "sale.order_type_prompt", Value: "off"}},
-	}}, cat, false); err == nil || !strings.Contains(err.Error(), "tier normal") {
-		t.Fatalf("whitelisted key with a non-normal registry row: err = %v, want the tier-normal refusal", err)
+	}}, cat, false); err == nil || !strings.Contains(err.Error(), `seed: key "sale.order_type_prompt" must be a registry row of tier normal (got "")`) {
+		t.Fatalf("whitelisted key with a non-normal registry row: err = %v, want the exact tier-normal refusal", err)
 	}
 }
 

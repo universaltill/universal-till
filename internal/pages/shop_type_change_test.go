@@ -448,6 +448,43 @@ func TestShopTypePreview_LegacySameTypeTitleAndSettingsGroupedApart(t *testing.T
 	}
 }
 
+// ut-docs#6347 Q2: the shop-type banner/preview has no motion today; if one is
+// added it must be finite and inside prefers-reduced-motion: no-preference.
+func TestAppCSSShopTypeRulesHaveNoUnguardedOrInfiniteMotion(t *testing.T) {
+	css := readAppCSS(t)
+	// Blank out the no-preference blocks: motion is allowed there (finite only).
+	guarded := css
+	for {
+		i := strings.Index(guarded, "@media (prefers-reduced-motion: no-preference)")
+		if i < 0 {
+			break
+		}
+		blk := extractBlock(t, guarded[i:], "@media (prefers-reduced-motion: no-preference)")
+		guarded = guarded[:i] + guarded[i+strings.Index(guarded[i:], blk)+len(blk):]
+		_ = blk
+	}
+	check := func(src string, motion bool) {
+		for _, rule := range strings.Split(src, "}") {
+			open := strings.Index(rule, "{")
+			if open < 0 {
+				continue
+			}
+			sel, decl := strings.TrimSpace(rule[:open]), rule[open+1:]
+			if !strings.Contains(sel, ".shop-type-undo") && !strings.Contains(sel, ".shop-type-preview") {
+				continue
+			}
+			if motion && (strings.Contains(decl, "animation") || strings.Contains(decl, "transition")) {
+				t.Errorf("%s: animation/transition outside prefers-reduced-motion: no-preference", sel)
+			}
+			if strings.Contains(decl, "infinite") {
+				t.Errorf("%s: infinite iteration is not allowed", sel)
+			}
+		}
+	}
+	check(guarded, true)
+	check(css, false)
+}
+
 // ut-docs#7191: a shop with no type yet (from == "") gets the "set up" title,
 // never "Change shop type: — to X".
 func TestShopTypePreviewData_NoCurrentTypeUsesSetUpTitle(t *testing.T) {

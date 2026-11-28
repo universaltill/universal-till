@@ -649,6 +649,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	registerWorkerAllocationAPI(mux, d)
+	registerTipsSuggestAPI(mux, d) // ut-docs#7108
 }
 
 // workerAllocationDisplayNames maps every user's cashier_id to a

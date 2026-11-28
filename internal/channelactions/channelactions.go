@@ -56,7 +56,15 @@ type Cancel struct {
 	Restock bool   `json:"restock"`
 }
 
-// Action is one action as channel-order-action-v1.json takes it.
+// Reject is the wire form of a delivery reject action's data (ADR-0215): one
+// of data.DeliveryRejectReasons.
+type Reject struct {
+	Reason string `json:"reason"`
+}
+
+// Action is one action as channel-order-action-v1.json takes it. The delivery
+// actions (reject, preparing, ready, collected, prep_time) and the Reject and
+// PrepMinutes fields are ADR-0215 additions, absent from every webshop action.
 type Action struct {
 	ActionID        string    `json:"action_id"`
 	ConnectionID    string    `json:"connection_id"`
@@ -68,6 +76,8 @@ type Action struct {
 	Stale           bool      `json:"stale,omitempty"`
 	Shipment        *Shipment `json:"shipment,omitempty"`
 	Cancel          *Cancel   `json:"cancel,omitempty"`
+	Reject          *Reject   `json:"reject,omitempty"`
+	PrepMinutes     int64     `json:"prep_minutes,omitempty"`
 }
 
 // Result is the cloud's verdict on one action, in request order. Current is
@@ -157,6 +167,12 @@ func ToWire(a data.ChannelOrderAction, now time.Time) Action {
 	}
 	if a.Cancel != nil {
 		w.Cancel = &Cancel{Reason: a.Cancel.Reason, Restock: a.Cancel.Restock}
+	}
+	if a.Action == "reject" {
+		w.Reject = &Reject{Reason: a.RejectReason}
+	}
+	if a.Action == "accept" || a.Action == "prep_time" {
+		w.PrepMinutes = a.PrepMinutes
 	}
 	return w
 }

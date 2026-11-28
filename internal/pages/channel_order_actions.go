@@ -126,7 +126,9 @@ func channelOrderDetailData(ctx context.Context, d *common.Deps, r *http.Request
 	}
 	here := channelActionsHere(ctx, d)
 	mayAct := canPerform(d, r, "reports") && canPerform(d, r, "stock_management")
-	canAct := here && mayAct && blockedCount == 0
+	// A delivery order's controls are the delivery board's (ADR-0215); the
+	// webshop ladder (pick, pack, ship) is never offered on it.
+	canAct := here && mayAct && blockedCount == 0 && o.Kind != data.ChannelKindDelivery
 	var allowed, forward []string
 	next := ""
 	canShip, canCancel := false, false

@@ -695,6 +695,11 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// A non-main or unenrolled till blocks its stranded rows inside (finding 2).
 		uploadChannelOrderActions(ctx, cfg, db, hooks)
 	}
+	// ut-docs#6583: an item's "unavailable until" that has passed is cleared (and the
+	// neutral signal queued) on every tick, 304 included; local, never fails the tick.
+	expireDeliveryAvailability(ctx, db, time.Now())
+	// ... and the queued neutral availability / service signals go up (main till, enrolled).
+	uploadDeliverySignals(ctx, cfg, db, time.Now())
 	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
 	// cloud/both, from EVERY till — report_archive is per-till and not
 	// synced, so each till uploads its own Z chain, an additional till under
