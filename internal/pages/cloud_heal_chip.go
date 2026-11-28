@@ -84,8 +84,8 @@ func healChip(locale string, st credheal.Status, hasOwner bool) (healView, bool)
 		// data download and "Check again". An older cloud sends no date: the
 		// old sentence, plus the same two buttons.
 		v := healView{Reason: st.Reason, Short: t("shop_deleted_short"), Sentence: t("shop_deleted"), Button: t("btn_download_data"), Href: healHrefThis, ButtonHref: healHrefData, Button2: t("btn_check_again")}
-		if until, err := time.Parse(time.RFC3339, st.Detail); err == nil {
-			v.Sentence = fmt.Sprintf(t("shop_deleted_until"), httpx.FormatShortDateTime(until.Local(), healChipClock().Local(), locale))
+		if until, err := time.Parse(time.RFC3339, st.Detail); err == nil && until.After(healChipClock()) {
+			v.Sentence = fmt.Sprintf(t("shop_deleted_until"), httpx.FormatDateTime(until.Local(), locale))
 		}
 		return v, true
 	case credheal.ReasonStorePurged:

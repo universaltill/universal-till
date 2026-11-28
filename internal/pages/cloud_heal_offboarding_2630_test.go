@@ -53,3 +53,15 @@ func TestHealChip_StorePurgedIsFinalAndOffersDataAndNewShop(t *testing.T) {
 		t.Errorf("buttons = %q / %q -> %q", v.Button, v.Button2, v.Button2Href)
 	}
 }
+
+// A restorable_until already in the past is not shown as a live deadline.
+func TestHealChip_PastRestorableUntilFallsBack(t *testing.T) {
+	now := time.Date(2031, 12, 21, 9, 0, 0, 0, time.UTC)
+	orig := healChipClock
+	healChipClock = func() time.Time { return now }
+	t.Cleanup(func() { healChipClock = orig })
+	v, _ := healChip("en", credheal.Status{State: credheal.StateNeedsPerson, Reason: credheal.ReasonStoreDeleted, Detail: time.Date(2031, 12, 20, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)}, true)
+	if !strings.Contains(v.Sentence, "reconnects by itself within a day") {
+		t.Errorf("past date sentence = %q", v.Sentence)
+	}
+}

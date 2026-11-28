@@ -393,7 +393,11 @@ func (e *Engine) run(ctx context.Context) {
 		case <-e.resumeCh:
 			e.resume(ctx)
 		case <-e.checkCh:
-			e.wake(ctx)
+			// Re-checked here: a press queued before a round that ended in a
+			// waiting date or a backoff must not skip it (ut-docs#2630).
+			if st := e.status(); st.State == StateNeedsPerson && st.Reason == ReasonStoreDeleted {
+				e.wake(ctx)
+			}
 		case <-timer.C:
 			e.wake(ctx)
 		}

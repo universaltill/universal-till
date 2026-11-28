@@ -729,3 +729,28 @@ func TestClassify_StorePurgedIsFinalNeedsPerson(t *testing.T) {
 		t.Fatalf("store_deleted = %+v", v)
 	}
 }
+
+// ut-docs#2630: Check again only reacts to a non-final deleted shop.
+func TestCheckAgainOnlyForDeletedShop(t *testing.T) {
+	r := newRig(t)
+	active.Store(r.e)
+	t.Cleanup(func() { active.Store(nil) })
+	CheckAgain()
+	if len(r.e.checkCh) != 0 {
+		t.Fatal("ok state must not queue a check")
+	}
+	r.e.mu.Lock()
+	r.e.st = Status{State: StateNeedsPerson, Reason: ReasonStorePurged}
+	r.e.mu.Unlock()
+	CheckAgain()
+	if len(r.e.checkCh) != 0 {
+		t.Fatal("a purged shop is final: no check")
+	}
+	r.e.mu.Lock()
+	r.e.st = Status{State: StateNeedsPerson, Reason: ReasonStoreDeleted}
+	r.e.mu.Unlock()
+	CheckAgain()
+	if len(r.e.checkCh) != 1 {
+		t.Fatal("a deleted shop queues one check")
+	}
+}
