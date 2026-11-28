@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/secrets"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/shoptemplate"
 	"github.com/universaltill/universal-till/internal/shoptemplate/shoptemplatetest"
@@ -206,6 +207,10 @@ func TestInitBootJoinedTillFromMainSnapshotEndsWithTemplateTheme(t *testing.T) {
 	if err := db.StageReplicaIdentity(dbPath, db.ReplicaIdentity{PrimaryURL: "http://primary.example", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-"}); err != nil {
 		t.Fatal(err)
 	}
+	// ApplyReplicaIdentity drops the process-wide sealing key store (a joined
+	// till must not keep the main's); later tests in this package need TestMain's.
+	prevKS := secrets.Default()
+	t.Cleanup(func() { secrets.SetDefault(prevKS) })
 	if applied, err := db.ApplyReplicaIdentity(d.DB, dbPath); err != nil || !applied {
 		t.Fatalf("apply identity: %v %v", applied, err)
 	}
