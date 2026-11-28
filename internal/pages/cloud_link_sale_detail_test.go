@@ -35,7 +35,7 @@ var (
 		"UnitPrice": "unit_price_minor", "LineDiscount": "line_discount_minor", "TaxRateBP": "tax_rate_bp",
 		"TaxAmount": "tax_minor", "LineTotal": "line_total_minor", "Modifiers": "modifiers", "OrderType": "order_type",
 	}
-	saleDetailLineNever      = []string{"ID", "PluginRef", "PluginRefBy"} // PluginRef*: an opaque plugin id never leaves the till (ut-docs#7206)
+	saleDetailLineNever      = []string{"ID", "PluginRef", "PluginRefBy"} // PluginRef*: never reaches the cloud; held-sale payloads carry it across LAN tills (ut-docs#7206)
 	saleDetailPaymentAllowed = map[string]string{
 		"Method": "method", "Amount": "amount_minor", "ChangeGiven": "change_given_minor", "TipAmount": "tip_minor",
 	}

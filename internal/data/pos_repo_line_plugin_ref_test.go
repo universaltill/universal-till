@@ -2,6 +2,8 @@ package data
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +39,32 @@ func TestPOSRepo_SaleLinePluginRef_RoundTrip_7206(t *testing.T) {
 	for i, want := range [][2]string{{"appt:1:0", "com.example.page"}, {"appt:1:1", "com.example.page"}, {"", ""}} {
 		if got := [2]string{detail.Lines[i].PluginRef, detail.Lines[i].PluginRefBy}; got != want {
 			t.Errorf("line %d ref = %v, want %v", i+1, got, want)
+		}
+	}
+}
+
+// The per-line plugin ref is main-till scope (ADR-0121 amendment,
+// ut-docs#7206): SaleDetail is the replica->primary / LAN journal wire, so
+// marshalling it with refs set must carry no plugin_ref / plugin_ref_by key
+// (nor the values) under any spelling.
+func TestSaleDetailJSON_OmitsPluginRef_7206(t *testing.T) {
+	d := SaleDetail{ID: "s1", Lines: []SaleDetailLine{{
+		Name: "Skin fade", SKU: "SVC", PluginRef: "appt:1:0", PluginRefBy: "com.example.page",
+	}}}
+	out, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(d.Lines[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range [][]byte{out, line} {
+		got := strings.ToLower(string(b))
+		for _, bad := range []string{"plugin_ref", "pluginref", "appt:1:0", "com.example.page"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("sale detail JSON carries %q: %s", bad, b)
+			}
 		}
 	}
 }
