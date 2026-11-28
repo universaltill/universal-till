@@ -86,6 +86,23 @@ func validateProvidesAndMarkets(m *Manifest) error {
 	return nil
 }
 
+// validateShopTypes (ut-docs#7246): every value is an ADR-0026 shop type,
+// exact match (no case-folding, no trimming), none twice. Absent or empty is
+// fine.
+func validateShopTypes(m *Manifest) error {
+	seen := make(map[string]bool, len(m.ShopTypes))
+	for _, v := range m.ShopTypes {
+		if !IsKnownShopType(v) {
+			return fmt.Errorf("manifest shop_types %q is not a known shop type (allowed: %s)", v, strings.Join(ShopTypes(), ", "))
+		}
+		if seen[v] {
+			return fmt.Errorf("manifest shop_types %q more than once", v)
+		}
+		seen[v] = true
+	}
+	return nil
+}
+
 // fiscalCapabilityPrefix marks the `fiscal.*` capabilities, which are
 // exclusive: at most one INSTALLED plugin (active or disabled) may provide
 // each (ADR-0129 §2). Today the hard-coded plugin IDs are what stop another

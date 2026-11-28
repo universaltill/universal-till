@@ -285,7 +285,11 @@ type ListPluginsRequest struct {
 	// treats a listing with no markets as meant for every market, so a
 	// caller that must tell the two apart (ADR-0172 §2) also checks
 	// PluginSummary.Markets itself.
-	Market    string `json:"markets,omitempty"`
+	Market string `json:"markets,omitempty"`
+	// ShopType asks for the listings built for one ADR-0026 shop type (wire
+	// key `shop_type`, ut-docs#7246). A listing naming no shop type is not
+	// returned: the filter says "built for", silence is not a claim.
+	ShopType  string `json:"shop_type,omitempty"`
 	PageToken string `json:"page_token,omitempty"`
 }
 
@@ -322,7 +326,11 @@ type PluginSummary struct {
 	// upper case; wire key `markets`, ADR-0129 §3). Empty = every market.
 	// ADR-0172 §2: an auto-install needs the shop's country named here
 	// explicitly, never the empty "every market".
-	Markets    []string `json:"markets,omitempty"`
+	Markets []string `json:"markets,omitempty"`
+	// ShopTypes are the ADR-0026 shop types the listing is built for (wire
+	// key `shopTypes` on the REST gateway, `shop_types` in snapshots;
+	// ut-docs#7246). Empty = it names none. A hint for suggestions only.
+	ShopTypes  []string `json:"shop_types,omitempty"`
 	ApprovedAt string   `json:"approved_at,omitempty"`
 	CreatedAt  string   `json:"created_at,omitempty"`
 	UpdatedAt  string   `json:"updated_at,omitempty"`
@@ -366,6 +374,8 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		AvailableLocalesCamel []string `json:"availableLocales"`
 		AvailableLocales      []string `json:"available_locales"`
 		Markets               []string `json:"markets"`
+		ShopTypesCamel        []string `json:"shopTypes"`
+		ShopTypes             []string `json:"shop_types"`
 		ApprovedAt            string   `json:"approved_at"`
 		CreatedAt             string   `json:"created_at"`
 		UpdatedAt             string   `json:"updated_at"`
@@ -403,6 +413,11 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		p.AvailableLocales = w.AvailableLocales
 	}
 	p.Markets = w.Markets
+	// Same camelCase-first rule as AvailableLocales above.
+	p.ShopTypes = w.ShopTypesCamel
+	if len(p.ShopTypes) == 0 {
+		p.ShopTypes = w.ShopTypes
+	}
 	p.ApprovedAt = w.ApprovedAt
 	p.CreatedAt = w.CreatedAt
 	p.UpdatedAt = w.UpdatedAt
@@ -629,6 +644,9 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 	}
 	if m := strings.TrimSpace(req.Market); m != "" {
 		params.Set("markets", m)
+	}
+	if st := strings.TrimSpace(req.ShopType); st != "" {
+		params.Set("shop_type", st)
 	}
 	// Note: Real API uses page/page_size instead of page_token
 	if req.PageToken != "" {
