@@ -260,7 +260,7 @@ func TestShopTypeUndoBanner_OnMenuWhileUnexpired(t *testing.T) {
 	}
 }
 
-func TestShopTypeDismiss_RemovesRecordAndBanner(t *testing.T) {
+func TestShopTypeDismiss_HidesBannerButKeepsUndo(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	useRealShopTemplates(t, d)
 	stChange(t, mux, "retail")
@@ -270,6 +270,28 @@ func TestShopTypeDismiss_RemovesRecordAndBanner(t *testing.T) {
 	}
 	if strings.Contains(getAs(mux, "/settings", &mgrUser).Body.String(), `data-testid="shop-type-undo"`) {
 		t.Fatal("banner still renders after dismiss")
+	}
+	// The 7 day record survives, and Undo stays reachable in the Shop type card.
+	if _, ok := shoptemplate.ParseUndo(stGet(t, d, shoptemplate.UndoKey), time.Now()); !ok {
+		t.Fatal("dismiss must keep the undo record")
+	}
+	panel := getAs(mux, "/api/settings/shop-type/panel", &mgrUser).Body.String()
+	if !strings.Contains(panel, "/api/settings/shop-type/undo") {
+		t.Fatalf("Undo must stay reachable from the Shop type card after dismiss:\n%s", panel)
+	}
+	if rec := postForm(mux, "/api/settings/shop-type/undo", url.Values{}, &mgrUser); rec.Code == http.StatusConflict {
+		t.Fatalf("undo after dismiss refused: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := stGet(t, d, common.KeyShopType); got == "retail" {
+		t.Fatal("undo after dismiss did not revert the shop type")
+	}
+}
+
+func TestShopTypeBanner_MentionsSevenDays(t *testing.T) {
+	mux, dp := activeRetailMenuDeps(t)
+	stSet(t, dp, shoptemplate.UndoKey, shoptemplate.NewUndo("retail", "cafe", "", nil, nil, time.Now()).Encode())
+	if b := getPage(t, mux, "/menu").Body.String(); !strings.Contains(b, "7 days") {
+		t.Fatalf("banner must mention the 7 days:\n%s", b)
 	}
 }
 

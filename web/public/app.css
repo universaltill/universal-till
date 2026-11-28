@@ -8690,7 +8690,9 @@ input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
 .shop-type-bar .btn { min-block-size: 2.75rem; min-inline-size: 2.75rem; }
 /* ut-docs#7190: taller body plus a scroll-shadow cue (overlay scrollbars hide
    that there is more); the safety line sits outside the scroller. */
-.shop-type-preview-body { max-block-size: min(65vh, 32rem); overflow-y: auto; padding-inline-end: .25rem;
+/* The 25rem is the room the panel header, safety line, pinned bar and status
+   bar take: the bar stays on screen at the 1024x600 kiosk floor, unscrolled. */
+.shop-type-preview-body { max-block-size: max(10rem, min(32rem, calc(100vh - 25rem))); overflow-y: auto; padding-inline-end: .25rem;
   background:
     linear-gradient(var(--surface) 30%, transparent) top / 100% 1.5rem no-repeat local,
     linear-gradient(transparent, var(--surface) 70%) bottom / 100% 1.5rem no-repeat local,
