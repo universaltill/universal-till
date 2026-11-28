@@ -191,8 +191,10 @@ func TestSyncLink_RevokeClosesTheLink(t *testing.T) {
 	if _, err := nextLinkFrame(t, c); err != nil {
 		t.Fatal(err)
 	}
-	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+tillID+"/revoke", nil),
-		auth.User{ID: "u1", Role: "manager"})
+	seedDataAPIManager(t, f.dp.Db)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+tillID+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "u1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	f.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -36,6 +37,8 @@ func newPrefixShop(t *testing.T) *prefixShop {
 	s.main, s.path = newSyncDepsWithPath(t, "main.db")
 	s.mux = http.NewServeMux()
 	registerSyncAPI(s.mux, s.main)
+	s.main.AuthSvc = auth.NewService(s.main.Db) // revoke checks a manager PIN (ut-docs#7173 review)
+	seedDataAPIManager(t, s.main.Db)
 	return s
 }
 
@@ -87,7 +90,8 @@ func (s *prefixShop) enrol(t *testing.T, name, requested string) (string, string
 
 func (s *prefixShop) revoke(t *testing.T, id string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code >= 300 {

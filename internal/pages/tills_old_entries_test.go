@@ -400,3 +400,29 @@ func TestRoster_RevokeUsesTheInlinePinPanel(t *testing.T) {
 		t.Fatalf("Revoke must not post straight from the button any more")
 	}
 }
+
+// Review 7173: the manager PIN is enforced by the revoke route itself, so a
+// direct POST (no browser, no inline panel) cannot skip it.
+func TestRevoke_EnforcesTheManagerPinServerSide(t *testing.T) {
+	mux, dp, g1, _ := seedGhostsForOneLivePhoneAll(t)
+	repo := data.NewTillsRepo(dp.Db)
+	has := func() bool {
+		rows, _ := repo.ListTills(t.Context())
+		for _, r := range rows {
+			if r.ID == g1 {
+				return true
+			}
+		}
+		return false
+	}
+	path := "/api/sync/tills/" + g1 + "/revoke"
+	if rec := postPIN(mux, path, "", nil); rec.Code != http.StatusUnauthorized || !has() {
+		t.Fatalf("no PIN = %d (till kept=%v), want 401 and the till kept", rec.Code, has())
+	}
+	if rec := postPIN(mux, path, "000000", nil); rec.Code != http.StatusUnauthorized || !has() {
+		t.Fatalf("wrong PIN = %d (till kept=%v), want 401 and the till kept", rec.Code, has())
+	}
+	if rec := postPIN(mux, path, dataAPITestManagerPIN, nil); rec.Code != http.StatusNoContent || has() {
+		t.Fatalf("right PIN = %d (till kept=%v), want 204 and the till gone", rec.Code, has())
+	}
+}

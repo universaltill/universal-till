@@ -1091,6 +1091,12 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "revoke must be done on the primary till", http.StatusConflict)
 			return
 		}
+		// ut-docs#7173 review: the inline manager PIN is enforced HERE, not
+		// only in the browser, so a direct POST cannot skip it. Checked after
+		// the cheap primary-only refusal so a replica never burns attempts.
+		if !verifyRemovalPIN(d, w, r) {
+			return
+		}
 		id := r.PathValue("id")
 		if err := repo.DeleteTill(r.Context(), id); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)

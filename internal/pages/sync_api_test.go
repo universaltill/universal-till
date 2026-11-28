@@ -105,7 +105,9 @@ func newSyncAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db), // the revoke route checks a manager PIN (ut-docs#7173 review)
 	}
+	seedDataAPIManager(t, db)
 	mux := http.NewServeMux()
 	registerSyncAPI(mux, dp)
 	registerTillsTabs(mux, dp) // ut-docs#7173: the sections the old /tills page rendered
@@ -264,7 +266,8 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 
 	// Revoking removes it — the same bearer stops working.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+enrollResp.Data.TillID+"/revoke", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+enrollResp.Data.TillID+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 revoking, got %d: %s", rec.Code, rec.Body.String())
@@ -1749,7 +1752,8 @@ func TestRevokeTill_DeleteFailureIsLocalized(t *testing.T) {
 		t.Fatalf("drop tills: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tills/"+id+"/revoke", strings.NewReader("override_pin="+dataAPITestManagerPIN))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {

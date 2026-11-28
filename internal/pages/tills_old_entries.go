@@ -194,11 +194,9 @@ func verifyRemovalPIN(d *common.Deps, w http.ResponseWriter, r *http.Request) bo
 // POST /api/sync/tills/verify-pin (the inline PIN check the local revoke
 // waits for) and POST /api/sync/tills/{id}/remove-from-account.
 //
-// Gap, recorded for the card: the existing POST /api/sync/tills/{id}/revoke
-// (sync_api.go, owned in part by epic-pairing #7098) takes no PIN, so the
-// inline panel verifies the PIN here first and only then posts the revoke.
-// The revoke itself still trusts the session; folding the PIN into it is a
-// one-line verifyRemovalPIN call once epic-pairing has merged.
+// Every removal route checks the PIN itself (verifyRemovalPIN): the revoke in
+// sync_api.go and remove-from-account here. verify-pin only lets "Remove all"
+// fail early on a wrong PIN, before any entry is removed; it is not the gate.
 func registerTillsOldEntries(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("POST /api/sync/tills/verify-pin", func(w http.ResponseWriter, r *http.Request) {
