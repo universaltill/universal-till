@@ -321,7 +321,7 @@
 </div>
 {{ if .canTills }}
 <div class="card" id="settings-tills-others">
-  <h2>{{ T "settings.tills_tree.others" }}</h2>
+  <h2>{{ T "tills.tab.others" }}</h2>
   <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
   <div id="tills-others-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/others{{ if .tillsRefresh }}?refresh=1{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">
     <p class="muted">{{ T "tills.tree.checking" }}</p>
@@ -339,7 +339,7 @@
 {{ end }}
 {{ if .canTills }}
 <div class="card" id="settings-tills-add">
-  <h2>{{ T "settings.tills_tree.add" }}</h2>
+  <h2>{{ T "tills.tab.add" }}</h2>
   <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
   <div id="tills-add-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/add{{ if .tillsNeed }}?need={{ .tillsNeed }}{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">
     <p class="muted">{{ T "tills.tree.checking" }}</p>
@@ -348,7 +348,7 @@
 {{ end }}
 {{ if .canTills }}
 <div class="card" id="settings-tills-readers">
-  <h2>{{ T "settings.tills_tree.readers" }}</h2>
+  <h2>{{ T "tills.tab.readers" }}</h2>
   <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
   <div id="tills-readers-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/readers" hx-trigger="ut:load-section" hx-swap="innerHTML">
     <p class="muted">{{ T "tills.tree.checking" }}</p>

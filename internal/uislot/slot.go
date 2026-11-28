@@ -562,10 +562,10 @@ var CoreSettings = []Entry{
 	// the new cards, so every old deep link still lands.
 	{Key: "settings-tills-this", Class: ClassCommon, Href: "#settings-tills-this", LabelKey: "settings.tills_tree.this", Order: 100, Group: "settings.cat.devices.label"},
 	{Key: "settings-tills-shop", Class: ClassCommon, Href: "#settings-tills-shop", LabelKey: "settings.tills_tree.shop", Order: 102, Group: "settings.cat.devices.label"},
-	{Key: "settings-tills-others", Class: ClassCommon, Href: "#settings-tills-others", LabelKey: "settings.tills_tree.others", Order: 104, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-others", Class: ClassCommon, Href: "#settings-tills-others", LabelKey: "tills.tab.others", Order: 104, Group: "settings.cat.devices.label"},
 	{Key: "settings-tills-old", Class: ClassCommon, Href: "#settings-tills-old", LabelKey: "settings.tills_tree.old", Order: 106, Group: "settings.cat.devices.label"},
-	{Key: "settings-tills-add", Class: ClassCommon, Href: "#settings-tills-add", LabelKey: "settings.tills_tree.add", Order: 108, Group: "settings.cat.devices.label"},
-	{Key: "settings-tills-readers", Class: ClassCommon, Href: "#settings-tills-readers", LabelKey: "settings.tills_tree.readers", Order: 110, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-add", Class: ClassCommon, Href: "#settings-tills-add", LabelKey: "tills.tab.add", Order: 108, Group: "settings.cat.devices.label"},
+	{Key: "settings-tills-readers", Class: ClassCommon, Href: "#settings-tills-readers", LabelKey: "tills.tab.readers", Order: 110, Group: "settings.cat.devices.label"},
 	// ADR-0200: Privacy, manager-only, right after Till registration in
 	// settings.html. The registration notice names "Settings > Privacy" and
 	// the "Send usage facts" switch inside it; filtered from a cashier's
