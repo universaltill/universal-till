@@ -139,7 +139,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// persisted per-till (see the rederiveSettings comment further down).
 	// Moving this call after the UIScale resolution would silently start
 	// persisting UT_UI_SCALE as if a manager had set it.
-	if err := common.SaveState(ctx, setStore, state); err != nil {
+	if err := common.SaveBootState(ctx, setStore, state); err != nil {
 		log.Errorf("persist default settings: %v", err)
 	}
 

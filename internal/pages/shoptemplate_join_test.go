@@ -6,8 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/shoptemplate"
 	"github.com/universaltill/universal-till/internal/shoptemplate/shoptemplatetest"
 )
@@ -116,5 +122,54 @@ func TestTemplateStateReconcileTickSeedsJoinedTillTheme(t *testing.T) {
 	wg.Wait()
 	if got := getSetting(t, d, "theme"); got != "dark" {
 		t.Fatalf("theme after reconcile tick = %q, want dark", got)
+	}
+}
+
+// The real boot path (ut-docs#6347): app.Run's LoadRuntimeConfig/
+// SaveRuntimeConfig and Init's own SaveState both used to persist the config
+// default theme before the joined-till seed ran, and ApplyPerTill skips a set
+// theme, so the seed never took effect on a booted till. A joined till whose
+// theme row is unset must come out of a boot seeded, and a theme the owner set
+// must survive it.
+func TestInitBootSeedsJoinedTillTheme(t *testing.T) {
+	for _, tc := range []struct{ name, stored, want string }{
+		{"unset theme is seeded from the template", "", "dark"},
+		{"owner-chosen theme is kept", "amber", "amber"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useThemeTemplate(t)
+			chdirRoot(t)
+			paths.Init(t.TempDir())
+			d := &db.DB{DB: openPagesTestDB(t)}
+			defer d.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			store := settings.NewStore(d.DB)
+			rows := map[string]string{"sync.primary_url": "http://primary.example", common.KeyShopType: "retail"}
+			if tc.stored != "" {
+				rows["theme"] = tc.stored
+			}
+			for k, v := range rows {
+				if err := store.Set(ctx, k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
+			// What app.Run does before pages.Init.
+			store.LoadRuntimeConfig(ctx, cfg)
+			if err := store.SaveRuntimeConfig(ctx, cfg); err != nil {
+				t.Fatal(err)
+			}
+			pm, err := plugins.Init(ctx, cfg, d.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			Init(ctx, ctx, cfg, pm, d.DB, nil, &wg)
+			t.Cleanup(func() { httpx.InitRailVisibility(nil) })
+			if got, _, _ := store.Get(ctx, "theme"); got != tc.want {
+				t.Fatalf("theme after boot = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

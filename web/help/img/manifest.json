@@ -425,7 +425,7 @@
       "sha256": "84e31102cb0aa1ba779b95b5212e8b5794e8f5a7deb03c637554b95c09f8ea4d"
     },
     "internal/pages/common/state.go": {
-      "sha256": "a389ddf3e7e079ede8ddc3c2049a6aa11e84f8d0f813f06f09ceebe7fe379190"
+      "sha256": "2037bb5979da163ebb560d96fa65f5053aae33e2a3e49d60ba2b882b8dcf0b9d"
     },
     "internal/pages/common/template_state.go": {
       "sha256": "28a0a872e2b79a7ff0772efe075ae57728b7af52f2e8256e4ef80226ed77df03"
@@ -542,7 +542,7 @@
       "sha256": "6513af8fb077b43d75b08e4e20fa46b6c592b16a408a43c9c3d9ebbab50bf6dd"
     },
     "internal/pages/init.go": {
-      "sha256": "ecc9d534fa078257861bccbf80e10c26c23c8fd7395ffaeebdc7b6fe541344c7"
+      "sha256": "56e0fb90fa2c25270d10a8a7715766d334824b2e1f74707bf5c1637fd01e81ca"
     },
     "internal/pages/init_kiosk_detect.go": {
       "sha256": "be34af4a3ef986ee2d40915215e6464fe96d47e79f42382fa718ada07c4eed68"
@@ -755,7 +755,7 @@
       "sha256": "58d07716742d30ebcb6ef8b072bdca8c911cbdcee7cfe19be4c9282bdde7652a"
     },
     "internal/pages/shoptemplate_apply.go": {
-      "sha256": "2ce74179fd426a5728d8d005e2de2f6ed9231768ac1224c4a1ebaa590fd2f9f7"
+      "sha256": "3275294ad6ab0312429e24be0a906a12734d14f7578d06e6781be7e4da243ee1"
     },
     "internal/pages/shoptemplate_catalog.go": {
       "sha256": "b57d11f7b01f64a8ffdbcb4138527d043676824ed24fd8f418967adb63bf8506"
@@ -818,7 +818,7 @@
       "sha256": "7552fac501e0f01f865a1576ebeced8ed0549e6461497affc2c3f9bf0e6fc3a3"
     },
     "internal/pages/template_state_reconcile.go": {
-      "sha256": "01850c262850514c5275cc6e322e029628987863616493d86f188e68f06c9ed6"
+      "sha256": "af3371b6d8e35c095087173254476a41f01273c889442f2fbba4aa12588cfb5a"
     },
     "internal/pages/tender_inflight.go": {
       "sha256": "7e4b3e7cd104b89fe0e46334da2f294eb22f6800f10678313f1a4ac6703a492d"
@@ -2159,7 +2159,7 @@
       "sha256": "2ab639863d401ad68e8bc35b67baab886f7c37dfb787443a95517786d7ee09a8"
     },
     "web/ui/partials/shop_type_preview.html": {
-      "sha256": "d462c5b9701cbc2f7d76732dbfde84d309779e6483e4452c23bb363d9594c266"
+      "sha256": "93b3e67a9f59e189eb44f0616a9e825846e6b774494f0d82616d15f9620bd893"
     },
     "web/ui/partials/shop_type_tiles.html": {
       "sha256": "255ccbe92d974e9061c0a9f645ca2b4414a62bf86272d97e323fcef5bda4df1c"

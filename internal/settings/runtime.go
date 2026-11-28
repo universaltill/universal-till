@@ -76,6 +76,14 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 		"store.tax_inclusive":    strconv.FormatBool(cfg.Locales.TaxInclusive),
 		"store.tax_rate":         taxrate.FormatPercent(cfg.Locales.TaxRateBP),
 	}
+	// ut-docs#6347: the theme is only written once something chose it (the
+	// owner, a template seed). An unset row means "the config default", which
+	// every reader already falls back to; persisting it here made the row look
+	// chosen, so a joined till's per-till template seed (which never
+	// overwrites a set theme) was a no-op on every real boot.
+	if cur, ok, err := s.Get(ctx, "theme"); err != nil || !ok || cur == "" {
+		delete(kv, "theme")
+	}
 	// ut-docs#4273: a placeholder (the UT_STORE_NAME default "My Store",
 	// blank, the cloud's default) is never written. LoadRuntimeConfig
 	// ignores a blank store.name, so without this every boot wrote the
