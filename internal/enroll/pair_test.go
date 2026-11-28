@@ -83,7 +83,8 @@ func newFakePairCloud(t *testing.T) *fakePairCloud {
 			if answer == nil {
 				// The shape ut-cloud's POST /v1/stores/pair handler answers
 				// (ADR-0116: the credential is data.device_token).
-				answer = map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "device_id": "till-new", "device_token": pairToken}
+				// device_id echoes the id sent, like the real handler.
+				answer = map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "device_id": anyBody["device_id"], "device_token": pairToken}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": answer, "error": nil})
 		}
@@ -182,6 +183,13 @@ func assertPairSecretsNotLogged(t *testing.T, logs *syncBuffer) {
 }
 
 // --- postPair -------------------------------------------------------------
+
+// postPair is the plain first-pair call (no first_till, no rejoin), kept as a
+// test helper now that production reaches /pair through postPairOpts.
+func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version string) (storeID, merchantID, token string, err error) {
+	a, err := postPairOpts(ctx, endpoint, code, deviceID, deviceName, version, pairOpts{})
+	return a.storeID, a.merchantID, a.token, err
+}
 
 func TestPostPairSuccess(t *testing.T) {
 	cloud := newFakePairCloud(t)
@@ -404,42 +412,32 @@ func TestPairMainTillAdoptsPairedIdentity(t *testing.T) {
 	assertPairSecretsNotLogged(t, logs)
 }
 
-// A refused code still leaves the till with its old identity cleared and a
-// fresh device id: the flow only runs on a till that needs pairing, and a
-// half-old identity is worse than none (ADR-0116 D5 step 1).
-func TestPairRefusedLeavesIdentityCleared(t *testing.T) {
+// A refused code changes nothing: the till keeps its old identity and keeps
+// working (ADR-0222 §9 first bullet, which supersedes ADR-0116 D5's
+// reset-first order).
+func TestPairRefusedLeavesTheIdentityUntouched(t *testing.T) {
 	logs := captureLog(t)
 	cloud := newFakePairCloud(t)
 	cloud.set(func(c *fakePairCloud) { c.status, c.errOut = http.StatusForbidden, "code_invalid" })
 	kv, cfg := bootForPair(t, cloud.srv.URL, false, pairOldStore)
 
-	st, err := Pair(context.Background(), cfg, kv, pairCode)
-	if err == nil {
+	if _, err := Pair(context.Background(), cfg, kv, pairCode); err == nil {
 		t.Fatal("Pair succeeded on a refused code")
 	}
-	if st.Registered {
-		t.Fatalf("status = %+v after a refused pair, want not registered", st)
+	for _, k := range []string{keyDeviceID, keyToken, keyStoreID, keyMerchantID, keyEnrolledAt, keyPairedAt, keyDeviceRegistered} {
+		if w := kv.writesOf(k); len(w) != 0 {
+			t.Fatalf("%s was written (%q) by a refused pair", k, w)
+		}
 	}
-	if kv.get(keyPairedAt) != "" {
-		t.Fatalf("paired_at = %q survived the identity reset, want cleared", kv.get(keyPairedAt))
-	}
-	if kv.get(keyToken) != "" || kv.get(keyStoreID) != "" || kv.get(keyEnrolledAt) != "" {
-		t.Fatalf("old identity survived: token=%q store=%q enrolled_at=%q", kv.get(keyToken), kv.get(keyStoreID), kv.get(keyEnrolledAt))
-	}
-	if id := kv.get(keyDeviceID); id == pairOldDev || id == "" {
-		t.Fatalf("device_id = %q, want a fresh one", id)
+	if kv.get(keyDeviceID) != pairOldDev || kv.get(keyToken) != pairOldToken || kv.get(keyStoreID) != pairOldStore || kv.get(keyEnrolledAt) == "" {
+		t.Fatalf("old identity changed: device=%q token=%q store=%q enrolled_at=%q", kv.get(keyDeviceID), kv.get(keyToken), kv.get(keyStoreID), kv.get(keyEnrolledAt))
 	}
 	if kv.get(keyPublicKey) != pinnedKey {
 		t.Fatal("the pinned signing key was cleared")
 	}
-	if tok := Effective(cfg).Marketplace.MerchantToken; tok != "" {
-		t.Fatal("the old token is still in use after the identity was cleared")
-	}
-	if sid := Effective(cfg).Marketplace.StoreID; sid != "" {
-		t.Fatalf("Effective store id = %q after a refused pair, want \"\" (stale startup copy %q)", sid, pairOldStore)
-	}
-	if sid, _ := currentStoreAuth(cfg.Marketplace); sid != "" {
-		t.Fatalf("currentStoreAuth store id = %q after a refused pair, want \"\" (stale startup copy %q)", sid, pairOldStore)
+	m := Effective(cfg).Marketplace
+	if m.MerchantToken != pairOldToken || m.StoreID != pairOldStore || m.DeviceID != pairOldDev {
+		t.Fatalf("Effective = %+v after a refused pair, want the old identity", m)
 	}
 	assertPairSecretsNotLogged(t, logs)
 }
@@ -636,8 +634,8 @@ func TestPairReplicaStoreMismatchRefused(t *testing.T) {
 	if tok := Effective(cfg).Marketplace.MerchantToken; tok == pairToken {
 		t.Fatal("the other store's credential is in use")
 	}
-	if st.Registered {
-		t.Fatalf("status = %+v, want not registered", st)
+	if !st.Registered || st.StoreID != pairOldStore {
+		t.Fatalf("status = %+v, want the replica still registered under %s (nothing is cleared before a 200)", st, pairOldStore)
 	}
 	if !strings.Contains(logs.String(), pairStore) {
 		t.Fatalf("the mismatch warning does not name the paired store:\n%s", logs.String())

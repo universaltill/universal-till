@@ -1,0 +1,13 @@
+{
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "device_id": "till-golden-1",
+  "typed_codes": [
+    "K7QX29PM",
+    "k7qx-29pm",
+    " K7QX 29PM "
+  ],
+  "code_hash": "5c1a7034d3ae794ae59634e00ace76d31cdd82e39109667147e83a3b91a90048",
+  "message": "universaltill/till-rejoin/v1\ntill-golden-1\nA6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg\n5c1a7034d3ae794ae59634e00ace76d31cdd82e39109667147e83a3b91a90048",
+  "signature": "Kszj15cniGyv3DFPfkFWIlmgOK72042-hZpgXELBAVr71tG9r3DVb7iwJoTD3-8CR11DahU8x8gwU9ZM_4jvDA"
+}
