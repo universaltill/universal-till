@@ -2,6 +2,7 @@ package pos
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -109,5 +110,62 @@ func TestCompleteSale_StoresPluginRef_7206(t *testing.T) {
 	want := [][2]string{{"appt:1:0", "com.example.page"}, {"appt:1:1", "com.example.page"}, {"", ""}}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("stored refs = %v, want %v", got, want)
+	}
+}
+
+// ScanRefLine must hand back a private copy of the basket, like every other
+// locked method: returning &s.basket aliases live state that the next
+// locked call rewrites while the caller (pages/pos_api.go) still reads it.
+// Run with -race.
+func TestScanRefLine_ReturnsPrivateBasketCopy_7206(t *testing.T) {
+	s := NewServiceWithResolver(Config{}, refTestResolver())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			s.ScanQtyWithResult("SVC", 1)
+		}
+	}()
+	var sink int
+	for i := 0; i < 200; i++ {
+		b, _ := s.ScanRefLine("SVC", 1, "com.example.page", "appt:1:0")
+		sink += len(b.Lines) + int(b.Total.Minor())
+	}
+	<-done
+	_ = sink
+}
+
+// A held-sale snapshot is JSON that also crosses tills
+// (/api/sync/held-sales/upsert), so a restored ref is re-validated: a ref or
+// plugin id that would never have been accepted at pick time is dropped
+// (both together), and the line itself is kept.
+func TestRestoreHeld_DropsInvalidPluginRef_7206(t *testing.T) {
+	cases := []struct{ name, ref, by string }{
+		{"ref with space", "appt 1", "com.example.page"},
+		{"ref too long", strings.Repeat("a", 65), "com.example.page"},
+		{"ref with markup", "<script>", "com.example.page"},
+		{"bad plugin id", "appt:1:0", "Bad/Plugin"},
+		{"ref without plugin", "appt:1:0", ""},
+		{"plugin without ref", "", "com.example.page"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewServiceWithResolver(Config{}, refTestResolver())
+			s.ScanRefLine("SVC", 1, "com.example.page", "appt:1:0")
+			snap := s.Snapshot()
+			snap.Lines[0].PluginRef, snap.Lines[0].PluginRefBy = tc.ref, tc.by
+			s2 := NewServiceWithResolver(Config{}, refTestResolver())
+			s2.RestoreHeld(snap, HeldOrigin{})
+			b := s2.Basket()
+			if len(b.Lines) != 1 {
+				t.Fatalf("lines = %d, want the line kept", len(b.Lines))
+			}
+			if b.Lines[0].PluginRef != "" || b.Lines[0].PluginRefBy != "" {
+				t.Errorf("restored ref=%q by=%q, want both dropped", b.Lines[0].PluginRef, b.Lines[0].PluginRefBy)
+			}
+			if b.Lines[0].SKU != "SVC" || b.Lines[0].PriceCents != money.FromMinor(2500) {
+				t.Errorf("line = %+v, want SVC at 2500 kept", b.Lines[0])
+			}
+		})
 	}
 }

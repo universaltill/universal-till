@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -383,6 +384,13 @@ func (s *Service) restoreHeldLocked(snap BasketSnapshot, origin HeldOrigin) Pend
 			// together (RemoveLine("") would match all of them).
 			key = uuid.NewString()
 		}
+		// ut-docs#7206: the snapshot is JSON that also arrives from other
+		// tills (/api/sync/held-sales/upsert), so the ref is re-validated
+		// here rather than trusted; an invalid pair is dropped, the line kept.
+		pluginRef, pluginRefBy := l.PluginRef, l.PluginRefBy
+		if !validPluginLineRef(pluginRef, pluginRefBy) {
+			pluginRef, pluginRefBy = "", ""
+		}
 		s.lines = append(s.lines, BasketLine{
 			LineKey: key,
 			SKU:     l.SKU, Name: l.Name, Qty: l.Qty,
@@ -392,7 +400,7 @@ func (s *Service) restoreHeldLocked(snap BasketSnapshot, origin HeldOrigin) Pend
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
-			PluginRef: l.PluginRef, PluginRefBy: l.PluginRefBy,
+			PluginRef: pluginRef, PluginRefBy: pluginRefBy,
 			OrderType:      lineMode,
 			KitchenSentQty: l.KitchenSentQty,
 			AgeRestricted:  l.AgeRestricted,
@@ -441,4 +449,24 @@ func cloneGiftVoucher(v *GiftVoucherLine) *GiftVoucherLine {
 	}
 	c := *v
 	return &c
+}
+
+// pluginLineRefRe is the per-line ref shape a sell.overlay pick accepts
+// (pluginview suggestionRefRe, ADR-0121 amendment, ut-docs#7206);
+// pluginLineRefByRe is the plugin-id shape (plugins.validatePluginID, which
+// internal/pos cannot import).
+var (
+	pluginLineRefRe   = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+	pluginLineRefByRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+)
+
+// validPluginLineRef reports whether a restored ref/plugin pair is one a
+// pick could have produced: both set (or both empty, the plain line),
+// the ref in the ref shape and the plugin a well-formed plugin id.
+func validPluginLineRef(ref, by string) bool {
+	if ref == "" && by == "" {
+		return true
+	}
+	return pluginLineRefRe.MatchString(ref) &&
+		pluginLineRefByRe.MatchString(by) && !strings.Contains(by, "..")
 }
