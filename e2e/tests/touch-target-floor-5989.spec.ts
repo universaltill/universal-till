@@ -320,7 +320,7 @@ test.describe('route sweep', () => {
         test(`${vp} ${route} touch targets >= 44px`, async ({ page }) => {
           const resp = await page.goto(route);
           expect(resp?.status(), `${route} status`).toBe(200);
-          expect(new URL(page.url()).pathname, `${route} redirected`).toBe(route);
+          expect(new URL(page.url()).pathname, `${route} redirected`).toBe(route.split('#')[0]);
           await page.waitForLoadState('load');
           await page.waitForTimeout(300);
           const r = await page.evaluate(scan, { chrome: CHROME_ROUTES.has(route) });

@@ -1085,7 +1085,7 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
 .tills-roster .till-id { overflow-wrap: anywhere; }
 /* "Join as" choice on the join forms (tills.html, setup.html). */
 .join-role { border: 0; padding: 0; margin-block: .6rem; }
-.join-role label { display: block; margin-block: .3rem; }
+.join-role label { display: block; margin-block: .3rem; min-block-size: 44px; }
 .join-role small { display: block; margin-inline-start: 1.6rem; }
 /* Narrow the manager-PIN box from the ~245px an `input`'s default size=20
    plus this sheet's padding gives it, so the device/code columns keep more
@@ -8653,10 +8653,11 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .join-scanned[hidden] { display: none; }
 input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
 
-/* ut-docs#7057: tap targets of at least 44px on the Tills page. The "?" keeps its
+/* ut-docs#7057/#7173: tap targets of at least 44px in the Tills & devices sections. The "?" keeps its
    look and gains an invisible 44px hit area; the Registers link gets block padding. */
-.tills-page .help-hint { position: relative; }
-.tills-page .help-hint::after { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 44px; block-size: 44px; transform: translate(-50%, -50%); } /* rtl:allow centred by a symmetric translate */
+[id^="settings-tills-"] .help-hint { position: relative; inline-size: 44px; block-size: 44px; margin-block: -.6rem; border-color: transparent; }
+[id^="settings-tills-"] .help-hint::before { content: ""; position: absolute; top: 50%; left: 50%; inline-size: 1.6rem; block-size: 1.6rem; box-sizing: border-box; transform: translate(-50%, -50%); border: 1px solid var(--border); border-radius: 50%; } /* rtl:allow centred by a symmetric translate */
+[id^="settings-tills-"] .help-hint:hover::before, [id^="settings-tills-"] .help-hint:focus::before { border-color: var(--focus-border, #2b6cb0); }
 .tills-panel a[href="/registers"] { display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: .5rem; }
 
 /* Refund screen: pick which payment of a split bill to refund (ut-docs#6648). */

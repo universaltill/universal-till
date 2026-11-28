@@ -863,7 +863,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "3bc8fc3ac233fc44ed5b9efd91765ff94a69b9dd67f7171f84207efcae229682"
+      "sha256": "d1eec70967f60ad9cfebcf14f7c851cb433e54f008ca138636cc811542adff97"
     },
     "web/public/app.js": {
       "sha256": "5e1329bf9611c24a51a1e5e357578300ad455cf1721ab4fc6088104fd6a1779e"
@@ -1820,7 +1820,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "5e77d1edb41288401314add0b3e38ba3d2ec8b6ae8df9c520967c06c7b1e7c9d"
+      "sha256": "fdb30b28e790a85b78a7ada58bddfbad602ce8434a0bd9d4a45b7343d002f863"
     },
     "web/ui/pages/setup.html": {
       "sha256": "b714d36368916a600caa9775f19e3d21235e7882f59d3d1e972528f879a0449a"

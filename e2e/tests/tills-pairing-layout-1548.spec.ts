@@ -128,7 +128,7 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
     // visual state (native bubbles alone are transient and easy to miss
     // on a touchscreen till).
     await page.locator('#tills-tab-code').click();
-    await page.locator('input[name="code"]').fill('some-code');
+    await page.locator('#tills-panel-code input[name="code"]').fill('some-code');
     await page.locator('#tills-panel-code button[type="submit"]').click();
 
     await expect(error).toBeVisible();

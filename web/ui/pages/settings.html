@@ -320,7 +320,7 @@
   {{ end }}
 </div>
 {{ if .canTills }}
-<div class="card" id="settings-tills-others">
+<div class="card settings-wide" id="settings-tills-others">
   <h2>{{ T "tills.tab.others" }}</h2>
   <p class="muted" data-tills-live role="status" aria-live="polite" data-failed="{{ T "tills.tree.old.remove_failed" }}"></p>
   <div id="tills-others-body" class="tills-lazy" data-tills-body hx-get="/ui/tills/section/others{{ if .tillsRefresh }}?refresh=1{{ end }}" hx-trigger="ut:load-section" hx-swap="innerHTML">

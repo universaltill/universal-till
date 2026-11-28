@@ -7,7 +7,8 @@ export const TILL_GET_ROUTES = ['/', '/admin', '/audit', '/backoffice', '/blueto
   '/help', '/import', '/inventory', '/items', '/journal', '/kitchen-stations', '/locations', '/menu',
   '/modifiers', '/my-reports', '/open-orders', '/orders', '/plugins', '/plugins/store', '/promotions',
   '/receipt-designer', '/registers', '/report-issue', '/reports', '/settings', '/settings/menu', '/shifts',
-  '/tables', '/tills', '/translations', '/users', '/users/permissions'];
+  '/settings#settings-tills-add', '/settings#settings-tills-others', '/settings#settings-tills-readers',
+  '/settings#settings-tills-shop', '/settings#settings-tills-this', '/tables', '/translations', '/users', '/users/permissions'];
 
 // ---------------------------------------------------------------------------
 // Form-layout geometry (ut-docs#300). Shared because the two surfaces that had

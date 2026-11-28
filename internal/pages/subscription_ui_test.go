@@ -146,11 +146,11 @@ func cardSection(t *testing.T, body, id string) string {
 	switch id {
 	case "registration":
 		return sectionBetween(body, `<div id="registration">`, `id="subscription"`) +
-			sectionBetween(body, `id="pair-details"`, `<div class="card" id="settings-tills-others"`)
+			sectionBetween(body, `id="pair-details"`, `id="settings-tills-others"`)
 	case "subscription":
 		return sectionBetween(body, `id="subscription"`, `id="pair-details"`)
 	case "settings-tills-shop":
-		return sectionBetween(body, `<div class="card" id="settings-tills-shop"`, `<div class="card" id="settings-tills-others"`)
+		return sectionBetween(body, `<div class="card" id="settings-tills-shop"`, `id="settings-tills-others"`)
 	}
 	start := strings.Index(body, `<div class="card" id="`+id+`"`)
 	if start == -1 {

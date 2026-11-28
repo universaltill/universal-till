@@ -34,6 +34,11 @@ type syncLinkFixture struct {
 func newSyncLinkFixture(t *testing.T) *syncLinkFixture {
 	t.Helper()
 	dp := newSyncPairingGateTestDeps(t)
+	// fleetCache is process-wide: an account list another test left behind
+	// would mark this fixture's tills as "old entries" (order-dependent under
+	// -shuffle, ut-docs#7173).
+	resetFleetCache()
+	t.Cleanup(resetFleetCache)
 	mux := http.NewServeMux()
 	registerSyncAPI(mux, dp)
 	registerTillsTabs(mux, dp) // ut-docs#7173: section fragments

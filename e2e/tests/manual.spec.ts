@@ -179,7 +179,7 @@ test('settings sections carry their own ? hints', async ({ page }) => {
   // time, so open each section by its deep link before asserting its own
   // "?" is visible (every card is still in the DOM; only one is shown).
   const sections: [string, string][] = [
-    ['claim', 'registration'],
+    ['claim', 'settings-tills-shop'], // ut-docs#7173: Shop and sync section
     ['updates', 'settings-update'],
     ['payments', 'settings-payments'],
     ['backups', 'settings-backup'],

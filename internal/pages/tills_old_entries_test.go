@@ -209,10 +209,11 @@ func TestRemoveFromAccount_AsksForTheManagerPin(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 	registerTillsTabs(mux, dp)
 	resetFleetCache()
+	oldFetch := tillsFleetFetch // package-global: restore so later tests (-shuffle) do not see this list
 	tillsFleetFetch = func(context.Context, *common.Deps) ([]enroll.Device, error) {
 		return []enroll.Device{{DeviceID: "d1", TillID: "ghost-1", Name: "phone till"}}, nil
 	}
-	t.Cleanup(func() { resetFleetCache() })
+	t.Cleanup(func() { tillsFleetFetch = oldFetch; resetFleetCache() })
 
 	if rec := postPIN(mux, "/api/sync/tills/ghost-1/remove-from-account", "000000", nil); rec.Code != http.StatusUnauthorized || called != "" {
 		t.Fatalf("wrong PIN = %d (removed %q), want 401 and nothing removed", rec.Code, called)
@@ -364,6 +365,8 @@ func TestTillsTree_NoMasterSlaveWording(t *testing.T) {
 func TestOldEntriesCountCached_NeverFetches(t *testing.T) {
 	mux, dp := seedGhostsForOneLivePhoneDeps(t)
 	fetches := 0
+	oldFetch := tillsFleetFetch // package-global: restore for later tests (-shuffle)
+	t.Cleanup(func() { tillsFleetFetch = oldFetch; resetFleetCache() })
 	tillsFleetFetch = func(context.Context, *common.Deps) ([]enroll.Device, error) {
 		fetches++
 		return []enroll.Device{{DeviceID: "dev-live", TillID: "live", Name: "phone-till2"}}, nil
