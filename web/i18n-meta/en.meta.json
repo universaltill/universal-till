@@ -1879,5 +1879,6 @@
   "tills.tree.this.save": {"description": "The one Save button of This till (name and register).", "review": "standard"},
   "tills.tree.this.technical_details": {"description": "Summary of the text-only disclosure in This till that holds the device ID and key fingerprint.", "review": "standard"},
   "tills.tree.this.technical_hint": {"description": "Hint inside Technical details.", "review": "standard"},
-  "tills.shop.plan_heading": {"description": "Heading of the plan block inside Shop and sync.", "review": "standard"}
+  "tills.shop.plan_heading": {"description": "Heading of the plan block inside Shop and sync.", "review": "standard"},
+  "plugins.permissions.desc.records_sync": {"description": "Consent line on the plugin install and permissions screen for the records:sync permission: the plugin may copy its own records from a till to the main till of this shop, and publish small values (such as a staff list) that the shop's other tills read. Shown as a short sentence next to the permission name.", "review": "standard", "max_length": 80}
 }
