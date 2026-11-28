@@ -1,6 +1,11 @@
 {
   "auth.setup.pin_rule": {"description": "One-line rule under the admin PIN heading of the first-run wizard (step 6), read before typing: the PIN is 4 to 8 digits, numbers only. Written with words ('4 to 8') because screen readers speak it; the error text uses the en dash form.", "review": "standard", "max_length": 80},
   "elevation.summary.cloud_sync_now": {"description": "Manager PIN prompt summary: what approving does — the till asks the cloud for changes right away.", "review": "standard"},
+  "reports.tips.suggest_btn": {"description": "Button label on the Reports > Tips payout form: asks installed plugins (such as the staff logbook) to suggest per-person tip amounts for the selected period. Short label, one line.", "review": "standard"},
+  "reports.tips.suggest_none": {"description": "Message in the suggestions panel when no installed plugin proposes any tip amounts for the selected period.", "review": "standard"},
+  "reports.tips.suggest_title": {"description": "Heading of the suggestions panel shown after the suggest button is pressed: the amounts come from a plugin and the manager confirms each one.", "review": "standard"},
+  "reports.tips.suggest_unmapped": {"description": "Note on a suggestion row whose person has no till login, so it cannot be filled in automatically; the manager records that payout by hand.", "review": "standard"},
+  "reports.tips.suggest_use": {"description": "Button on each suggestion row that copies the suggested amount into the payout form for that person. One short word.", "review": "standard"},
   "setup.finish_busy": {"description": "Label of the first-run wizard's final button (normally 'Start selling') while the setup request is running; the button ignores further presses until the page changes.", "review": "standard", "max_length": 30},
   "setup.busy_hint": {"description": "Status line shown under the first-run wizard's final button while setup is saving; tells the owner not to close the window (registration can take up to about ten seconds).", "review": "standard", "max_length": 90},
   "journal.col.order_no": {"description": "Column heading in the sales journal list: the short order number the customer waits for (digits only), shown beside the receipt number, which stays the sale's identity.", "review": "standard", "max_length": 12},
