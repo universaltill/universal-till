@@ -288,6 +288,22 @@ async function ensureNoShopType(page: Page) {
 }
 async function settleAndBlur(page: Page) {
   await page.waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, { timeout: 10_000 }).catch(() => {});
+  // htmx's "show:...:top" may smooth-scroll; wait until the card's position has not moved for 10 frames,
+  // then pin it with an instant scroll, so every run shoots the same offset (ut-docs#2184 determinism).
+  const pin = () => page.evaluate(() => new Promise<void>((done) => {
+    const el = document.querySelector('#settings-shop-type') as HTMLElement;
+    let last = NaN; let still = 0;
+    const tick = () => {
+      const top = el.getBoundingClientRect().top;
+      still = top === last ? still + 1 : 0; last = top;
+      if (still >= 10) { done(); return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+  await pin();
+  await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+  await pin();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
@@ -363,7 +379,7 @@ const extraShots: Record<string, ExtraShot> = {
       await page.evaluate(() => { location.hash = 'settings-shop-type'; });
       await page.locator('#shop-type-change').click();
       await expect(page.locator('#shop-type-panel .shop-type-tile').first()).toBeVisible();
-      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
       await settleAndBlur(page);
     },
     ready: async (page) => {
@@ -383,7 +399,7 @@ const extraShots: Record<string, ExtraShot> = {
       await page.locator('#shop-type-panel .shop-type-tile[data-value="service"]').click();
       await page.locator('#shop-type-panel button.primary').click();
       await expect(page.locator('[data-testid="shop-type-preview"]')).toBeVisible();
-      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await page.locator('#settings-shop-type').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
       await settleAndBlur(page);
     },
     ready: async (page) => {
