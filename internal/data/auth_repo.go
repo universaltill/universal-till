@@ -3,7 +3,9 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,6 +118,9 @@ func (r *AuthRepo) GetUser(ctx context.Context, id string) (UserRow, bool, error
 
 // CreateUser inserts an operator (no PIN yet — set it separately).
 func (r *AuthRepo) CreateUser(ctx context.Context, username, displayName, role string) (string, error) {
+	if role == PayeeRole {
+		return "", errPayeeReserved
+	}
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, ?, 1)`,
@@ -146,6 +151,14 @@ func (r *AuthRepo) UsernameTaken(ctx context.Context, username string) (bool, er
 // insert (a new user has no PIN yet, same as CreateUser), the stored hash
 // left alone on update.
 func (r *AuthRepo) MirrorUser(ctx context.Context, u UserRow) error {
+	if u.Role == PayeeRole {
+		return errPayeeReserved
+	}
+	if cur, found, err := r.GetUser(ctx, u.ID); err != nil {
+		return err
+	} else if found && cur.Role == PayeeRole {
+		return errPayeeReserved
+	}
 	active := 0
 	if u.IsActive {
 		active = 1
@@ -168,7 +181,7 @@ func (r *AuthRepo) MirrorUser(ctx context.Context, u UserRow) error {
 
 // SetUserPIN stores a new PIN hash for the user.
 func (r *AuthRepo) SetUserPIN(ctx context.Context, userID, pinHash string) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ?`, pinHash, userID)
+	res, err := r.db.ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ? AND role != ?`, pinHash, userID, PayeeRole)
 	if err != nil {
 		return fmt.Errorf("set pin: %w", err)
 	}
@@ -185,7 +198,7 @@ func (r *AuthRepo) SetUserActive(ctx context.Context, userID string, active bool
 	if active {
 		v = 1
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE users SET is_active = ? WHERE id = ?`, v, userID)
+	res, err := r.db.ExecContext(ctx, `UPDATE users SET is_active = ? WHERE id = ? AND role != ?`, v, userID, PayeeRole)
 	if err != nil {
 		return fmt.Errorf("set active: %w", err)
 	}
@@ -203,13 +216,13 @@ func (r *AuthRepo) SetUserActive(ctx context.Context, userID string, active bool
 // scripts/promote-super-admin's bootstrap CLI (ut-docs#761), the two paths
 // that share this method.
 func (r *AuthRepo) SetUserRole(ctx context.Context, tx *sql.Tx, userID, role string) error {
-	q := `UPDATE users SET role = ? WHERE id = ?`
+	q := `UPDATE users SET role = ? WHERE id = ? AND role != ?`
 	var res sql.Result
 	var err error
 	if tx != nil {
-		res, err = tx.ExecContext(ctx, q, role, userID)
+		res, err = tx.ExecContext(ctx, q, role, userID, PayeeRole)
 	} else {
-		res, err = r.db.ExecContext(ctx, q, role, userID)
+		res, err = r.db.ExecContext(ctx, q, role, userID, PayeeRole)
 	}
 	if err != nil {
 		return fmt.Errorf("set user role: %w", err)
@@ -315,6 +328,9 @@ func (r *AuthRepo) SetUserActiveGuarded(ctx context.Context, tx *sql.Tx, userID 
 	if err != nil {
 		return "", fmt.Errorf("set active: %w", err)
 	}
+	if role == PayeeRole {
+		return "", errPayeeReserved
+	}
 	if refused, err := lastPrivilegedRoleLeft(ctx, tx, userID, role, role, active); err != nil || refused != "" {
 		return refused, err
 	}
@@ -334,6 +350,9 @@ func (r *AuthRepo) SetUserRoleGuarded(ctx context.Context, tx *sql.Tx, userID, r
 	cur, err := userRoleTx(ctx, tx, userID)
 	if err != nil {
 		return "", fmt.Errorf("set user role: %w", err)
+	}
+	if cur == PayeeRole || role == PayeeRole {
+		return "", errPayeeReserved
 	}
 	if refused, err := lastPrivilegedRoleLeft(ctx, tx, userID, cur, role, true); err != nil || refused != "" {
 		return refused, err
@@ -374,6 +393,9 @@ func (r *AuthRepo) GetUserTx(ctx context.Context, tx *sql.Tx, id string) (UserRo
 // cloud mints the user_id so a re-applied directive is idempotent). No PIN
 // yet — SetUserPINTx in the same tx.
 func (r *AuthRepo) CreateUserWithID(ctx context.Context, tx *sql.Tx, id, username, displayName, role string) error {
+	if role == PayeeRole {
+		return errPayeeReserved
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, ?, 1)`,
 		id, username, displayName, role); err != nil {
@@ -416,7 +438,7 @@ func (r *AuthRepo) UsernameTakenByOther(ctx context.Context, tx *sql.Tx, usernam
 
 // SetUserPINTx is SetUserPIN inside tx.
 func (r *AuthRepo) SetUserPINTx(ctx context.Context, tx *sql.Tx, userID, pinHash string) error {
-	res, err := r.authExec(tx).ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ?`, pinHash, userID)
+	res, err := r.authExec(tx).ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ? AND role != ?`, pinHash, userID, PayeeRole)
 	if err != nil {
 		return fmt.Errorf("set pin: %w", err)
 	}
@@ -1121,4 +1143,47 @@ func (r *AuthRepo) CountRoleGrantRowsTx(ctx context.Context, tx *sql.Tx, role st
 		return 0, fmt.Errorf("count role grant rows: %w", err)
 	}
 	return n, nil
+}
+
+// PayeeRole marks a payee-only worker (ut-docs#7247, ADR-0063 amendment 1):
+// a users row that exists only as worker_allocations.cashier_id. It is
+// inactive, has no PIN and no roles/role_permissions rows (the permission
+// model is closed: no row = denied), so it cannot log in or do anything.
+// Every users write path refuses to touch such a row or mint one.
+const PayeeRole = "payee"
+
+var errPayeeReserved = errors.New("role payee is reserved for payout-only workers")
+
+// IsPayeeRole reports whether role is the payee-only role.
+func IsPayeeRole(role string) bool { return role == PayeeRole }
+
+// EnsurePayee returns the payee-only user for a worker label, creating it
+// when absent (created=true). The label is whitespace-normalised; the
+// username key "payee:<lowercased label>" makes a repeated label reuse the
+// same row. Only core calls this, on a manager's confirmation.
+func (r *AuthRepo) EnsurePayee(ctx context.Context, label string) (id string, created bool, err error) {
+	name := strings.Join(strings.Fields(label), " ")
+	if name == "" {
+		return "", false, errors.New("payee label is empty")
+	}
+	username := "payee:" + strings.ToLower(name)
+	var existingRole string
+	err = r.db.QueryRowContext(ctx, `SELECT id, role FROM users WHERE username = ?`, username).Scan(&id, &existingRole)
+	if err == nil {
+		if existingRole != PayeeRole {
+			return "", false, fmt.Errorf("ensure payee: username %q is held by a non-payee user", username)
+		}
+		return id, false, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", false, fmt.Errorf("ensure payee: %w", err)
+	}
+	id = uuid.NewString()
+	// is_active = 0 and pin_hash NULL: not a login candidate on any path.
+	if _, err = r.db.ExecContext(ctx,
+		`INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, ?, 0)`,
+		id, username, name, PayeeRole); err != nil {
+		return "", false, fmt.Errorf("ensure payee: %w", err)
+	}
+	return id, true, nil
 }

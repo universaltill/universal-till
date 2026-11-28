@@ -637,7 +637,10 @@ its own.
   "suggest tip amounts" (a permission you grant to that plugin). **Use** only fills the form for that worker: nothing is
   recorded until you check the amount, edit it if needed, and press
   Record payout yourself. Names the plugin can't match to a till login are
-  listed for you to record by hand. With no such plugin (or one that
+  listed with **Create payee and use**: after you confirm, the till makes a
+  payout-only worker for that name (it cannot sign in and has no
+  permissions; it only appears in this payout list and the records) and
+  fills the form with it. The same name always reuses the same worker. With no such plugin (or one that
   doesn't answer) it shows "No suggestions for this period." and you type
   the amounts as before.
 - **A worker's own records** — use the Worker filter to narrow both the

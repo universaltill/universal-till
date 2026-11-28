@@ -63,12 +63,41 @@ type tipsSuggestRow struct {
 type tipsUnmappedRow struct {
 	Label       string
 	AmountMinor int64
+	Plain       string
 }
 
 // registerTipsSuggestAPI mounts GET /api/reports/tips-suggestions behind the
 // same `worker_allocation` permission as the payout write.
 func registerTipsSuggestAPI(mux *http.ServeMux, d *common.Deps) {
 	authRepo := data.NewAuthRepo(d.Db)
+	posRepo := data.NewPOSRepo(d.Db)
+	// POST /api/reports/tips-payees (ut-docs#7247, ADR-0063 amendment 1):
+	// the manager's "create payee" confirmation for a staff member with no
+	// till login. Only core creates the user; it is inactive, PIN-less and
+	// holds no permission. A repeated label returns the same row.
+	mux.HandleFunc("POST /api/reports/tips-payees", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		label := tipsSuggestLabel(r.FormValue("label"))
+		if label == "" {
+			http.Error(w, "label is required", http.StatusBadRequest)
+			return
+		}
+		id, created, err := authRepo.EnsurePayee(r.Context(), label)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "tips_payee_create", err)
+			return
+		}
+		if created {
+			now := time.Now().UTC().Format(time.RFC3339)
+			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "user", id, "tips_payee_created",
+				map[string]any{"label": label}, now, "")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": id, "name": label, "created": created}, "error": nil})
+	})
 	mux.HandleFunc("GET /api/reports/tips-suggestions", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "worker_allocation") {
 			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
@@ -115,7 +144,8 @@ func registerTipsSuggestAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, u := range ans.Unmapped {
 			label := tipsSuggestLabel(u.Label)
 			if u.AmountMinor > 0 && u.AmountMinor <= maxTipsSuggestAmountMinor && label != "" && len(unmapped) < maxTipsSuggestRows {
-				unmapped = append(unmapped, tipsUnmappedRow{Label: label, AmountMinor: u.AmountMinor})
+				unmapped = append(unmapped, tipsUnmappedRow{Label: label, AmountMinor: u.AmountMinor,
+					Plain: httpx.FormatMajorPlain(u.AmountMinor, cur.Decimals)})
 			}
 		}
 		httpx.RenderPartial("ui/partials/reports_tips_suggest.html", map[string]any{
