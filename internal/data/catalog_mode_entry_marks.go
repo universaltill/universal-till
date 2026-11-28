@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/iconid"
 )
 
 // catalogMasterKey is the per-till entitlement setting cloudsync caches from
@@ -133,12 +135,24 @@ UPDATE cloud_links
 	return total, nil
 }
 
+// ModeEntryCompareFields is each entity's upload fields in catalogpull's
+// uploadFields order: the fields otherFieldsMatchBase compares. A variable,
+// not a func: only a test reads it outside the package
+// (guard-deadcode-baseline.sh, as PromotedUploadFieldKeys). ut-docs#7214.
+var ModeEntryCompareFields = map[string][]string{
+	"item": {"name", "description", "sku", "price_minor", "category_cloud_id", "tax_code_cloud_id", "active", "barcodes",
+		"is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit", "icon"},
+	"category": {"name", "parent_cloud_id", "sort_order", "active", "icon"},
+}
+
 // otherFieldsMatchBase reports whether every upload field of the row except
 // skip equals its link base, mirroring catalogpull's changedFields: a field
 // the base lacks is not compared, an item's sku compares with the kept SKU
 // when the base has one, barcodes compare as the key set (primary first,
-// rest sorted), and category/tax/parent are the linked cloud ids. KEEP IN
-// SYNC with catalogpull.uploadFields / readLocal (the field names below).
+// rest sorted), and category/tax/parent are the linked cloud ids. The fields
+// compared are ModeEntryCompareFields, pinned to catalogpull.uploadFields by
+// TestModeEntryCompareFieldsMatchUploadFields_7214; KEEP IN SYNC with
+// readLocal (the values below).
 func otherFieldsMatchBase(ctx context.Context, q SyncQuerier, entity, id, baseJSON, skip string) (bool, error) {
 	var base map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(baseJSON), &base); err != nil {
@@ -180,22 +194,10 @@ func otherFieldsMatchBase(ctx context.Context, q SyncQuerier, entity, id, baseJS
 			"category_cloud_id": cat, "tax_code_cloud_id": tax, "active": it.Active,
 			"is_weighed": it.IsWeighed, "age_restricted": it.AgeRestricted,
 			"net_quantity_value": it.NetQuantityValue, "net_quantity_unit": it.NetQuantityUnit,
+			"icon": modeEntryIcon(it.Icon),
 		}
 		if kept, ok := base["sku_kept"]; ok {
 			base["sku"] = kept
-		}
-		if bb, ok := base["barcodes"]; ok {
-			var list []struct {
-				Key string `json:"key"`
-			}
-			_ = json.Unmarshal(bb, &list)
-			var bk []string
-			for _, b := range list {
-				bk = append(bk, b.Key)
-			}
-			if barcodeKeyList(keys) != barcodeKeyList(bk) {
-				return false, nil
-			}
 		}
 	case "category":
 		c, ok, err := ob.OutboxCategoryValues(ctx, q, id)
@@ -206,13 +208,35 @@ func otherFieldsMatchBase(ctx context.Context, q SyncQuerier, entity, id, baseJS
 		if err != nil {
 			return false, err
 		}
-		vals = map[string]any{"name": c.Name, "parent_cloud_id": parent, "sort_order": c.Sort, "active": c.Active}
+		vals = map[string]any{"name": c.Name, "parent_cloud_id": parent, "sort_order": c.Sort, "active": c.Active, "icon": modeEntryIcon(c.Icon)}
 	default:
 		return false, nil
 	}
-	for field, v := range vals {
+	for _, field := range ModeEntryCompareFields[entity] {
 		if field == skip {
 			continue
+		}
+		if field == "barcodes" {
+			if bb, ok := base["barcodes"]; ok {
+				var list []struct {
+					Key string `json:"key"`
+				}
+				_ = json.Unmarshal(bb, &list)
+				var bk []string
+				for _, b := range list {
+					bk = append(bk, b.Key)
+				}
+				if barcodeKeyList(keys) != barcodeKeyList(bk) {
+					return false, nil
+				}
+			}
+			continue
+		}
+		v, ok := vals[field]
+		if !ok {
+			// A programmer error (a listed field with no local value): fail
+			// closed rather than leave the field uncompared (ut-docs#7214).
+			return false, fmt.Errorf("mode entry compare: no local value for %s.%s", entity, field)
 		}
 		b, ok := base[field]
 		if !ok {
@@ -224,6 +248,15 @@ func otherFieldsMatchBase(ctx context.Context, q SyncQuerier, entity, id, baseJS
 		}
 	}
 	return true, nil
+}
+
+// modeEntryIcon is the icon as catalogpull's readLocal sends it (iconOut): an
+// id that fails iconid.ValidFormat counts as none.
+func modeEntryIcon(id string) string {
+	if id == "" || iconid.ValidFormat(id) {
+		return id
+	}
+	return ""
 }
 
 func barcodeKeyList(keys []string) string {
