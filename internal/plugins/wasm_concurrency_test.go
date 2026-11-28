@@ -36,7 +36,10 @@ func TestIsSalePathEvent(t *testing.T) {
 	}
 	for _, ev := range []string{"sale.completed", "export.requested.ask", "import.requested.ask", "plugin.button.pressed", "ui.view.render", "ui.view.ask", "ui.action.ask", "ui.settings.options.ask",
 		// ADR-0121 R2b (ut-docs#4007): the pick's targeted event takes an ordinary slot.
-		"catalog.identify", "catalog.identify.confirmed"} {
+		"catalog.identify", "catalog.identify.confirmed",
+		// ut-docs#7108 (contracts/tips-suggest.md): a non-reserved ask from
+		// the reports payout form, never the sale-path slot.
+		"tips.suggest.ask"} {
 		if isSalePathEvent(ev) {
 			t.Errorf("isSalePathEvent(%q) = true, want false", ev)
 		}
