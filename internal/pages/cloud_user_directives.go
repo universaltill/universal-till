@@ -354,8 +354,8 @@ func remoteUsersReport(ctx context.Context, d *common.Deps) []cloudUserReport {
 	}
 	out := make([]cloudUserReport, 0, len(users))
 	for _, u := range users {
-		if isBuiltInUser(u.ID) {
-			continue
+		if isBuiltInUser(u.ID) || data.IsPayeeRole(u.Role) {
+			continue // payout-only workers stay local (ut-docs#7247)
 		}
 		out = append(out, cloudUserReport{UserID: u.ID, Username: u.Username, DisplayName: u.DisplayName, Role: u.Role, Active: u.IsActive, HasPIN: u.PinHash != ""})
 	}

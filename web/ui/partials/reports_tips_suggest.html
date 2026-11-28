@@ -17,7 +17,8 @@
       <tr>
         <td>{{ .Label }}</td>
         <td style="text-align:end">{{ money .AmountMinor }}</td>
-        <td class="muted">{{ T "reports.tips.suggest_unmapped" }}</td>
+        <td class="muted">{{ T "reports.tips.suggest_unmapped" }}
+          <button type="button" class="btn secondary" data-tips-payee data-label="{{ .Label }}" data-minor="{{ .AmountMinor }}" data-plain="{{ .Plain }}" data-confirm-ok="{{ T "reports.tips.payee_create_ok" }}">{{ T "reports.tips.payee_create" }}</button></td>
       </tr>
       {{ end }}
     </tbody>
@@ -27,11 +28,39 @@
 (function () {
   var card = document.getElementById('tips-suggest-card');
   if (!card) return;
+  function fill(sel, amt, b) {
+    sel.value = b.getAttribute('data-cashier');
+    amt.value = b.getAttribute('data-plain');
+    amt.dispatchEvent(new Event('input', { bubbles: true }));
+    amt.focus();
+  }
   card.addEventListener('click', function (ev) {
+    var pb = ev.target.closest('[data-tips-payee]');
+    var sel0 = document.querySelector('#tips-record-form select[name=cashier_id]');
+    var amt0 = document.getElementById('tips-amount');
+    if (pb && sel0 && amt0) {
+      // Core creates the payout-only user on the manager's confirmation
+      // (ut-docs#7247); the plugin never does.
+      var label = pb.getAttribute('data-label');
+      UT.confirm(label, { opener: pb, ok: pb.getAttribute('data-confirm-ok') }).then(function (yes) {
+        if (!yes) return;
+        fetch('/api/reports/tips-payees', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'label=' + encodeURIComponent(label) })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j || !j.data) return;
+            var o = sel0.querySelector('option[value="' + j.data.id + '"]');
+            if (!o) { o = document.createElement('option'); o.value = j.data.id; o.textContent = j.data.name; sel0.appendChild(o); }
+            pb.setAttribute('data-cashier', j.data.id);
+            fill(sel0, amt0, pb);
+          });
+      });
+      return;
+    }
     var b = ev.target.closest('[data-tips-use]');
     if (!b) return;
-    var sel = document.querySelector('#tips-record-form select[name=cashier_id]');
-    var amt = document.getElementById('tips-amount');
+    var sel = sel0, amt = amt0;
     if (!sel || !amt) return;
     sel.value = b.getAttribute('data-cashier');
     amt.value = b.getAttribute('data-plain');

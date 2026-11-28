@@ -135,8 +135,8 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		rows := make([]row, 0, len(users))
 		for _, u := range users {
-			if u.ID == "system" {
-				continue // service identity, not an operator
+			if u.ID == "system" || data.IsPayeeRole(u.Role) {
+				continue // service identity / payout-only worker, not an operator
 			}
 			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u),
 				RoleLabel: userRoleLabel(locale, u.Role, customRoles)})
