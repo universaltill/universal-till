@@ -84,3 +84,51 @@ test('a cashier sees no shop-type surface and cannot call its endpoints', async 
   await page.goto('/settings');
   await expect(page.locator('[data-testid="settings-footer"]')).toContainText('Set up for: Retail shop');
 });
+
+// ut-docs#6348: the same wall for EVERY shipped type, not just retail. Admin and
+// cashier are separate browser contexts (separate cookies), so the admin can
+// switch the type between checks while the cashier session stays signed in.
+// Ends on retail, the state the test above (and the rest of the auth project)
+// expects.
+const TYPES = ['cafe', 'hospitality', 'retail', 'service', 'market_stall', 'other'];
+
+test('a cashier gets 403 on Settings and every shop-type endpoint in each of the six types', async ({ page, browser }) => {
+  test.setTimeout(180_000);
+  await ensureOperator(page); // admin
+  // The first test creates the cashier; create it here only when run alone.
+  if ((await page.request.get('/api/users')).ok() && !(await page.request.get('/users').then((r) => r.text())).includes(CASHIER_USERNAME)) {
+    await createCashier(page);
+  }
+  const baseURL = test.info().project.use.baseURL;
+  const ctx = await browser.newContext({ baseURL });
+  const cashier = await ctx.newPage();
+  try {
+    await loginAsCashier(cashier);
+    for (const type of TYPES) {
+      const set = await page.request.post('/api/settings/shop-type', { form: { to: type } });
+      expect(set.ok(), `admin sets ${type}`).toBe(true);
+
+      expect((await cashier.request.get('/settings')).status(), `${type}: /settings`).toBe(403);
+      for (const url of ['/api/settings/shop-type/panel', '/api/settings/shop-type/pick', '/api/settings/shop-type/preview?to=cafe']) {
+        expect((await cashier.request.get(url)).status(), `${type}: GET ${url}`).toBe(403);
+      }
+      for (const url of ['/api/settings/shop-type/undo', '/api/settings/shop-type/dismiss-banner', '/api/settings/shop-type/offer/not-now', '/api/settings/shop-type/offer/never']) {
+        expect((await cashier.request.post(url)).status(), `${type}: POST ${url}`).toBe(403);
+      }
+      const confirm = await cashier.request.post('/api/settings/shop-type', { form: { to: type === 'cafe' ? 'retail' : 'cafe' } });
+      expect(confirm.headers()['hx-redirect'], `${type}: a cashier confirm must not apply a change`).toBeUndefined();
+
+      // The cashier's Menu shows no shop-type surface, whatever the type.
+      await cashier.goto('/menu');
+      await expect(cashier.locator('[data-testid="shop-type-undo"]')).toHaveCount(0);
+      await expect(cashier.getByRole('link', { name: 'Show all tiles' })).toHaveCount(0);
+      await expect(cashier.locator('main')).not.toContainText('tucked away');
+    }
+  } finally {
+    await ctx.close();
+  }
+  // Admin's last set was `other`; no cashier call changed it. Put retail back.
+  expect((await page.request.post('/api/settings/shop-type', { form: { to: 'retail' } })).ok()).toBe(true);
+  await page.goto('/settings');
+  await expect(page.locator('[data-testid="settings-footer"]')).toContainText('Set up for: Retail shop');
+});
