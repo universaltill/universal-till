@@ -78,7 +78,7 @@ func TestShopTemplateClassesJSON_RetailDemotesOrderNo(t *testing.T) {
 	if !ok {
 		t.Fatal("retail missing from shop_types")
 	}
-	wantCards := []string{"settings-about", "settings-kiosk","settings-notices", "settings-order-no", "settings-order-type-prompt"}
+	wantCards := []string{"settings-about", "settings-kiosk", "settings-notices", "settings-order-no", "settings-order-type-prompt"}
 	wantKeys := []string{"kiosk.idle_reset_seconds", "kiosk.payment_mode", "notices.enabled", "sale.display_no_scheme", "sale.order_type_prompt"}
 	if !slices.Equal(r.RarelyNeededCards, wantCards) {
 		t.Errorf("retail cards = %v, want %v", r.RarelyNeededCards, wantCards)
