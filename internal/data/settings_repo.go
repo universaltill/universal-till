@@ -91,6 +91,10 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 		err = storeSyncBearer(path, value)
 		return err
 	}
+	if versioned(key) { // registry key: value and version commit together
+		err = r.setVersioned(ctx, key, value)
+		return err
+	}
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES (?, ?, ?)
@@ -102,6 +106,23 @@ ON CONFLICT(key) DO UPDATE SET
 		return settingsObs.wrapf("set", "set setting %s", err, key)
 	}
 	invalidateCachedSetting(r.db, key)
+	return nil
+}
+
+// setVersioned is Set for a typed-registry key: a changed value bumps its
+// setting_meta ver (origin till) in the same transaction (setting_meta.go).
+func (r *SettingsRepo) setVersioned(ctx context.Context, key, value string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return settingsObs.wrap("set", err)
+	}
+	defer tx.Rollback()
+	if err := r.SetTx(ctx, tx, key, value); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return settingsObs.wrap("set", err)
+	}
 	return nil
 }
 
@@ -118,13 +139,17 @@ func (r *SettingsRepo) SetTx(ctx context.Context, tx *sql.Tx, key, value string)
 		}
 		return nil
 	}
+	now := time.Now().UTC()
+	if err := bumpTillMeta(ctx, tx, key, value, now); err != nil { // before the upsert: compares the old value
+		return settingsObs.wrapf("set_tx", "version setting %s", err, key)
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES (?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	value = excluded.value,
 	updated_at = excluded.updated_at
-`, key, value, time.Now().UTC()); err != nil {
+`, key, value, now); err != nil {
 		return settingsObs.wrapf("set_tx", "set setting %s", err, key)
 	}
 	invalidateCachedSetting(r.db, key)
@@ -328,6 +353,9 @@ func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error 
 
 	now := time.Now().UTC()
 	for _, k := range keys {
+		if err = bumpTillMeta(ctx, tx, k, kv[k], now); err != nil {
+			return settingsObs.wrapf("set_many", "version setting %s", err, k)
+		}
 		if _, err = tx.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES (?, ?, ?)
@@ -359,6 +387,13 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	defer func() { done(err) }()
 	if path, ok := r.bearerFile(key); ok { // ut-docs#5172
 		err = storeSyncBearer(path, "")
+		return err
+	}
+	if versioned(key) {
+		err = r.deleteVersioned(ctx, key)
+		if err == nil {
+			invalidateCachedSetting(r.db, key)
+		}
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)

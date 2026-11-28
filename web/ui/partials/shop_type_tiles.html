@@ -1,0 +1,25 @@
+{{/* ut-docs#6332 S7: the shop-type tile group, shared by the setup wizard
+     (step 5) and the Settings pick step. Input: a list of shopTypeTile
+     {ID, Label, Summary, Current, First}. The enclosing element supplies the
+     Alpine scope `shopType` and an element with id="shop-type-title" that
+     names the group. One tab stop, arrows via radiogroup.js. */}}
+<div class="picker-grid shop-type-tiles" role="radiogroup" data-roving-radiogroup aria-labelledby="shop-type-title">
+  {{ range . }}
+  {{ if .Current }}
+  <button type="button" class="picker-tile shop-type-tile" role="radio" aria-checked="false" aria-disabled="true" disabled data-value="{{ .ID }}" aria-describedby="shop-type-sum-{{ .ID }}">
+    <span class="shop-type-tile-label">{{ .Label }}</span>
+    <span class="shop-type-tile-tag">{{ T "settings.shop_type.current" }}</span>
+    {{ if .Summary }}<span class="shop-type-tile-sum muted" id="shop-type-sum-{{ .ID }}">{{ .Summary }}</span>{{ end }}
+  </button>
+  {{ else }}
+  <button type="button" class="picker-tile shop-type-tile" role="radio" data-value="{{ .ID }}" aria-describedby="shop-type-sum-{{ .ID }}"
+          :aria-checked="shopType === '{{ .ID }}' ? 'true' : 'false'"
+          :tabindex="shopType === '{{ .ID }}' || (!shopType && {{ .First }}) ? 0 : -1"
+          @click="shopType = '{{ .ID }}'">
+    <span class="shop-type-tile-label">{{ .Label }}</span>
+    {{ if .Summary }}<span class="shop-type-tile-sum muted" id="shop-type-sum-{{ .ID }}">{{ .Summary }}</span>{{ end }}
+    <span class="shop-type-tile-check" aria-hidden="true"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+  </button>
+  {{ end }}
+  {{ end }}
+</div>

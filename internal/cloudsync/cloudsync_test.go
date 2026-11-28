@@ -1949,3 +1949,68 @@ func TestApplySetTillSetting_ExpectReachesHook_5349(t *testing.T) {
 		t.Fatalf("typed expect: status=%q msg=%q", status, msg)
 	}
 }
+
+func TestApply_SetTillSetting_CondHook_ParsesVerBaseVerTier(t *testing.T) {
+	var got TillSettingCond
+	var gotExpect *string
+	hooks := Hooks{
+		SetTillSetting: func(context.Context, string, string, *string) (string, error) {
+			t.Fatal("the plain hook must not run when the conditional hook is set")
+			return "", nil
+		},
+		SetTillSettingCond: func(_ context.Context, key, value string, expect *string, c TillSettingCond) (string, error) {
+			got, gotExpect = c, expect
+			return key + " = " + value, nil
+		},
+	}
+	status, _ := apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{
+		"key": "receipt.footer", "value": "v", "ver": float64(5), "base_ver": float64(3), "tier": "sensitive", "expect": "old",
+	}}, hooks)
+	if status != "applied" {
+		t.Fatalf("status = %q, want applied", status)
+	}
+	if got.Ver == nil || *got.Ver != 5 || got.BaseVer == nil || *got.BaseVer != 3 || got.Tier != "sensitive" {
+		t.Fatalf("cond = %+v, want ver 5 base_ver 3 tier sensitive", got)
+	}
+	if gotExpect == nil || *gotExpect != "old" {
+		t.Fatalf("expect = %v, want old", gotExpect)
+	}
+	// an older cloud: no fields, zero cond
+	got = TillSettingCond{Ver: new(int64)}
+	apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "k", "value": "v"}}, hooks)
+	if got.Ver != nil || got.BaseVer != nil || got.Tier != "" {
+		t.Fatalf("absent fields gave cond %+v, want zero", got)
+	}
+}
+
+func TestApply_SetTillSetting_MalformedVer_FailsClosed(t *testing.T) {
+	called := false
+	hooks := Hooks{SetTillSettingCond: func(context.Context, string, string, *string, TillSettingCond) (string, error) {
+		called = true
+		return "", nil
+	}}
+	for _, bad := range []map[string]any{
+		{"ver": "5"}, {"ver": float64(0)}, {"ver": 1.5}, {"base_ver": float64(-1)}, {"tier": float64(1)},
+	} {
+		p := map[string]any{"key": "k", "value": "v"}
+		for k, v := range bad {
+			p[k] = v
+		}
+		status, msg := apply(context.Background(), directive{Type: "set_till_setting", Payload: p}, hooks)
+		if status != "failed" || called || !strings.Contains(msg, "whole numbers") {
+			t.Fatalf("payload %v: status=%q called=%v, want failed and no write", bad, status, called)
+		}
+	}
+}
+
+func TestApply_SetTillSetting_ReasonKeyRidesTheResult(t *testing.T) {
+	hooks := Hooks{SetTillSettingCond: func(context.Context, string, string, *string, TillSettingCond) (string, error) {
+		return "", &ReasonError{Key: ReasonSettingConflict, Message: "changed on the till"}
+	}}
+	sink := &reasonSink{}
+	ctx := context.WithValue(context.Background(), reasonSinkKey{}, sink)
+	status, _ := apply(ctx, directive{Type: "set_till_setting", Payload: map[string]any{"key": "k", "value": "v"}}, hooks)
+	if status != "failed" || sink.key != "conflict" {
+		t.Fatalf("status=%q reason=%q, want failed + conflict", status, sink.key)
+	}
+}

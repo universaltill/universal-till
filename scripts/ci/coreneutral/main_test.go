@@ -419,3 +419,54 @@ internal/z.go|q|"FR" # #2879 already removed here`)
 		t.Fatalf("shrunk list must pass: %v", p)
 	}
 }
+
+// TestScanTemplateJSON pins the data half of the guard (ADR-0190, S2): a
+// shop-type template may not name a first-party plugin, a vendor or a country.
+func TestScanTemplateJSON(t *testing.T) {
+	bad := []byte(`{"schema":1,"suggest":["com.universaltill.pay-x"],"settings":{"DE":"common","vendor-stripe":"advanced"},"label":"ok","menu":{"/items":"advanced"}}`)
+	fs, err := scanTemplateJSON("internal/shoptemplate/templates/x.json", bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range fs {
+		got[f.Literal] = f.Kind
+	}
+	want := map[string]string{"com.universaltill.pay-x": "plugin", "DE": "country", "vendor-stripe": "vendor"}
+	if len(got) != len(want) {
+		t.Fatalf("findings = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("finding %q kind = %q, want %q (all: %v)", k, got[k], v, got)
+		}
+	}
+	clean := []byte(`{"schema":1,"suggest":["printing"],"settings":{"settings-theme":"common"},"menu":{"/items":"advanced"}}`)
+	if fs, err = scanTemplateJSON("internal/shoptemplate/templates/y.json", clean); err != nil || len(fs) != 0 {
+		t.Fatalf("clean template: findings=%v err=%v", fs, err)
+	}
+}
+
+func TestScanTreeIncludesTemplateJSON(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("internal/a/a.go", "package a\n")
+	write("cmd/c/c.go", "package c\n")
+	write("internal/shoptemplate/templates/t.json", `{"suggest":["ut-plugin-integration-x"]}`)
+	write("internal/shoptemplate/testdata/bad.json", `{"suggest":["ut-plugin-integration-x"]}`)
+	fs, _, n, err := scanTree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 || len(fs) != 1 || fs[0].Path != "internal/shoptemplate/templates/t.json" || fs[0].Kind != "plugin" {
+		t.Fatalf("n=%d findings=%+v, want 3 files and one plugin finding in templates/t.json", n, fs)
+	}
+}

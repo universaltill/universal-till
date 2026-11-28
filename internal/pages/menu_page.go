@@ -472,13 +472,37 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			"theme": d.ResolvedTheme(r),
 			// menuScreen collapses the small-text top nav: the touch tiles below
 			// ARE the navigation, so the header stays clean (logo + lock).
-			"menuScreen":    true,
-			"menuItems":     d.MenuSnapshot(),
-			"Tiles":         tiles,
-			"backToSaleURL": saleScreenReturnURL(mode),
+			"menuScreen": true,
+			"menuItems":  d.MenuSnapshot(),
+			"Tiles":      tiles,
+			// ADR-0190: a manager sees one quiet line when the shop-type
+			// template tucks tiles away, with the way to restore them.
+			"templateTucked": menuTemplateTucked(d, r),
+			// S7: the 7 day "shop type changed" undo strip (manager, main till).
+			"shopTypeBanner": shopTypeUndoBannerFor(d, r, locale),
+			"backToSaleURL":  saleScreenReturnURL(mode),
 			// ut-docs#3086: only the languages the shop chose for staff; the
 			// template hides the row when there's just one.
 			"staffLocales": httpx.StaffLocales(staffLocales),
 		})(w, r)
 	})
+}
+
+// menuTemplateTucked reports whether the Menu should show the "some tiles
+// are tucked away for your shop type" line (ADR-0190): the template is in
+// effect (not legacy mode: a shop that predates templates sees today's
+// menu unchanged), the viewer may open Settings, and the template hides at
+// least one Menu tile the shop has not restored. A cashier never sees it.
+func menuTemplateTucked(d *common.Deps, r *http.Request) bool {
+	ctx := r.Context()
+	if d.TemplateState(ctx).Mode != common.TemplateActive || !canPerform(d, r, "settings") {
+		return false
+	}
+	restored := common.RestoredMenuKeys(ctx, d.Settings)
+	for _, a := range d.TemplateLayoutAmendments() {
+		if a.Slot == uislot.MenuSlot && a.Hide && !restored[a.Key] {
+			return true
+		}
+	}
+	return false
 }

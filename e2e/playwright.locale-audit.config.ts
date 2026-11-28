@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { TILL_SHUTDOWN } from './till-webserver';
 import { existsSync } from 'fs';
 
 // Sandboxed pipeline runners pre-install one Chromium at a fixed path
@@ -47,6 +48,7 @@ export default defineConfig({
     // audited against the auth till after the same wizard/PIN-login flow
     // docs-shots.spec.ts's own ensureOperator() drives.
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till.sh',
       url: 'http://127.0.0.1:8091/healthz',
       timeout: 120_000,
@@ -61,6 +63,7 @@ export default defineConfig({
       },
     },
     {
+      gracefulShutdown: TILL_SHUTDOWN,
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,

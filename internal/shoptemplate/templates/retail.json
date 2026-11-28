@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "retail",
+  "version": 1,
+  "shop_types": [
+    "retail"
+  ],
+  "label_key": "setup.shop_type.retail",
+  "summary_key": "shoptemplate.retail.summary",
+  "seed": [
+    {
+      "key": "sale.order_type_prompt",
+      "value": "off"
+    }
+  ],
+  "settings": {
+    "settings-kiosk-idle-reset": "advanced",
+    "settings-kiosk-payment-mode": "advanced",
+    "settings-order-no": "advanced",
+    "settings-order-type-prompt": "advanced",
+    "settings-about": "advanced",
+    "settings-notices": "advanced",
+    "settings-stock-tracking": "essential",
+    "settings-printer": "essential"
+  },
+  "menu": {
+    "/tables": "advanced",
+    "/kitchen-stations": "advanced",
+    "/bluetooth-devices": "advanced",
+    "/open-orders": "advanced"
+  }
+}

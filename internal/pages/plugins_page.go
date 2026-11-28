@@ -21,6 +21,7 @@ import (
 // the till (enabled or disabled) with lifecycle actions. Discovering,
 // downloading and installing new plugins happens on /plugins/store.
 func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
+	registerRestoredSecrets(mux, d)
 	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#3079: every lifecycle action here was already
 		// plugin_management-gated; now the page itself is too.
@@ -191,6 +192,8 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"pluginsJSON": template.JS(raw),
+			// design-B S7: plugin secrets still to enter again after a restore.
+			"restoredSecrets": restoredSecretsBanner(d, r),
 		})(w, r)
 	})
 }

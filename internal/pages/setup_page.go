@@ -17,7 +17,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
@@ -72,28 +71,12 @@ func saveSetupShopType(ctx context.Context, d *common.Deps, raw string) error {
 	if err := d.Settings.Set(ctx, common.KeyShopType, v); err != nil {
 		return err
 	}
-	// ut-docs#1902: shop_type=service activates the builtin Salon
-	// layout (ADR-0088) - hides Tables/Kitchen stations, relabels
-	// Items to Services. Best-effort: a failure here must never
-	// block finishing setup over a cosmetic menu personalization -
-	// the shop still works, just with the generic everything-visible
-	// menu until a later Settings save retries it.
-	// ut-docs#2006: reload unless it's a genuine no-op (no error,
-	// nothing changed) - an error still reloads, since a failed
-	// reinstall can leave the DB changed (removeBuiltin succeeded)
-	// even though Sync itself returned an error.
-	changed, err := builtinlayouts.Sync(ctx, d.Db, v)
-	if err != nil {
-		logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
-	}
-	if err != nil || changed {
-		if err := d.ReloadPlugins(ctx); err != nil {
-			logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
-		}
-	}
-	// ut-docs#3632: a retail/service shop has no eat-in, so it
-	// starts with the dine-in/takeaway choice switched off.
-	applyShopTypeOrderTypeDefault(ctx, d, v)
+	// ADR-0190: the type's template drives the menu/settings layout (a
+	// service shop's old salon layout included): rebuild it for the new type.
+	// ADR-0190: the type's template seeds its few apply-once defaults
+	// (replaces the retail/service order-type-off special case, ut-docs#3632).
+	applyShopTemplate(ctx, d, v)
+	d.ReloadTemplate(ctx)
 	return nil
 }
 
@@ -242,7 +225,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		data := map[string]any{
 			"countries": countries,
 			"shopTypes": setupShopTypes,
-			"errKey":    errKey,
+			// ut-docs#6332 S7: the tile group shared with the Settings pick step.
+			"shopTypeTiles": renderShopTypeTiles(w, r, shopTypeTiles(d, httpx.ResolveLocale(w, r), "")),
+			"errKey":        errKey,
 			// Matches the wizard's pre-#590 default (tax-inclusive on) for the
 			// case nothing was detected — only overridden below when a country
 			// actually matches, same as the country step's own @change handler

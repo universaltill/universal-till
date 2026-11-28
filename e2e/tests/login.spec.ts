@@ -271,7 +271,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await p.locator('input[name=store_name]').fill('Rerender Test Shop');
       await p.locator('input[name=till_name]').fill('Front till'); // required, no default (ut-docs#4146)
       await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
-      await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(5).locator('.setup-nav button', { hasText: 'Skip for now' }).click();
       // A deliberately mismatched PIN forces a server re-render with
       // detectedCountry='GB' (the operator's own prior pick, per the
       // renderWizard POST branch) — never a real detection, but the exact
@@ -954,7 +954,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
     await expect(storeName).toHaveValue('E2E Test Shop'); // kept across the re-render (ut-docs#3096)
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
-    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(5).locator('.setup-nav button', { hasText: 'Skip for now' }).click();
 
     // A matching PIN this time.
     await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);

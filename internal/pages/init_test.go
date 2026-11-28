@@ -6,6 +6,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,8 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/shoptemplate"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 // ut-docs#177: Init's boot-time "persist resolved defaults" call used to
@@ -363,192 +366,189 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 	}
 }
 
-// TestInit_ReconcilesBuiltinLayoutForPreExistingShopType (ut-docs#2001,
-// follow-up from the ut-docs#1902 independent review, finding 4):
-// builtinlayouts.Sync was only ever called from the two write handlers that
-// set common.KeyShopType (setup_page.go, settings_page.go's shop-type API).
-// shop_type has been capturable since ADR-0026/ut-docs#539, well before
-// #1902 shipped, so a shop that already has shop_type="service" persisted —
-// from before this wiring existed, or restored from a backup, or after a
-// manual plugin uninstall — got nothing until an operator happened to
-// re-save the same dropdown value. This drives a boot against a DB that
-// already carries shop_type="service" written directly to the settings
-// store (never through either handler, simulating exactly that gap) and
-// asserts Init itself reconciles the builtin Salon layout, matching what
-// TestSync_ServiceShopType_InstallsAndActivatesSalonLayout already proves
-// Sync does when a handler calls it directly.
-func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
+// bootInitForTest runs pages.Init against db and returns the Deps; the
+// process-global rail-visibility checker Init wires is reset on cleanup
+// (ut-docs#3079: it is bound to this test's DB).
+func bootInitForTest(t *testing.T, d *db.DB, cfg *config.Config) *common.Deps {
+	t.Helper()
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) })
+	return dp
+}
+
+func amendmentFor(list []uislot.Amendment, key string) (uislot.Amendment, bool) {
+	for _, a := range list {
+		if a.Key == key {
+			return a, true
+		}
+	}
+	return uislot.Amendment{}, false
+}
+
+// TestInit_ServiceShopTypeGetsItsLayoutFromTemplateAtBoot (ut-docs#2001,
+// ADR-0190): a shop that already has shop_type="service" persisted — from
+// before templates existed, or restored from a backup — must come up with
+// its layout on every boot, in every ADR-0088 slot, with no Settings save.
+// The type is written straight to the settings store (never through a
+// handler), simulating exactly that gap. The layout now comes from the
+// service template's legacy_layout (no ledger = legacy mode), not a plugin,
+// and a steady-state reboot must populate all four slot lists straight from
+// Init, not only after some later reload.
+func TestInit_ServiceShopTypeGetsItsLayoutFromTemplateAtBoot(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
 	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
-
-	store := settings.NewStore(d.DB)
-	ctx := context.Background()
-	if err := store.Set(ctx, common.KeyShopType, "service"); err != nil {
+	if err := settings.NewStore(d.DB).Set(context.Background(), common.KeyShopType, "service"); err != nil {
 		t.Fatalf("seed pre-existing shop_type: %v", err)
 	}
-
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
-	pctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	pm, err := plugins.Init(pctx, cfg, d.DB)
-	if err != nil {
-		t.Fatalf("plugins.Init: %v", err)
-	}
-	var wg sync.WaitGroup
-	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)  // first boot after the setting was already there
-	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonLayoutID(t)); err != nil || !found {
-		t.Errorf("after boot, %s must be installed for a pre-existing shop_type=service, found=%v err=%v",
-			salonLayoutID(t), found, err)
-	}
-
-	var hidesTables bool
-	for _, a := range pm.LayoutAmendments {
-		if a.PluginID == salonLayoutID(t) && a.Key == "/tables" {
-			hidesTables = a.Hide
+	for boot := 1; boot <= 2; boot++ { // a first boot and a steady-state reboot
+		dp := bootInitForTest(t, d, cfg)
+		if st := dp.TemplateState(context.Background()); st.Mode != common.TemplateLegacy {
+			t.Fatalf("boot %d: a service shop with no ledger is in legacy mode, got %v", boot, st.Mode)
 		}
-	}
-	if !hidesTables {
-		t.Errorf("after boot, the salon layout must be active (hiding /tables) for a pre-existing shop_type=service, amendments %+v", pm.LayoutAmendments)
-	}
-
-	// ut-docs#1913 (independent review finding): every ADR-0088 slot twin
-	// must be populated straight off THIS boot path, not only after some
-	// later ReloadPlugins fires (boot only calls that conditionally,
-	// ut-docs#2006's "skip a genuine no-op reload" optimization) — the
-	// review's own repro showed SettingsAmendments came back empty here
-	// before init.go's Deps literal was fixed to set it. Menu/Items/Rail
-	// are already proven live by the /tables hide check above (part of
-	// this same salon-plugin activation); this asserts the fourth twin
-	// specifically, at boot, with no reload in between.
-	var settingsReordersTheme bool
-	for _, a := range dp.SettingsAmendmentsSnapshot() {
-		if a.PluginID == salonLayoutID(t) && a.Key == "settings-theme" && a.Order != nil {
-			settingsReordersTheme = true
+		if a, ok := amendmentFor(dp.MenuAmendmentsSnapshot(), "/tables"); !ok || !a.Hide || a.PluginID != shoptemplate.PluginID {
+			t.Errorf("boot %d: the menu must hide /tables from the template, got %+v", boot, dp.MenuAmendmentsSnapshot())
 		}
-	}
-	if !settingsReordersTheme {
-		t.Errorf("after boot, SettingsAmendmentsSnapshot() must already carry the salon layout's settings-theme reorder — got %+v", dp.SettingsAmendmentsSnapshot())
+		if a, ok := amendmentFor(dp.SettingsAmendmentsSnapshot(), "settings-theme"); !ok || a.Order == nil {
+			t.Errorf("boot %d: Settings must put Theme first from the template at boot, got %+v", boot, dp.SettingsAmendmentsSnapshot())
+		}
+		if a, ok := amendmentFor(dp.RailAmendmentsSnapshot(), "/orders"); !ok || a.Order == nil {
+			t.Errorf("boot %d: the rail must move Orders from the template, got %+v", boot, dp.RailAmendmentsSnapshot())
+		}
+		if a, ok := amendmentFor(dp.ItemsAmendmentsSnapshot(), "/catalog"); !ok || a.Order == nil {
+			t.Errorf("boot %d: the Items rail must move Catalog from the template, got %+v", boot, dp.ItemsAmendmentsSnapshot())
+		}
 	}
 }
 
-// TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload is the
-// scenario TestInit_ReconcilesBuiltinLayoutForPreExistingShopType's own
-// "settings-theme" assertion above does NOT actually exercise: on a FIRST
-// boot with a pre-existing shop_type, builtinlayouts.Sync installs the salon
-// layout for the first time (changed=true), so Init's own conditional
-// `if syncErr != nil || changed { dp.ReloadPlugins(ctx) }` (ut-docs#2006)
-// fires anyway and would silently mask a missing `SettingsAmendments:` line
-// in the Deps struct literal — ReloadPlugins is that field's OTHER
-// assignment site. A real till's STEADY-STATE reboot — shop_type=service
-// already reconciled, the salon layout already installed at its current
-// version — is exactly the case ut-docs#2006 optimizes: Sync reports
-// changed=false, ReloadPlugins never runs, and the struct literal is the
-// ONLY thing that can populate SettingsAmendments for this boot. Independent
-// review of this card found this scenario genuinely broken (Settings-slot
-// amendments dead until some unrelated later reload) before the literal was
-// fixed; this test reboots twice against the same DB to reproduce the real
-// steady-state case, not just the first-install one.
-func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testing.T) {
+// TestInit_RemovesRetiredSalonLayoutPlugin is the one-time migration: a till
+// an earlier build installed the built-in salon layout plugin on (trust level
+// system) loses it at boot, DB rows and files, and the amendments it supplied
+// are gone with it. A same-id plugin a shop installed itself (any other trust
+// level) is left alone.
+func TestInit_RemovesRetiredSalonLayoutPlugin(t *testing.T) {
+	for _, tc := range []struct {
+		trust       string
+		wantRemoved bool
+	}{{"system", true}, {"verified", false}} {
+		t.Run(tc.trust, func(t *testing.T) {
+			chdirRoot(t)
+			paths.Init(t.TempDir())
+			d := &db.DB{DB: openPagesTestDB(t)}
+			defer d.Close()
+			ctx := context.Background()
+
+			id := retiredLayoutPluginIDs[0]
+			m := &plugins.Manifest{
+				ID: id, Name: "Retired layout", Version: "0.4.1", Runtime: "none", CanonicalType: "layout",
+				Entries: []plugins.ManifestEntry{{Type: "layout", Key: "menu", Label: "Retired", Config: map[string]any{
+					"slot": "menu", "amendments": []any{map[string]any{"key": "/tables", "hide": true}},
+				}}},
+			}
+			if err := plugins.PersistManifest(ctx, d.DB, m, plugins.InstallOptions{TrustLevel: tc.trust}); err != nil {
+				t.Fatalf("install the retired plugin: %v", err)
+			}
+			if err := os.MkdirAll(paths.Plugins(id, "0.4.1"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
+			dp := bootInitForTest(t, d, cfg)
+
+			_, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found == tc.wantRemoved {
+				t.Errorf("trust %q: plugin installed after boot = %v, want %v", tc.trust, found, !tc.wantRemoved)
+			}
+			_, onDisk := os.Stat(paths.Plugins(id))
+			if tc.wantRemoved && onDisk == nil {
+				t.Errorf("trust %q: the plugin's files must be removed too", tc.trust)
+			}
+			hides := false
+			for _, a := range dp.MenuAmendmentsSnapshot() {
+				hides = hides || (a.Key == "/tables" && a.Hide)
+			}
+			if hides == tc.wantRemoved {
+				t.Errorf("trust %q: /tables hidden after boot = %v, want %v", tc.trust, hides, !tc.wantRemoved)
+			}
+
+			// Idempotent: a second boot finds nothing to do and does not fail.
+			bootInitForTest(t, d, cfg)
+		})
+	}
+}
+
+// TestInit_DisabledRetiredSalonPluginKeepsFullMenu: a service shop whose
+// manager had switched the salon layout plugin off (installed, inactive) is
+// not forced into the legacy salon layout when the plugin is retired: the
+// opt-out is recorded before removal and the menu stays whole (ADR-0190 Q1).
+func TestInit_DisabledRetiredSalonPluginKeepsFullMenu(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		chdirRoot(t)
+		paths.Init(t.TempDir())
+		d := &db.DB{DB: openPagesTestDB(t)}
+		ctx := context.Background()
+		id := retiredLayoutPluginIDs[0]
+		m := &plugins.Manifest{ID: id, Name: "Retired layout", Version: "0.4.1", Runtime: "none", CanonicalType: "layout",
+			Entries: []plugins.ManifestEntry{{Type: "layout", Key: "menu", Label: "Retired", Config: map[string]any{
+				"slot": "menu", "amendments": []any{map[string]any{"key": "/tables", "hide": true}},
+			}}}}
+		if err := plugins.PersistManifest(ctx, d.DB, m, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := data.NewPluginRepo(d.DB).SetPluginActive(ctx, nil, id, active); err != nil {
+			t.Fatal(err)
+		}
+		if err := settings.NewStore(d.DB).Set(ctx, common.KeyShopType, "service"); err != nil {
+			t.Fatal(err)
+		}
+		cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
+		dp := bootInitForTest(t, d, cfg)
+		hidesKitchen := false
+		for _, a := range dp.MenuAmendmentsSnapshot() {
+			hidesKitchen = hidesKitchen || (a.Key == "/kitchen-stations" && a.Hide)
+		}
+		if hidesKitchen == !active {
+			t.Errorf("plugin active=%v: legacy salon layout applied = %v, want %v", active, hidesKitchen, active)
+		}
+		d.Close()
+	}
+}
+
+// TestInit_NoShopTypeGetsNoTemplateLayout confirms a till whose shop type was
+// never set renders exactly as before templates: no template amendment in any
+// slot just because Init ran.
+func TestInit_NoShopTypeGetsNoTemplateLayout(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
 	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
-
-	store := settings.NewStore(d.DB)
-	ctx := context.Background()
-	if err := store.Set(ctx, common.KeyShopType, "service"); err != nil {
-		t.Fatalf("seed shop_type: %v", err)
-	}
-
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
+	dp := bootInitForTest(t, d, cfg) // no shop_type ever set
 
-	// First boot: installs + activates the salon layout (changed=true),
-	// which reloads regardless of whether the struct literal is correct —
-	// this boot proves nothing about the bug on its own, it only gets the
-	// DB into the steady state the second boot needs.
-	func() {
-		pctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		pm, err := plugins.Init(pctx, cfg, d.DB)
-		if err != nil {
-			t.Fatalf("plugins.Init (first boot): %v", err)
+	if st := dp.TemplateState(context.Background()); st.Mode != common.TemplateNone {
+		t.Errorf("no shop type: mode = %v, want none", st.Mode)
+	}
+	for name, list := range map[string][]uislot.Amendment{
+		"menu": dp.MenuAmendmentsSnapshot(), "items": dp.ItemsAmendmentsSnapshot(),
+		"rail": dp.RailAmendmentsSnapshot(), "settings": dp.SettingsAmendmentsSnapshot(),
+	} {
+		if len(list) != 0 {
+			t.Errorf("%s slot: %d amendment(s) with no shop type, want none: %+v", name, len(list), list)
 		}
-		var wg sync.WaitGroup
-		Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)
-		t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
-	}()
-
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonLayoutID(t)); err != nil || !found {
-		t.Fatalf("first boot must have installed %s, found=%v err=%v", salonLayoutID(t), found, err)
-	}
-
-	// Second boot: a fresh process (fresh plugins.Manager, fresh Deps) against
-	// the SAME already-reconciled DB — a real till restart. Sync must report
-	// changed=false here (nothing left to do), so ReloadPlugins never fires,
-	// and the struct literal is the only path left to populate
-	// SettingsAmendments.
-	pctx2, cancel2 := context.WithCancel(t.Context())
-	defer cancel2()
-	pm2, err := plugins.Init(pctx2, cfg, d.DB)
-	if err != nil {
-		t.Fatalf("plugins.Init (second boot): %v", err)
-	}
-	var wg2 sync.WaitGroup
-	_, dp2 := Init(pctx2, pctx2, cfg, pm2, d.DB, nil, &wg2)
-	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
-
-	var settingsReordersTheme bool
-	for _, a := range dp2.SettingsAmendmentsSnapshot() {
-		if a.PluginID == salonLayoutID(t) && a.Key == "settings-theme" && a.Order != nil {
-			settingsReordersTheme = true
-		}
-	}
-	if !settingsReordersTheme {
-		t.Errorf("a steady-state reboot (no ReloadPlugins call) must still populate SettingsAmendmentsSnapshot() straight from Init's own Deps literal — got %+v", dp2.SettingsAmendmentsSnapshot())
-	}
-	// Sanity: RailAmendments (an existing, already-correct twin) must ALSO
-	// survive a steady-state reboot the same way — if this ever failed too,
-	// the bug would be in Sync/plugins.Init, not the Deps literal.
-	var railReordersOrders bool
-	for _, a := range dp2.RailAmendmentsSnapshot() {
-		if a.PluginID == salonLayoutID(t) && a.Key == "/orders" && a.Order != nil {
-			railReordersOrders = true
-		}
-	}
-	if !railReordersOrders {
-		t.Errorf("sanity check failed: RailAmendmentsSnapshot() should also survive a steady-state reboot, got %+v", dp2.RailAmendmentsSnapshot())
-	}
-}
-
-// TestInit_LeavesNonServiceShopTypeAlone confirms the reconciliation above
-// is scoped to shop_type=="service" — an "other"/absent shop_type must
-// never install the salon layout just because Init ran.
-func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
-	chdirRoot(t)
-	paths.Init(t.TempDir())
-
-	d := &db.DB{DB: openPagesTestDB(t)}
-	defer d.Close()
-
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
-	pctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	pm, err := plugins.Init(pctx, cfg, d.DB)
-	if err != nil {
-		t.Fatalf("plugins.Init: %v", err)
-	}
-	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // no shop_type ever set
-	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
-
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(context.Background(), salonLayoutID(t)); err != nil || found {
-		t.Errorf("after boot with no shop_type set, %s must NOT be installed, found=%v err=%v",
-			salonLayoutID(t), found, err)
 	}
 }

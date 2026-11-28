@@ -76,12 +76,12 @@ test.describe('settings categories (ut-docs#3090)', () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/settings');
     await page.locator('.settings-cat-tile[data-cat="advanced"]').click();
-    await expect(page.locator('#settings-cat-title')).toHaveText('Advanced');
+    await expect(page.locator('#settings-cat-title')).toHaveText('More settings');
     const cards = await page.locator('#settings-grid > .card').count();
     await expect(page.locator('#settings-tree a[data-section]:visible')).toHaveCount(cards);
     const headings = await page.locator('#settings-tree .settings-tree-group:visible').allTextContents();
     expect(headings[0]).toBe('My shop');
-    expect(headings[headings.length - 1]).toBe('Advanced');
+    expect(headings[headings.length - 1]).toBe('More settings');
     // The protected sections keep their labels and stay reachable (AC 4).
     await expect(page.locator('#settings-tree a[data-section="settings-all"]')).toBeVisible();
     await expect(page.locator('#settings-tree a[data-section="settings-retention"]')).toContainText('Report retention');
@@ -98,7 +98,7 @@ test.describe('settings categories (ut-docs#3090)', () => {
     // A technical section with no simple category opens in Advanced.
     await page.goto('/settings#settings-telemetry');
     await expect(page.locator('#settings-telemetry')).toBeVisible();
-    await expect(page.locator('#settings-cat-title')).toHaveText('Advanced');
+    await expect(page.locator('#settings-cat-title')).toHaveText('More settings');
     assertClean();
   });
 

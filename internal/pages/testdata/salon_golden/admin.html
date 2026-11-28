@@ -1,0 +1,2315 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" class="fx-full" style="--ui-scale: 1">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <meta name="htmx-config" content='{"defaultSettleDelay":0,"historyCacheSize":0,"refreshOnHistoryMiss":true}'>
+    
+    <meta name="ut-shell" content="X">
+    
+    <style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>
+    
+    <script src="/public/ut-motion.js?v=X"></script>
+    <script>
+      (function () {
+        
+        
+        
+        
+        
+        
+        
+        var UT = window.UT || {};
+        if (!UT.onScreen) return;
+        var viewport = UT.viewport, onScreen = UT.onScreen;
+        
+        
+        
+        
+        
+        
+        var ZOOM_FALLBACK_S = 0.3;
+        UT.zoomTo = function (rect) {
+          try {
+            var v = viewport();
+            var x = v.w / 2, y = v.h, sc = ZOOM_FALLBACK_S;
+            if (rect && onScreen(rect) && v.w > 0) {
+              x = rect.left + rect.width / 2;
+              y = rect.top + rect.height / 2;
+              sc = rect.width / v.w;
+            }
+            x = Math.round(x); y = Math.round(y);
+            sc = Math.round(Math.min(1, Math.max(0.1, sc)) * 1000) / 1000;
+            var s = document.documentElement.style;
+            s.setProperty('--ut-zoom-x', x + 'px');
+            s.setProperty('--ut-zoom-y', y + 'px');
+            s.setProperty('--ut-zoom-s', String(sc));
+            return { x: x, y: y, s: sc };
+          } catch (err) { return null; }
+        };
+        
+        
+        
+        
+        
+        
+        
+        var ZOOM_KEY = 'ut-zoom-back', ZOOM_MAX = 20;
+        function pathOf(u) {
+          try { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; } catch (err) { return ''; }
+        }
+        function zoomEntry(e) {
+          if (!e || e.length !== 6 || typeof e[0] !== 'string' || typeof e[1] !== 'string') return false;
+          for (var i = 2; i < 6; i++) if (typeof e[i] !== 'number' || !isFinite(e[i])) return false;
+          return true;
+        }
+        function zoomLoad() {
+          try {
+            var v = JSON.parse(sessionStorage.getItem(ZOOM_KEY) || '[]');
+            return Array.isArray(v) ? v.filter(zoomEntry) : [];
+          } catch (err) { return []; }
+        }
+        function zoomSave(list) {
+          try { sessionStorage.setItem(ZOOM_KEY, JSON.stringify(list)); } catch (err) {   }
+        }
+        UT.zoomRemember = function (to, from, rect) {
+          try {
+            var t = pathOf(to), f = pathOf(from);
+            if (!t) return;
+            
+            
+            var list = zoomLoad().filter(function (e) { return e[0] !== t; });
+            if (f && rect && onScreen(rect)) {
+              list.push([t, f, Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)]);
+            }
+            while (list.length > ZOOM_MAX) list.shift();
+            zoomSave(list);
+          } catch (err) {   }
+        };
+        UT.zoomRecall = function (leaving, landing) {
+          try {
+            var l = pathOf(leaving);
+            landing = pathOf(landing);
+            var list = zoomLoad(), e = null;
+            for (var i = list.length - 1; i >= 0; i--) if (list[i][0] === l) { e = list[i]; break; }
+            return (e && e[1] === landing) ? { left: e[2], top: e[3], width: e[4], height: e[5] } : null;
+          } catch (err) { return null; }
+        };
+        if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;
+        function depth(u) {
+          var p = new URL(u, location.href).pathname.replace(/\/+$/, '') || '/';
+          if (p === '/') return 0;
+          if (p === '/menu') return 1;
+          return 1 + p.split('/').filter(Boolean).length;
+        }
+        function dirFor(act) {
+          if (!act || !act.from) return 'push';
+          if (act.navigationType === 'traverse' && act.entry && act.entry.index < act.from.index) return 'pop';
+          if (act.navigationType === 'traverse') return 'push';
+          return depth(act.entry.url) < depth(act.from.url) ? 'pop' : 'push';
+        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        function quiet(vt) {
+          ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) {
+            if (vt[k] && vt[k].catch) vt[k].catch(function () {});
+          });
+        }
+        window.addEventListener('pageswap', function (e) {
+          
+          
+          
+          
+          
+          
+          
+          try {
+            var act = e.activation, o = UT.takeOrigin();
+            if (!UT.motionOff() && act && act.entry && act.from && act.navigationType !== 'reload' && dirFor(act) === 'push') {
+              var href = o && o.el && o.el.href;
+              UT.zoomRemember(act.entry.url, location.href, (typeof href === 'string' && pathOf(href) === pathOf(act.entry.url)) ? o.rect : null);
+            }
+          } catch (err) {   }
+          if (!e.viewTransition) return;
+          quiet(e.viewTransition);
+          if (UT.motionOff()) e.viewTransition.skipTransition();
+        });
+        window.addEventListener('pagereveal', function (e) {
+          var vt = e.viewTransition; if (!vt) return;
+          quiet(vt);
+          if (UT.motionOff()) { if (vt.skipTransition) vt.skipTransition(); return; }
+          var act = navigation.activation;
+          
+          
+          
+          
+          if (act && act.navigationType === 'reload') { if (vt.skipTransition) vt.skipTransition(); return; }
+          var d = dirFor(act);
+          document.documentElement.setAttribute('data-nav-dir', d);
+          if (vt.types && d === 'pop') vt.types.add('back');
+          
+          
+          
+          
+          
+          var here = location.href, prev = act && act.from ? act.from.url : '';
+          UT.zoomTo(d === 'pop' ? UT.zoomRecall(prev, here) : UT.zoomRecall(here, prev));
+          
+          
+          
+          
+          
+          
+          UT.vtWatchdog(vt);
+        });
+      })();
+    </script>
+    
+    <script>
+      (function () {
+        var UT = window.UT = window.UT || {};
+        UT.ready = function (fn) {
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { fn(); }, { once: true });
+          else if (window.queueMicrotask) queueMicrotask(fn);
+          else Promise.resolve().then(fn);
+        };
+        
+        UT.shellBootAt = Date.now();
+        
+        
+        
+        
+        
+        
+        
+        
+        var RELOAD_KEY = 'ut-reload-reason';
+        function reloadReason(r) {
+          return String(r || 'unattributed').toLowerCase().replace(/[^a-z0-9:_./ -]/g, '_').slice(0, 120) || 'unattributed';
+        }
+        function stashReload(reason) {
+          try { sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ reason: reloadReason(reason), from: location.pathname, at: Date.now() })); } catch (e) {   }
+        }
+        function sendReload(reason, navType) {
+          try {
+            var body = JSON.stringify({ reason: reloadReason(reason), path: location.pathname.slice(0, 200), nav_type: navType || '' });
+            if (navigator.sendBeacon && navigator.sendBeacon('/api/diag/reload-reason', new Blob([body], { type: 'application/json' }))) return;
+            if (window.fetch) fetch('/api/diag/reload-reason', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true, credentials: 'same-origin' }).catch(function () {});
+          } catch (e) {   }
+        }
+        UT.reload = function (reason) {
+          stashReload(reason);
+          try { console.info('[reload] ' + reloadReason(reason)); } catch (e) {   }
+          location.reload();
+        };
+        
+        
+        
+        UT.noteNav = function (reason, opts) {
+          try { console.info('[reload] ' + reloadReason(reason)); } catch (e) {   }
+          if (opts && opts.report) { sendReload(reason, 'navigate'); return; }
+          stashReload(reason);
+        };
+        
+        
+        
+        
+        document.addEventListener('htmx:beforeOnLoad', function (e) {
+          try {
+            var d = e.detail || {}, xhr = d.xhr;
+            if (!xhr || !xhr.getResponseHeader) return;
+            var kind = xhr.getResponseHeader('HX-Refresh') === 'true' ? 'hx-refresh' : (xhr.getResponseHeader('HX-Redirect') ? 'hx-redirect' : '');
+            if (!kind) return;
+            
+            
+            
+            
+            if (kind === 'hx-redirect' && /^\/login(\?|$)/.test(xhr.getResponseHeader('HX-Redirect'))) return;
+            var pi = d.pathInfo || {};
+            var p = String(pi.requestPath || pi.finalRequestPath || '').split('?')[0];
+            var elt = d.elt || (d.requestConfig && d.requestConfig.elt);
+            var trig = elt && elt.getAttribute ? (elt.getAttribute('hx-trigger') || '') : '';
+            stashReload(kind + ':' + p + (/\bevery\b/.test(trig) ? ':poll' : ''));
+          } catch (err) {   }
+        });
+        
+        
+        
+        
+        
+        
+        
+        
+        document.addEventListener('htmx:beforeOnLoad', function (e) {
+          var d = e.detail || {}, xhr = d.xhr, elt = d.elt;
+          if (!xhr || !xhr.getResponseHeader || !elt || elt.isConnected) return;
+          if (xhr.getResponseHeader('HX-Replace-Url') || xhr.getResponseHeader('HX-Push-Url')) e.preventDefault();
+        });
+        UT.ready(function () {
+          try {
+            var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+            var type = (nav && nav.type) || '';
+            var stash = null;
+            try { stash = JSON.parse(sessionStorage.getItem(RELOAD_KEY) || 'null'); sessionStorage.removeItem(RELOAD_KEY); } catch (e) { stash = null; }
+            var fresh = stash && stash.reason && (Date.now() - (stash.at || 0)) < 30000;
+            if (!fresh && type !== 'reload') return;
+            sendReload(fresh ? stash.reason : 'unattributed', type);
+          } catch (e) {   }
+        });
+        
+        
+        
+        
+        
+        
+        
+        
+        var pageListeners = [];
+        if (window.EventTarget && EventTarget.prototype.addEventListener) {
+          var origAdd = EventTarget.prototype.addEventListener;
+          EventTarget.prototype.addEventListener = function (type, fn, opts) {
+            var cs = document.currentScript;
+            if (cs && cs.closest && (this === window || this === document || this === document.body) && cs.closest('#ut-page')) {
+              pageListeners.push([this, type, fn, opts]);
+            }
+            return origAdd.call(this, type, fn, opts);
+          };
+        }
+        function dropPageListeners() {
+          var l = pageListeners; pageListeners = [];
+          l.forEach(function (r) { try { r[0].removeEventListener(r[1], r[2], r[3]); } catch (e) {   } });
+        }
+        
+        
+        
+        
+        document.addEventListener('htmx:beforeProcessNode', function (e) {
+          var t = e.target;
+          if (!t || !t.tagName) return;
+          if (t.tagName === 'FORM' && !t.hasAttribute('hx-boost')) t.setAttribute('hx-boost', 'false');
+          
+          
+          
+          if (t.tagName === 'A' && !t.hasAttribute('hx-boost') && t.closest('form') && t.closest('#ut-page')) { t.setAttribute('hx-boost', 'true'); t.setAttribute('data-ut-shell-nav', ''); }
+        });
+        
+        
+        
+        
+        
+        function purgeHistoryCache() { try { localStorage.removeItem('htmx-history-cache'); } catch (e) {   } }
+        purgeHistoryCache();
+        function meta(doc) { var m = doc.querySelector('meta[name="ut-shell"]'); return m ? m.getAttribute('content') : ''; }
+        function openTag(html, name) {
+          var m = new RegExp('<' + name + '\\b[^>]*>', 'i').exec(html);
+          if (!m) return null;
+          
+          var d = new DOMParser().parseFromString(m[0] + '</' + name + '>', 'text/html');
+          return name === 'body' ? d.body : d.documentElement;
+        }
+        function finalURL(d) {
+          var xhr = d.xhr, pi = d.pathInfo || {};
+          return (xhr && xhr.responseURL) || pi.finalRequestPath || pi.requestPath || location.href;
+        }
+        function depth(u) {
+          var p = new URL(u, location.href).pathname.replace(/\/+$/, '') || '/';
+          if (p === '/') return 0;
+          if (p === '/menu') return 1;
+          return 1 + p.split('/').filter(Boolean).length;
+        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        var pendingSync = null, pendingXhr = null;
+        function flushShellSync() {
+          var f = pendingSync;
+          pendingSync = null; pendingXhr = null;
+          if (f) f();
+        }
+        document.addEventListener('htmx:afterSwap', function (e) {
+          if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();
+        });
+        
+        
+        document.addEventListener('htmx:swapError', function () { pendingSync = null; pendingXhr = null; });
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        var liveSwaps = [], armedSwap = null;
+        function skipSuperseded(s) {
+          if (!s) return false;
+          var i = liveSwaps.indexOf(s);
+          if (i >= 0) liveSwaps.splice(i, 1);
+          return s.superseded;
+        }
+        
+        
+        
+        
+        
+        if (document.startViewTransition) {
+          var orig = document.startViewTransition;
+          document.startViewTransition = function (arg) {
+            var args = Array.prototype.slice.call(arguments);
+            
+            
+            
+            var swap = armedSwap; armedSwap = null;
+            
+            
+            
+            
+            
+            if (typeof arg === 'function') {
+              args[0] = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return arg.apply(this, arguments); };
+            } else if (arg && typeof arg.update === 'function') {
+              var upd = arg.update, opts = {};
+              for (var k in arg) opts[k] = arg[k];
+              opts.update = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return upd.apply(this, arguments); };
+              args[0] = opts;
+            }
+            var vt = orig.apply(document, args);
+            try {
+              ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) { if (vt[k] && vt[k].catch) vt[k].catch(function () {}); });
+              if (UT.vtWatchdog) UT.vtWatchdog(vt);
+            } catch (e) {   }
+            return vt;
+          };
+        }
+        
+        
+        
+        
+        
+        
+        function shellNav(elt) {
+          var owner = elt && elt.closest ? elt.closest('[hx-boost]') : null;
+          if (!owner) return false;
+          
+          
+          
+          return owner.id === 'ut-page' || (owner === elt && elt.hasAttribute('data-ut-shell-nav'));
+        }
+        document.addEventListener('htmx:configRequest', function (e) {
+          var d = e.detail || {};
+          if (d.boosted && shellNav(d.elt)) d.headers['UT-Shell-Nav'] = '1';
+        });
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        var PRESS_SLOP = 10, pressEl = null, pressX = 0, pressY = 0, pressTimer = 0;
+        function pressTarget(t) {
+          
+          
+          
+          
+          
+          
+          
+          var row = t && t.closest ? t.closest('[data-record-open]') : null;
+          if (row && !row.closest('dialog') &&
+              (t.closest('[data-record-edit]') || !t.closest('button, a, input, select, textarea, label, form'))) return row;
+          var el = t && t.closest ? t.closest('a[href], .nav-toggle') : null;
+          if (!el) return null;
+          if (el.classList.contains('nav-toggle')) return el;
+          
+          
+          
+          var href = el.getAttribute('href') || '';
+          if (!href || href.charAt(0) === '#' || el.hasAttribute('target') || el.hasAttribute('download')) return null;
+          if (el.closest('#buttons-grid, dialog')) return null;
+          var owner = el.closest('[hx-boost]');
+          if (!owner || owner.getAttribute('hx-boost') !== 'true') return null;
+          try { if (new URL(href, location.href).origin !== location.origin) return null; } catch (err) { return null; }
+          return el;
+        }
+        function clearPress() {
+          if (pressTimer) { clearTimeout(pressTimer); pressTimer = 0; }
+          if (pressEl) { pressEl.classList.remove('ut-pressed'); pressEl = null; }
+        }
+        window.addEventListener('pointerdown', function (e) {
+          try {
+            
+            
+            if (e.isPrimary === false) return;
+            clearPress();
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            var el = pressTarget(e.target);
+            if (!el) return;
+            pressEl = el; pressX = e.clientX; pressY = e.clientY;
+            el.classList.add('ut-pressed');
+            pressTimer = setTimeout(clearPress, 1000);
+          } catch (err) {   }
+        }, true);
+        window.addEventListener('pointermove', function (e) {
+          if (!pressEl) return;
+          if (Math.abs(e.clientX - pressX) > PRESS_SLOP || Math.abs(e.clientY - pressY) > PRESS_SLOP) clearPress();
+        }, true);
+        window.addEventListener('pointerup', function () {
+          if (!pressEl) return;
+          var el = pressEl;
+          (window.requestAnimationFrame || setTimeout)(function () { if (pressEl === el) clearPress(); });
+        }, true);
+        window.addEventListener('pointercancel', clearPress, true);
+        document.addEventListener('htmx:beforeRequest', function (e) {
+          
+          
+          if (e.defaultPrevented) return;
+          var d = e.detail || {};
+          if (!d.boosted || !shellNav(d.elt) || !d.elt.classList) return;
+          
+          
+          if (d.elt.closest('.nav')) {
+            Array.prototype.forEach.call(document.querySelectorAll('.nav .ut-nav-pending'), function (n) {
+              if (n !== d.elt) n.classList.remove('ut-nav-pending');
+            });
+          }
+          d.elt.classList.add('ut-nav-pending');
+        });
+        
+        
+        
+        
+        document.addEventListener('htmx:afterRequest', function (e) {
+          var d = e.detail || {};
+          if (d.successful || !d.elt || !d.elt.classList) return;
+          d.elt.classList.remove('ut-nav-pending');
+        });
+        document.addEventListener('htmx:beforeSwap', function (e) {
+          var d = e.detail || {};
+          var rc = d.requestConfig || {};
+          
+          
+          if (!rc.boosted || !shellNav(rc.elt)) return;
+          var xhr = d.xhr;
+          var url = finalURL(d);
+          var ct = (xhr && xhr.getResponseHeader && xhr.getResponseHeader('Content-Type')) || '';
+          var html = typeof d.serverResponse === 'string' ? d.serverResponse : '';
+          var mine = meta(document);
+          var theirs = '';
+          if (ct.indexOf('text/html') === 0 && html) {
+            var m = /<meta\s+name="ut-shell"\s+content="([^"]*)"/i.exec(html.slice(0, 8192));
+            theirs = m ? m[1] : '';
+          }
+          if (!theirs || theirs !== mine) {
+            
+            
+            
+            
+            
+            d.shouldSwap = false;
+            
+            
+            if (ct.indexOf('text/html') !== 0) {
+              Array.prototype.forEach.call(document.querySelectorAll('.ut-nav-pending'), function (n) { n.classList.remove('ut-nav-pending'); });
+            }
+            document.documentElement.setAttribute('data-shell-fallback', theirs ? 'signature' : 'no-shell');
+            UT.noteNav('shell-fallback:' + (theirs ? 'signature' : 'no-shell'));
+            window.location.assign(url);
+            return;
+          }
+          d.shouldSwap = true;
+          
+          
+          
+          
+          liveSwaps.forEach(function (s) { s.superseded = true; });
+          armedSwap = null;
+          pendingSync = null; pendingXhr = null;
+          purgeHistoryCache();
+          
+          
+          
+          
+          document.documentElement.setAttribute('data-nav-dir', depth(url) < depth(location.href) ? 'pop' : 'push');
+          
+          
+          
+          dropPageListeners();
+          
+          pendingXhr = xhr;
+          pendingSync = function () { syncShell(html); };
+        });
+        function syncShell(html) {
+          var h = openTag(html, 'html');
+          if (h) {
+            ['lang', 'dir'].forEach(function (a) {
+              var v = h.getAttribute(a);
+              if (v) document.documentElement.setAttribute(a, v); else document.documentElement.removeAttribute(a);
+            });
+            
+            
+            
+            var scale = /--ui-scale:\s*([^;"]+)/.exec(h.getAttribute('style') || '');
+            if (scale) document.documentElement.style.setProperty('--ui-scale', scale[1].trim());
+          }
+          var b = openTag(html, 'body');
+          if (b) {
+            
+            
+            
+            var prev = (document.body.getAttribute('data-shell-classes') || '').split(/\s+/).filter(Boolean);
+            var next = (b.className || '').split(/\s+/).filter(Boolean);
+            prev.forEach(function (c) { if (next.indexOf(c) < 0) document.body.classList.remove(c); });
+            next.forEach(function (c) { document.body.classList.add(c); });
+            var keep = {};
+            Array.prototype.forEach.call(b.attributes, function (at) {
+              if (at.name.indexOf('data-') === 0) { keep[at.name] = true; document.body.setAttribute(at.name, at.value); }
+            });
+            Array.prototype.slice.call(document.body.attributes).forEach(function (at) {
+              if (at.name.indexOf('data-') === 0 && !keep[at.name]) document.body.removeAttribute(at.name);
+            });
+          }
+        }
+        document.addEventListener('htmx:beforeTransition', function (e) {
+          var d = e.detail || {};
+          var rc = d.requestConfig || {};
+          if (!rc.boosted || !shellNav(rc.elt)) return;
+          
+          
+          
+          if ((UT.motionOff && UT.motionOff()) || !document.startViewTransition) { e.preventDefault(); return; }
+          if (e.defaultPrevented) return;
+          
+          
+          armedSwap = { superseded: false };
+          liveSwaps.push(armedSwap);
+          
+          if (!UT.takeOrigin || !UT.zoomTo) return;
+          
+          
+          
+          
+          
+          
+          
+          
+          var o = UT.takeOrigin();
+          var from = location.href, to = finalURL(d);
+          var pi = d.pathInfo || {};
+          var redirected = false;
+          try {
+            var norm = function (u) { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; };
+            redirected = !!pi.requestPath && norm(pi.requestPath) !== norm(to);
+          } catch (err) { redirected = true; }
+          if (document.documentElement.getAttribute('data-nav-dir') === 'pop') {
+            UT.zoomTo(UT.zoomRecall(from, to));
+          } else {
+            var src = rc.elt, rect = null;
+            if (!redirected && o && o.el && src && src.contains && (o.el === src || src.contains(o.el) || o.el.contains(src))) rect = o.rect;
+            UT.zoomRemember(to, from, rect);
+            UT.zoomTo(rect);
+          }
+        });
+      })();
+    </script>
+    <title>Administration</title>
+    <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
+    <link rel="stylesheet" href="/public/app.css?v=X" />
+    <link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css" />
+    
+    <link id="theme-css" rel="stylesheet" data-theme="default"  />
+    
+    
+    
+    <script defer src="/public/vendor/htmx.min.js?v=X"></script>
+    <script defer src="/public/vendor/alpine.min.js?v=X"></script>
+    <script defer src="/public/qr-scan.js?v=X"></script>
+    <script defer src="/public/app.js?v=X"></script>
+    <script defer src="/public/join-scan.js?v=X"></script>
+    <script defer src="/public/card-reader-picker.js?v=X"></script>
+    <script defer src="/public/till-confirm.js?v=X"></script>
+    <script defer src="/public/pairing-stream.js?v=X"></script>
+    <script defer src="/public/osk.js?v=X"></script>
+    <script defer src="/public/cursor.js?v=X"></script>
+    
+    <script defer src="/public/autofill.js?v=X"></script>
+    
+    <script defer src="/public/input-heartbeat.js?v=X"></script>
+    
+    <script defer src="/public/window-toggle.js?v=X"></script>
+    
+    <script defer src="/public/record-dialog.js?v=X"></script>
+    
+    <script defer src="/public/list-reorder.js?v=X"></script>
+    
+    <script defer src="/public/table-cards.js?v=X"></script>
+    
+    <script defer src="/public/category-filter.js?v=X"></script>
+    
+    <script defer src="/public/icon-picker-filter.js?v=X"></script>
+    
+    <script defer src="/public/photo-cutout.js?v=X"></script>
+    
+    <script defer src="/public/radiogroup.js?v=X"></script>
+    
+    <script defer src="/public/bugreport-draft.js?v=X"></script>
+    
+    <script defer src="/public/sell-screen-watch.js?v=X"></script>
+    
+    <script defer src="/public/tour.js?v=X"></script>
+    
+    <script defer src="/public/android-update.js?v=X"></script>
+    
+    <script defer src="/public/inline-actions.js?v=X"></script>
+  </head>
+  <body class=""
+        data-shell-classes=""
+        data-currency="GBP" data-currency-decimals="2"
+        data-currency-display="£" data-currency-suffix=""
+        data-number-thousands="," data-number-decimal="." data-number-digits="" data-number-grouping=""
+        data-osk="auto"
+        data-order-type-prompt-mode="top"
+        data-notice-dismiss="Dismiss"
+        data-show-more="More" data-show-less="Less"
+        data-money-invalid="Enter the amount in digits, with a dot or a comma before the decimals (for example 3.50 or 3,50)."
+        data-percent-invalid="Enter the percentage in digits, with a dot or a comma before up to two decimals (for example 7.5 or 7,25)."
+        
+        >
+    
+    <div id="ut-page" hx-boost="true" hx-history-elt hx-history="false">
+    
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
+    <nav class="nav">
+  
+  <div class="logo">
+    <img src="/public/assets/logo/unitill-logo-light.svg" alt="" />
+    <span class="app-name">Universal Till</span>
+  </div>
+  
+  <button type="button" class="nav-drawer-toggle" aria-expanded="false" aria-controls="nav-drawer"
+          aria-label="Open menu" data-label-open="Open menu" data-label-close="Close menu">
+    <span class="btn-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="menu"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></span>
+    
+    <span id="notices-burger-badge" class="notices-badge notices-badge-burger" aria-hidden="true" hidden></span>
+  </button>
+  
+  <a href="/menu" class="nav-toggle nav-back" data-testid="nav-back"
+     aria-label="Back" title="Back">
+    <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="arrow-left"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></span>
+    <span class="nav-toggle-label">Back</span>
+  </a>
+  <div id="nav-drawer" class="nav-drawer">
+  
+  <div class="nav-primary">
+    
+    <a href="/" class="nav-toggle" data-testid="nav-till">
+      <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="shopping-cart"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg></span>
+      <span class="nav-toggle-label">Sell</span>
+    </a>
+    <a href="/menu" class="nav-toggle" data-testid="nav-menu">
+      <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="menu"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></span>
+      <span class="nav-toggle-label">Menu</span>
+    </a>
+    <a href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders">
+      <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="bell"><path d="M3 20a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1Z"/><path d="M20 16a8 8 0 1 0-16 0"/><path d="M12 4v4"/><path d="M10 4h4"/></svg></span>
+      <span class="nav-toggle-label">Order status</span>
+    </a>
+    <a href="/inventory" class="nav-toggle nav-rail-only" data-testid="kiosk-inventory-link">
+      <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="package"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></span>
+      <span class="nav-toggle-label">Inventory</span>
+    </a>
+  </div>
+  <div class="nav-right">
+    
+    <span id="notices-bell" hx-swap="innerHTML" hx-get="/notices/bell" hx-trigger="load, every 30s, notices-changed from:body"></span>
+    
+    <a class="nav-toggle" href="/help/menu" title="Help for this page"
+       aria-label="Help for this page" data-testid="help-hint">
+      <span class="nav-toggle-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="help"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
+      <span class="nav-toggle-label">Help for this page</span>
+    </a>
+    
+    <span id="bugreport-chip" hx-preserve hx-get="/ui/bugreport-chip" hx-trigger="load"></span>
+    <span id="sync-chip" hx-preserve hx-get="/ui/sync-chip" hx-trigger="load, every 30s, tills-changed from:body"></span>
+    <span id="session-chip" hx-preserve hx-get="/ui/session-chip" hx-trigger="load"></span>
+  </div>
+  </div>
+  
+  <div class="nav-alerts">
+      
+      <span id="fiscal-chip" hx-preserve hx-get="/ui/fiscal-chip" hx-trigger="load, every 30s"></span>
+      
+      <span id="diagnostics-chip" hx-preserve hx-get="/ui/diagnostics-chip" hx-trigger="load, every 30s"></span>
+  </div>
+  <div class="nav-drawer-backdrop" aria-hidden="true"></div>
+</nav>
+    
+    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body" hx-preserve></div>
+    
+    <div id="join-notice-mount" hx-get="/ui/join-notice" hx-trigger="load, every 30s" hx-preserve></div>
+    
+    <div id="join-notice-status" class="join-notice-status" aria-live="polite"></div>
+    
+    <div id="shop-name-notice-mount" hx-get="/ui/shop-name-notice" hx-trigger="load, every 60s" hx-preserve></div>
+    
+    <div id="replaced-banner-mount" hx-get="/ui/replaced-banner" hx-trigger="load, every 60s" hx-preserve></div>
+    
+    <div id="move-approval-notice-mount" hx-get="/ui/move-approval-notice" hx-trigger="load, every 30s" hx-preserve></div>
+    
+    
+    <div id="theme-sync-poll" hx-get="/ui/theme-sync" hx-trigger="load, every 30s" hx-swap="none"></div>
+    <script>
+      document.addEventListener('htmx:oobAfterSwap', function (e) {
+        if (e.detail.target.id !== 'theme-sync-poll') return;
+        
+        
+        
+        
+        
+        
+        
+        
+        var poll = document.getElementById('theme-sync-poll');
+        var live = (poll && poll.dataset.theme) || '';
+        var link = document.getElementById('theme-css');
+        if (!link || live === (link.dataset.theme || '')) return;
+        link.dataset.theme = live;
+        if (live && live !== 'default') {
+          link.setAttribute('href', '/themes/' + encodeURIComponent(live) + '.css');
+        } else {
+          link.removeAttribute('href');
+        }
+      });
+    </script>
+    
+    
+  <div id="pos-alert" class="pos-notice error" role="alert" hidden
+       data-msg-server="Something went wrong. Please try again."
+       data-msg-network="Connection problem — the till keeps working offline."
+       data-msg-outcome-unknown="The connection dropped before the till replied, so this may or may not have been done. Check before you try again."
+       data-msg-outcome-timeout="The till did not reply in time, so this may or may not have been done. Check before you try again.">
+    <span class="notice-text"></span>
+    <button type="button" class="notice-dismiss" aria-label="Dismiss">✕</button>
+  </div>
+
+    <div id="ut-print-unavailable" class="pos-notice info" role="status" hidden data-reusable data-testid="print-unavailable">
+      <span class="notice-text">Nothing was printed. Check that the printer is set up and switched on.</span>
+      <a class="btn secondary" href="/settings#settings-printer">Set up a receipt printer</a>
+      <button type="button" class="notice-dismiss" aria-label="Dismiss">✕</button>
+    </div>
+    <main class="container">
+
+<div class="page-head">
+  <h1>Administration <a class="help-hint" href="/help/menu" title="Help for this page" aria-label="Help for this page" data-testid="help-hint">?</a></h1>
+</div>
+
+
+
+
+<div class="items-layout">
+  <aside class="items-rail-wrap" aria-label="Administration">
+    
+<div class="admin-tree" id="admin-tree" >
+  
+  <section class="admin-group">
+    <h2>Locations</h2>
+    <ul class="admin-tree-list">
+      
+      <li>
+        <a class="items-row is-current"
+           href="/locations"
+           hx-get="/locations" hx-target="#admin-panel" hx-push-url="true"
+           aria-current="page">
+          <span class="items-text">
+            <span class="items-name">Locations</span>
+          </span>
+        </a>
+      </li>
+      
+      <li>
+        <a class="items-row"
+           href="/registers"
+           hx-get="/registers" hx-target="#admin-panel" hx-push-url="true"
+           >
+          <span class="items-text">
+            <span class="items-name">Registers</span>
+          </span>
+        </a>
+      </li>
+      
+    </ul>
+  </section>
+  
+  <section class="admin-group">
+    <h2>Localization</h2>
+    <ul class="admin-tree-list">
+      
+      <li>
+        <a class="items-row"
+           href="/translations"
+           hx-get="/translations" hx-target="#admin-panel" hx-push-url="true"
+           >
+          <span class="items-text">
+            <span class="items-name">Translations</span>
+          </span>
+        </a>
+      </li>
+      
+      <li>
+        <a class="items-row"
+           href="/country-settings"
+           hx-get="/country-settings" hx-target="#admin-panel" hx-push-url="true"
+           >
+          <span class="items-text">
+            <span class="items-name">Country settings</span>
+          </span>
+        </a>
+      </li>
+      
+    </ul>
+  </section>
+  
+</div>
+
+  </aside>
+  <div class="items-panel" id="admin-panel">
+    <div class="card" style="color: var(--danger)">Something went wrong. Please try again.</div>
+  </div>
+</div>
+
+
+<script>
+(function () {
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  document.addEventListener('click', function (evt) {
+    if (!window.matchMedia('(max-width: 52rem)').matches) return;
+    var t = evt.target;
+    if (t && t.closest && t.closest('a.items-row, a[hx-target="#admin-panel"]')) evt.stopPropagation();
+  }, true);
+})();
+</script>
+</main>
+    
+    <span id="sb-link-live" class="visually-hidden" aria-live="polite" hx-preserve></span>
+    <footer class="statusbar" aria-label="Status">
+      
+      <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 5s"></span>
+      
+      <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
+      
+      <span id="sb-cloud-sync-mount" hx-preserve hx-get="/ui/cloud-sync-chip" hx-trigger="load, every 30s, ut-cloud-synced from:body"></span>
+      
+      <span id="sb-move-pending-mount" hx-preserve hx-get="/ui/move-pending-chip" hx-trigger="load, every 60s"></span>
+      
+      <span id="sb-report-archive-mount" hx-preserve hx-get="/ui/report-archive-chip" hx-trigger="load, every 60s"></span>
+      
+      <span id="sb-disk-space-mount" hx-preserve hx-get="/ui/disk-space-chip" hx-trigger="load, every 60s"></span>
+      
+      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s, backup-copied from:body"></span>
+      
+      <span id="sb-shop-currency-mount" hx-preserve hx-get="/ui/shop-currency-chip" hx-trigger="load, every 60s"></span>
+      
+      <span class="sb-item sb-conn" id="sb-conn" data-testid="status-indicator"
+            data-conn-online="Online" data-conn-offline="Offline"
+            data-conn-no-internet="No internet">
+        <span class="sb-dot" aria-hidden="true"></span>
+        <span class="sb-conn-text">Online</span>
+      </span>
+      
+      <span id="sb-subscription-mount" hx-preserve hx-get="/ui/subscription-chip" hx-trigger="load, every 60s, ut-subscription-changed from:body"></span>
+      
+      
+      
+        
+        <a class="sb-item sb-enrol" href="/settings#registration"><span class="btn-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="sparkles"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg></span> Marketplace: not connected</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;vdev</span>
+    </footer>
+    <script>
+      (function () {
+        var el = document.getElementById('sb-conn');
+        if (!el) return;
+        var txt = el.querySelector('.sb-conn-text');
+        var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
+        var noNet = el.getAttribute('data-conn-no-internet');
+        var bar = el.closest('.statusbar');
+        
+        
+        
+        
+        
+        
+        
+        var NET_STATUS_URL = '/ui/net-status';
+        var net = window.__utNet || (window.__utNet = { reach: null, timer: null, poll: null });
+        function update() {
+          var online = navigator.onLine;
+          
+          
+          
+          var linked = bar && bar.classList.contains('has-link');
+          if (online && !linked && net.reach === false) {
+            el.classList.add('is-offline');
+            txt.textContent = noNet;
+            return;
+          }
+          el.classList.toggle('is-offline', !online);
+          txt.textContent = online ? on : (linked ? noNet : off);
+        }
+        function pollNet() {
+          
+          
+          if (document.hidden || !window.fetch || (bar && bar.classList.contains('has-link'))) return;
+          fetch(NET_STATUS_URL, { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+              if (!j || !j.data || !('cloud_reachable' in j.data)) return;
+              var v = j.data.cloud_reachable;
+              net.reach = (v === true || v === false) ? v : null;
+              update();
+            })
+            .catch(function () {   });
+        }
+        window.addEventListener('online', function () { update(); pollNet(); });
+        window.addEventListener('offline', update);
+        update();
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) pollNet(); });
+        
+        
+        
+        
+        
+        net.poll = pollNet;
+        if (!net.timer) {
+          net.timer = setInterval(function () { window.__utNet.poll(); }, 10000);
+          pollNet();
+        }
+        
+        
+        
+        var mount = document.getElementById('sb-main-till-mount');
+        var live = document.getElementById('sb-link-live');
+        var lastState = null;
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        var lockState = '';
+        function applyMainTillLock(root, away) {
+          function each(sel, fn) {
+            if (root.matches && root.matches(sel)) fn(root);
+            Array.prototype.forEach.call(root.querySelectorAll(sel), fn);
+          }
+          each('[data-main-till-lock]', function (el) { el.disabled = away; });
+          each('[data-main-till-away]', function (el) { el.hidden = !away; });
+          each('[data-main-till-here]', function (el) { el.hidden = away; });
+          
+          
+          
+          
+          
+          each('[data-main-till-gate]', function (el) { el.toggleAttribute('data-main-till-locked', away); });
+          if (root === document) {
+            document.documentElement.toggleAttribute('data-main-till-locked', away);
+            window.dispatchEvent(new CustomEvent('ut-main-till-lock', { detail: { locked: away } }));
+          }
+        }
+        function followChip() {
+          if (!mount || !bar) return;
+          var chip = mount.querySelector('[data-link-state]');
+          bar.classList.toggle('has-link', !!chip);
+          update();
+          var state = chip ? chip.getAttribute('data-link-state') : '';
+          
+          
+          
+          
+          if (live && lastState && state && state !== lastState) {
+            live.textContent = chip.textContent.replace(/\s+/g, ' ').trim();
+          }
+          lastState = state;
+          
+          
+          
+          
+          if (!state && lockState) {
+            lockState = '';
+            applyMainTillLock(document, false);
+          }
+          if (state && state !== lockState) {
+            lockState = state;
+            applyMainTillLock(document, mainTillLocks(state));
+          }
+        }
+        
+        
+        
+        function mainTillLocks(state) {
+          return state === 'unreachable' || state === 'rejoin';
+        }
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+          if (e.target === mount) followChip();
+        });
+        document.body.addEventListener('htmx:load', function (e) {
+          var el = e.detail && e.detail.elt;
+          if (!lockState || !el || !el.querySelectorAll || (mount && mount.contains(el))) return;
+          applyMainTillLock(el, mainTillLocks(lockState));
+        });
+        followChip();
+      })();
+      (function () {
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        var abtn = document.getElementById('sb-android-update-btn');
+        if (abtn) {
+          
+          
+          
+          var aLabel = abtn.innerHTML, aArmed = false, aTimer = null;
+          var A = function (k) { return abtn.getAttribute('data-' + k) || ''; };
+          var aRetry = false;
+          
+          
+          var aReady = false;
+          var aReset = function () { abtn.innerHTML = aLabel; abtn.disabled = false; aRetry = false; };
+          abtn.addEventListener('click', function () {
+            
+            
+            
+            if (window.utAndroidUpdater && window.utAndroidUpdater.busy()) { return; }
+            if (!aArmed && !aRetry) {
+              aArmed = true;
+              abtn.textContent = A('confirm').replace('%s', abtn.getAttribute('data-latest') || '');
+              aTimer = setTimeout(function () { aArmed = false; abtn.innerHTML = aLabel; }, 6000);
+              return;
+            }
+            aArmed = false; aRetry = false; clearTimeout(aTimer);
+            if (!window.utAndroidUpdater) { abtn.textContent = A('failed'); return; }
+            abtn.disabled = true;
+            abtn.textContent = A('downloading');
+            window.utAndroidUpdater.install('').then(function (outcome) {
+              if (outcome === 'started') { return; } 
+              if (outcome === 'needs_pin' || outcome === 'wrong_pin') {
+                
+                
+                
+                
+                if (window.location.pathname === '/settings') {
+                  aReset();
+                  var f = document.getElementById('android-update-form');
+                  if (f) {
+                    var pl = document.getElementById('android-update-pin-label');
+                    if (pl) { pl.hidden = false; }
+                    f.scrollIntoView({ block: 'center' });
+                    var pi = f.querySelector('[name="manager_pin"]');
+                    if (pi) { pi.focus(); }
+                  }
+                  return;
+                }
+                window.location.href = '/settings#android-update';
+                return;
+              }
+              
+              
+              if (outcome === 'busy') {
+                
+                
+                abtn.textContent = A('busy');
+                abtn.disabled = false;
+                aRetry = true;
+                aTimer = setTimeout(function () {
+                  if (aReady) { abtn.textContent = window.utAndroidUpdater.text(abtn, { state: 'downloaded' }); } else { aReset(); }
+                }, 6000);
+                return;
+              }
+              var key = { locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed';
+              abtn.textContent = A(key);
+              abtn.disabled = false;
+            });
+          });
+          
+          
+          
+          document.addEventListener('ut:android-update', function (e) {
+            var s = e.detail || {};
+            clearTimeout(aTimer); aArmed = false;
+            
+            
+            
+            if (s.state === 'needs_permission' || s.state === 'permission_granted') {
+              aReset();
+              if (window.location.pathname === '/settings') {
+                var pf = document.getElementById('android-update-form');
+                
+                
+                if (window.location.hash !== '#android-update') { window.location.hash = 'android-update'; }
+                if (pf) { pf.scrollIntoView({ block: 'center' }); }
+              } else if (s.state === 'needs_permission') {
+                window.location.href = '/settings#android-update';
+              }
+              return;
+            }
+            abtn.textContent = window.utAndroidUpdater.text(abtn, s);
+            abtn.disabled = s.state === 'downloading';
+            
+            
+            
+            
+            aReady = s.state === 'downloaded';
+            aRetry = s.state === 'failed' || s.state === 'closed' || aReady;
+          });
+        }
+      })();
+      (function () {
+        var btn = document.getElementById('sb-update-btn');
+        if (!btn) return;
+        var T = {
+          confirm: "Confirm update to v",
+          downloading: "Downloading update…",
+          uptodate: "Already up to date",
+          failed: "Update failed — see logs",
+          restarting: "Restarting…",
+          installedReload: "Update installed — click to reload",
+          restartPending: "Update installed — restart pending. Restart the till to finish"
+        };
+        
+        var latest = btn.getAttribute('data-latest');
+        
+        
+        
+        
+        
+        
+        
+        
+        var label = btn.innerHTML, armed = false, armTimer = null;
+        btn.addEventListener('click', function () {
+          if (!armed) {
+            armed = true;
+            btn.textContent = T.confirm + latest;
+            armTimer = setTimeout(function () { armed = false; btn.innerHTML = label; }, 4000);
+            return;
+          }
+          armed = false; clearTimeout(armTimer);
+          btn.disabled = true; btn.textContent = T.downloading;
+          fetch('/api/update/apply', { method: 'POST' })
+            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (res) {
+              
+              
+              
+              
+              
+              
+              var data = res && res.data;
+              if (data && data.already_current) {
+                btn.textContent = T.uptodate;
+                btn.disabled = false;
+                return;
+              }
+              var failed = !!(res && res.error);
+              btn.textContent = failed ? T.failed : T.restarting;
+              
+              
+              
+              if (failed) {
+                btn.disabled = false;
+                
+                
+                
+                if (typeof res.error === 'string') {
+                  var pa = document.getElementById('pos-alert');
+                  if (pa) {
+                    pa.hidden = false;
+                    var pt = pa.querySelector('.notice-text');
+                    if (pt) pt.textContent = res.error;
+                  }
+                }
+                return;
+              }
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              
+              var target = (data && data.version) || latest;
+              var tries = 0, pending = false;
+              var iv = setInterval(function () {
+                tries++;
+                fetch('/api/update/status', { cache: 'no-store' }).then(function (r) {
+                  if (r.redirected || (r.status >= 400 && r.status < 500)) {
+                    clearInterval(iv); UT.reload('update-restarted');
+                    return null;
+                  }
+                  return r.ok ? r.json() : null;
+                }).then(function (res) {
+                  var st = res && res.data;
+                  if (!st) return;
+                  if (st.running_version === target) { clearInterval(iv); UT.reload('update-restarted'); return; }
+                  pending = true;
+                }).catch(function () {});
+                if (tries > 90) {
+                  clearInterval(iv);
+                  
+                  
+                  
+                  
+                  
+                  
+                  
+                  
+                  
+                  btn.disabled = false;
+                  
+                  
+                  btn.textContent = pending ? T.restartPending : T.installedReload;
+                  btn.onclick = function () { UT.reload('update-manual-retry'); };
+                }
+              }, 2000);
+            });
+        });
+      })();
+    </script>
+    </div>
+    
+    
+
+
+<section id="bugreport-panel" data-testid="bugreport-panel" data-ut-no-scrim
+         class="bugreport-panel"
+         role="region" aria-label="Report an issue">
+  <div class="bugreport-head">
+    <h2>Report an issue</h2>
+    
+    <button type="button" class="btn secondary bugreport-discard" id="bugreport-discard"
+            data-testid="bugreport-discard">Discard</button>
+    
+    <button type="button" class="bugreport-close" id="bugreport-close"
+            data-testid="bugreport-close"
+            title="Close"
+            aria-label="Close">
+      <span class="btn-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span></button>
+  </div>
+
+  
+  <div class="set-gap-s">
+    <label class="set-row" for="ir-note">What went wrong?</label>
+    
+    <div class="bugreport-send">
+      <textarea id="ir-note" rows="2"
+        placeholder="Describe what happened, e.g. which screen, what you tapped… (or use voice below)"></textarea>
+      <button type="button" class="btn" id="ir-save-btn">Save report</button>
+    </div>
+    
+    <div><span id="ir-status" aria-live="polite" class="muted"></span></div>
+  </div>
+
+  
+  <div class="set-gap bugreport-capture">
+    <div>
+      <p><strong>Voice note</strong></p>
+      <button type="button" class="btn secondary" id="ir-voice-btn">● Record</button>
+      <audio id="ir-voice-preview" controls style="display:none; margin-top:.5rem; width:100%"></audio>
+    </div>
+    <div>
+      <p><strong>Screen recording (optional)</strong></p>
+      <button type="button" class="btn secondary" id="ir-screen-btn">● Record screen</button>
+      <video id="ir-screen-preview" controls style="display:none; margin-top:.5rem; width:100%; max-height:240px"></video>
+    </div>
+  </div>
+
+  
+  <div class="set-gap">
+    <p><strong>Screenshot (optional)</strong></p>
+    
+    <button type="button" class="btn secondary" id="ir-screenshot-btn">
+      <span class="btn-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="camera"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg></span> Take screenshot</button>
+    <div id="ir-screenshot-thumbs" class="bugreport-thumbs"></div>
+  </div>
+
+  
+  <p class="set-gap muted bugreport-nav-note">Recording keeps running while you move between pages. If the page fully reloads, what was captured so far is kept.</p>
+  <p class="muted">The till&#39;s recent warning/error logs are attached automatically.</p>
+  
+  <p><a href="/my-reports">View my reports</a></p>
+</section>
+
+<script>
+(function () {
+  var panel = document.getElementById('bugreport-panel');
+  if (!panel) return;
+
+  var T = {
+    voiceRecord: "● Record",
+    voiceStop: "■ Stop",
+    descriptionRequired: "Type a description or record a voice note.",
+    voiceUnsupported: "This browser can\u0027t record audio.",
+    micError: "Couldn\u0027t access the microphone.",
+    screenRecord: "● Record screen",
+    screenStop: "■ Stop",
+    screenUnsupported: "Screen recording isn\u0027t available here.",
+    screenError: "Couldn\u0027t start screen recording.",
+    screenshotCapture: "Take screenshot",
+    screenshotUnsupported: "Screenshots aren\u0027t available here.",
+    screenshotError: "Couldn\u0027t capture a screenshot.",
+    screenshotRemove: "Remove screenshot",
+    screenshotLimit: "Up to 12 screenshots per report.",
+    recordingKeptAfterReload: "The page reloaded, so recording stopped — what was captured up to then is kept below.",
+    discardConfirm: "Discard this report and everything attached to it?",
+    discardOk: "Discard",
+    discardKeep: "Keep report",
+    saving: "Saving…",
+    saved: "Saved. It will upload automatically once this shop is online.",
+    saveError: "Couldn\u0027t save the report — try again."
+  };
+
+  
+  
+  
+  var initialized = false;
+  function initCapture() {
+    if (initialized) return;
+    initialized = true;
+
+    var noteEl = document.getElementById('ir-note');
+    var statusEl = document.getElementById('ir-status');
+
+    var VOICE_MAX_MS = 120000; 
+    var SCREEN_MAX_MS = 60000; 
+    var SCREENSHOT_MAX = 12;   
+    
+    
+    
+    
+    
+    
+    var CHUNK_MS = 1000;
+    var draft = window.UT && window.UT.bugreportDraft;
+    var discardPending = false;
+
+    var voiceBtn = document.getElementById('ir-voice-btn');
+    var voicePreview = document.getElementById('ir-voice-preview');
+    var voiceRecorder = null, voiceChunks = [], voiceBlob = null, voiceRecording = false, voiceStarting = false, voiceTimer = null;
+
+    var screenBtn = document.getElementById('ir-screen-btn');
+    var screenPreview = document.getElementById('ir-screen-preview');
+    var screenRecorder = null, screenChunks = [], screenBlob = null, screenRecording = false, screenStarting = false, screenStream = null, screenTimer = null;
+
+    var saveBtn = document.getElementById('ir-save-btn');
+
+    
+    function pickMimeType(candidates) {
+      if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return candidates[0];
+      for (var i = 0; i < candidates.length; i++) {
+        if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+      }
+      return null;
+    }
+
+    
+    
+    
+    
+    
+    var VOICE_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !pickMimeType(VOICE_TYPES)) {
+      voiceBtn.disabled = true;
+      voiceBtn.textContent = T.voiceUnsupported;
+    } else {
+      voiceBtn.addEventListener('click', function () {
+        if (voiceRecording) {
+          voiceRecorder.stop();
+          return;
+        }
+        if (voiceStarting) return; 
+        voiceStarting = true;
+        voiceBtn.disabled = true;
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          voiceStarting = false;
+          var mime = pickMimeType(VOICE_TYPES);
+          try {
+            voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
+          } catch (e) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            voiceBtn.disabled = false;
+            statusEl.textContent = T.micError;
+            return;
+          }
+          voiceChunks = [];
+          var voiceSeq = 0;
+          
+          
+          
+          voiceRecorder.addEventListener('dataavailable', function (e) {
+            if (!(e.data && e.data.size > 0)) return;
+            voiceChunks.push(e.data);
+            if (draft) draft.put(draft.key('voice-chunk', voiceSeq++), e.data);
+          });
+          voiceRecorder.addEventListener('stop', function () {
+            clearTimeout(voiceTimer);
+            setVoiceBlob(new Blob(voiceChunks, { type: mime }), true);
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            voiceRecording = false;
+            voiceBtn.disabled = false;
+            voiceBtn.textContent = T.voiceRecord;
+            if (discardPending) finishDiscard();
+          });
+          
+          
+          
+          if (draft) draft.del(draft.key('voice'));
+          voiceRecorder.start(CHUNK_MS);
+          voiceRecording = true;
+          voiceBtn.disabled = false;
+          voiceBtn.textContent = T.voiceStop;
+          voiceTimer = setTimeout(function () {
+            if (voiceRecording) voiceRecorder.stop();
+          }, VOICE_MAX_MS);
+        }).catch(function () {
+          voiceStarting = false;
+          voiceBtn.disabled = false;
+          statusEl.textContent = T.micError;
+        });
+      });
+    }
+
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      screenBtn.disabled = true;
+      screenBtn.textContent = T.screenUnsupported;
+    } else {
+      screenBtn.addEventListener('click', function () {
+        if (screenRecording) {
+          screenRecorder.stop();
+          return;
+        }
+        if (screenStarting) return; 
+        screenStarting = true;
+        screenBtn.disabled = true;
+        navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
+          screenStarting = false;
+          screenStream = stream;
+          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']) || 'video/webm';
+          try {
+            screenRecorder = new MediaRecorder(stream, { mimeType: mime });
+          } catch (e) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            screenBtn.disabled = false;
+            statusEl.textContent = T.screenError;
+            return;
+          }
+          screenChunks = [];
+          var screenSeq = 0;
+          screenRecorder.addEventListener('dataavailable', function (e) {
+            if (!(e.data && e.data.size > 0)) return;
+            screenChunks.push(e.data);
+            if (draft) draft.put(draft.key('screen-chunk', screenSeq++), e.data);
+          });
+          screenRecorder.addEventListener('stop', function () {
+            clearTimeout(screenTimer);
+            setScreenBlob(new Blob(screenChunks, { type: mime }), true);
+            screenStream.getTracks().forEach(function (t) { t.stop(); });
+            screenRecording = false;
+            screenBtn.disabled = false;
+            screenBtn.textContent = T.screenRecord;
+            if (discardPending) finishDiscard();
+          });
+          
+          
+          
+          
+          stream.getVideoTracks()[0].addEventListener('ended', function () {
+            if (screenRecording) screenRecorder.stop();
+          });
+          if (draft) draft.del(draft.key('screen')); 
+          screenRecorder.start(CHUNK_MS);
+          screenRecording = true;
+          screenBtn.disabled = false;
+          screenBtn.textContent = T.screenStop;
+          screenTimer = setTimeout(function () {
+            if (screenRecording) screenRecorder.stop();
+          }, SCREEN_MAX_MS);
+        }).catch(function () {
+          screenStarting = false;
+          screenBtn.disabled = false;
+          statusEl.textContent = T.screenError;
+        });
+      });
+    }
+
+    
+    
+    
+    
+    
+    
+    var screenshotBtn = document.getElementById('ir-screenshot-btn');
+    var screenshotThumbs = document.getElementById('ir-screenshot-thumbs');
+    var screenshots = []; 
+
+    
+    
+    
+    
+    
+    
+    
+    var voiceURL = null, screenURL = null;
+    function setVoiceBlob(blob, persist) {
+      voiceBlob = blob;
+      if (voiceURL) URL.revokeObjectURL(voiceURL);
+      voiceURL = URL.createObjectURL(blob);
+      voicePreview.src = voiceURL;
+      voicePreview.style.display = '';
+      if (persist && draft && !discardPending) draft.keys('voice-chunk').then(function (ks) { ks.forEach(draft.del); }).then(function () { draft.put(draft.key('voice'), blob); });
+    }
+    function setScreenBlob(blob, persist) {
+      screenBlob = blob;
+      if (screenURL) URL.revokeObjectURL(screenURL);
+      screenURL = URL.createObjectURL(blob);
+      screenPreview.src = screenURL;
+      screenPreview.style.display = '';
+      if (persist && draft && !discardPending) draft.keys('screen-chunk').then(function (ks) { ks.forEach(draft.del); }).then(function () { draft.put(draft.key('screen'), blob); });
+    }
+    function syncScreenshotCap() {
+      var full = screenshots.length >= SCREENSHOT_MAX;
+      screenshotBtn.disabled = full;
+      if (full) statusEl.textContent = T.screenshotLimit;
+    }
+
+    
+    
+    function addScreenshotThumb(blob, key) {
+      if (screenshots.length >= SCREENSHOT_MAX) { syncScreenshotCap(); return; }
+      if (!key && draft) { key = draft.key('shot', Date.now()); draft.put(key, blob); }
+      var wrap = document.createElement('span');
+      wrap.className = 'bugreport-thumb';
+      var img = document.createElement('img');
+      var objectURL = URL.createObjectURL(blob);
+      img.src = objectURL;
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'bugreport-thumb-remove';
+      remove.title = T.screenshotRemove;
+      remove.setAttribute('aria-label', T.screenshotRemove);
+      remove.textContent = '✕';
+      wrap.appendChild(img);
+      wrap.appendChild(remove);
+      screenshotThumbs.appendChild(wrap);
+      var entry = { blob: blob, thumbnailEl: wrap, key: key, url: objectURL };
+      screenshots.push(entry);
+      syncScreenshotCap();
+      remove.addEventListener('click', function () {
+        var i = screenshots.indexOf(entry);
+        if (i !== -1) screenshots.splice(i, 1);
+        wrap.remove();
+        if (key && draft) draft.del(key);
+        syncScreenshotCap();
+        
+        
+        
+        
+        
+        URL.revokeObjectURL(objectURL);
+      });
+    }
+
+    
+    
+    function resetDraft() {
+      noteEl.value = '';
+      screenshots.slice().forEach(function (s) { s.thumbnailEl.remove(); URL.revokeObjectURL(s.url); });
+      screenshots = [];
+      voiceBlob = null; voicePreview.removeAttribute('src'); voicePreview.style.display = 'none';
+      screenBlob = null; screenPreview.removeAttribute('src'); screenPreview.style.display = 'none';
+      if (voiceURL) { URL.revokeObjectURL(voiceURL); voiceURL = null; }
+      if (screenURL) { URL.revokeObjectURL(screenURL); screenURL = null; }
+      syncScreenshotCap();
+      if (draft) { draft.clearBlobs(); draft.set({ note: '' }); }
+    }
+
+    
+    
+    
+    
+    function restoreDraft() {
+      if (!draft) return;
+      var m = draft.meta();
+      if (m && typeof m.note === 'string' && !noteEl.value) noteEl.value = m.note;
+      draft.entries('shot').then(function (es) {
+        es.forEach(function (e) { addScreenshotThumb(e.blob, e.key); });
+      });
+      ['voice', 'screen'].forEach(function (kind) {
+        var set = kind === 'voice' ? setVoiceBlob : setScreenBlob;
+        
+        
+        
+        draft.entries(kind + '-chunk').then(function (es) {
+          if (es.length) {
+            set(new Blob(es.map(function (e) { return e.blob; }), { type: es[0].blob.type }), true);
+            statusEl.textContent = T.recordingKeptAfterReload;
+            return;
+          }
+          return draft.get(draft.key(kind)).then(function (blob) { if (blob) set(blob, false); });
+        });
+      });
+    }
+
+    noteEl.addEventListener('input', function () {
+      if (draft) draft.set({ note: noteEl.value });
+    });
+
+    
+    
+    
+    
+    
+    function finishDiscard() {
+      if (voiceRecording || screenRecording) return;
+      discardPending = false;
+      resetDraft();
+      statusEl.textContent = '';
+      closePanel();
+      
+      
+      
+      
+      var cands = [document.getElementById('bugreport-toggle'), document.querySelector('.nav-drawer-toggle')];
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        if (!c || !c.isConnected || typeof c.focus !== 'function') continue;
+        if (c.getClientRects().length === 0 || getComputedStyle(c).visibility === 'hidden') continue;
+        c.focus();
+        if (document.activeElement === c) break;
+      }
+    }
+    
+    
+    document.getElementById('bugreport-discard').addEventListener('click', function (ev) {
+      var btn = ev.currentTarget;
+      var ask = (window.UT && typeof window.UT.confirm === 'function')
+        ? window.UT.confirm(T.discardConfirm, { opener: btn, ok: T.discardOk, dismiss: T.discardKeep })
+        : Promise.resolve(window.confirm(T.discardConfirm)); 
+      ask.then(function (ok) {
+        if (ok !== true) return;            
+        discardPending = true;
+        if (voiceRecording) voiceRecorder.stop();
+        if (screenRecording) screenRecorder.stop();
+        finishDiscard();
+      });
+    });
+
+    restoreDraft();
+
+    function grabFrameFromStream(stream, done) {
+      var track = stream.getVideoTracks()[0];
+      if (typeof ImageCapture !== 'undefined') {
+        new ImageCapture(track).grabFrame().then(function (bitmap) {
+          var canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.getContext('2d').drawImage(bitmap, 0, 0);
+          canvas.toBlob(done, 'image/png');
+        }).catch(function () { done(null); });
+        return;
+      }
+      
+      
+      var videoEl = document.createElement('video');
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.srcObject = stream;
+      videoEl.addEventListener('loadedmetadata', function () {
+        videoEl.play().then(function () {
+          var canvas = document.createElement('canvas');
+          canvas.width = videoEl.videoWidth;
+          canvas.height = videoEl.videoHeight;
+          canvas.getContext('2d').drawImage(videoEl, 0, 0);
+          canvas.toBlob(done, 'image/png');
+        }).catch(function () { done(null); });
+      });
+    }
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    function addScreenshotFromDataUrl(dataUrl) {
+      if (!dataUrl) {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+        return;
+      }
+      fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+        screenshotBtn.disabled = false;
+        addScreenshotThumb(blob);
+      }).catch(function () {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+      });
+    }
+    
+    
+    
+    
+    
+    var iosScreenshot = window.webkit && window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.utScreenshot;
+    if (window.AndroidKiosk && typeof window.AndroidKiosk.captureScreenshot === 'function') {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        var dataUrl;
+        try {
+          dataUrl = window.AndroidKiosk.captureScreenshot();
+        } catch (e) {
+          dataUrl = '';
+        }
+        addScreenshotFromDataUrl(dataUrl);
+      });
+    } else if (iosScreenshot && typeof iosScreenshot.postMessage === 'function') {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        
+        
+        
+        
+        panel.style.visibility = 'hidden';
+        function restore(dataUrl) {
+          panel.style.visibility = '';
+          addScreenshotFromDataUrl(dataUrl);
+        }
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            var reply;
+            try {
+              reply = iosScreenshot.postMessage('capture');
+            } catch (e) {
+              reply = null;
+            }
+            Promise.resolve(reply).then(function (dataUrl) {
+              restore(typeof dataUrl === 'string' ? dataUrl : '');
+            }, function () { restore(''); });
+          });
+        });
+      });
+    } else if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      screenshotBtn.disabled = true;
+      screenshotBtn.textContent = T.screenshotUnsupported;
+    } else {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
+          grabFrameFromStream(stream, function (blob) {
+            
+            
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            screenshotBtn.disabled = false;
+            if (!blob) {
+              statusEl.textContent = T.screenshotError;
+              return;
+            }
+            addScreenshotThumb(blob);
+          });
+        }).catch(function () {
+          screenshotBtn.disabled = false;
+          statusEl.textContent = T.screenshotError;
+        });
+      });
+    }
+
+    
+    
+    saveBtn.addEventListener('click', function () {
+      var note = noteEl.value.trim();
+      if (!note && !voiceBlob) {
+        statusEl.textContent = T.descriptionRequired;
+        return;
+      }
+      saveBtn.disabled = true;
+      statusEl.textContent = T.saving;
+      var fd = new FormData();
+      fd.append('note', note);
+      if (voiceBlob) fd.append('audio', voiceBlob, /^audio\/mp4/.test(voiceBlob.type) ? 'audio.m4a' : 'audio.webm');
+      if (screenBlob) fd.append('video', screenBlob, 'video.webm');
+      screenshots.forEach(function (s, i) {
+        fd.append('image', s.blob, 'image-' + i + '.png');
+      });
+      fetch('/api/issue-reports', { method: 'POST', body: fd })
+        .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
+        .then(function () {
+          resetDraft(); 
+          statusEl.textContent = T.saved;
+          saveBtn.disabled = false;
+        })
+        .catch(function () {
+          statusEl.textContent = T.saveError;
+          saveBtn.disabled = false;
+        });
+    });
+  }
+
+  function syncToggle(open) {
+    
+    
+    
+    var toggle = document.getElementById('bugreport-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  var draftStore = window.UT && window.UT.bugreportDraft;
+  function dismissed(v) {
+    if (!draftStore) return false;
+    if (v === undefined) { var m = draftStore.meta(); return !!(m && m.open === false); }
+    draftStore.set({ open: !v });
+  }
+
+  function openPanel() {
+    initCapture();
+    panel.classList.add('open');
+    syncToggle(true);
+    dismissed(false);
+    reclampIfDragged(); 
+  }
+
+  function closePanel() {
+    
+    
+    
+    
+    if (window.UT && UT.popupClosed) UT.popupClosed(panel);
+    panel.classList.remove('open');
+    syncToggle(false);
+    dismissed(true);
+  }
+
+  
+  
+  
+  
+  
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('#bugreport-toggle') : null;
+    if (!t) return;
+    if (panel.classList.contains('open')) { closePanel(); return; }
+    openPanel();
+    
+    
+    if (window.UT && UT.popupOpened) UT.popupOpened(panel);
+  });
+
+  document.getElementById('bugreport-close').addEventListener('click', closePanel);
+
+  
+  
+  
+  
+  
+  
+  
+  
+  var head = panel.querySelector('.bugreport-head');
+  var dragPointerId = null, dragStartX = 0, dragStartY = 0, panelStartX = 0, panelStartY = 0;
+  var resizeGuarded = false;
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  
+  
+  
+  
+  function phoneTier() { return !!(window.matchMedia && window.matchMedia('(max-width: 480px)').matches); }
+
+  
+  
+  
+  
+  
+  function clampIntoViewport(x, y) {
+    var rect = panel.getBoundingClientRect();
+    return [
+      clamp(x, 0, window.innerWidth - rect.width),
+      clamp(y, 0, window.innerHeight - rect.height)
+    ];
+  }
+
+  
+  
+  function moveTo(x, y, persist) {
+    var xy = clampIntoViewport(x, y);
+    panel.style.insetInlineEnd = 'auto';
+    panel.style.left = xy[0] + 'px';
+    panel.style.top = xy[1] + 'px';
+    if (persist && draftStore) draftStore.set({ pos: xy });
+  }
+
+  
+  
+  
+  
+  function reclampIfDragged() {
+    if (!panel.style.left || phoneTier()) return;
+    moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0, true);
+  }
+
+  
+  
+  
+  
+  
+  
+  function armResizeGuard() {
+    if (resizeGuarded) return;
+    resizeGuarded = true;
+    window.addEventListener('resize', reclampIfDragged);
+  }
+
+  function onDragMove(e) {
+    
+    
+    
+    
+    if (e.pointerId !== dragPointerId) return;
+    moveTo(panelStartX + (e.clientX - dragStartX), panelStartY + (e.clientY - dragStartY), false);
+  }
+
+  function endDrag(e) {
+    
+    
+    
+    if (dragPointerId === null || (e && e.pointerId !== dragPointerId)) return;
+    if (head.hasPointerCapture(dragPointerId)) head.releasePointerCapture(dragPointerId);
+    dragPointerId = null;
+    reclampIfDragged(); 
+    document.removeEventListener('pointermove', onDragMove);
+    document.removeEventListener('pointerup', endDrag);
+    document.removeEventListener('pointercancel', endDrag);
+  }
+
+  head.addEventListener('pointerdown', function (e) {
+    
+    
+    
+    
+    
+    
+    if (e.target.closest('#bugreport-close, #bugreport-discard')) return; 
+    
+    
+    if (phoneTier()) return;
+    if (dragPointerId !== null) return;   
+    if (e.button !== 0) return;           
+    
+    
+    
+    
+    
+    
+    
+    
+    e.preventDefault();
+    var rect = panel.getBoundingClientRect();
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    panelStartX = rect.left;
+    panelStartY = rect.top;
+    head.setPointerCapture(e.pointerId);
+    dragPointerId = e.pointerId;          
+    document.addEventListener('pointermove', onDragMove);
+    document.addEventListener('pointerup', endDrag);
+    
+    
+    
+    
+    
+    
+    document.addEventListener('pointercancel', endDrag);
+    
+    
+    head.addEventListener('lostpointercapture', endDrag, { once: true });
+
+    armResizeGuard();
+  });
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  document.addEventListener('htmx:afterSettle', function () {
+    syncToggle(panel.classList.contains('open'));
+  });
+
+  
+  
+  
+  
+  window.UT.ready(function () {
+    draftStore = window.UT.bugreportDraft;
+    if (draftStore) {
+      draftStore.purgeStale();
+      var m = draftStore.meta();
+      
+      
+      if (m && m.pos && m.pos.length === 2) {
+        panel.style.insetInlineEnd = 'auto';
+        panel.style.left = m.pos[0] + 'px';
+        panel.style.top = m.pos[1] + 'px';
+        armResizeGuard();
+      }
+      if (m && m.open === true && !panel.classList.contains('open')) { openPanel(); return; }
+    }
+    if (panel.classList.contains('open')) {
+      if (dismissed()) {
+        panel.classList.remove('open');
+        syncToggle(false);
+      } else {
+        
+        
+        
+        dismissed(false);
+        initCapture();
+        reclampIfDragged();
+      }
+    }
+  });
+})();
+</script>
+
+    
+    
+    <section id="plugin-overlay" class="plugin-overlay" data-testid="plugin-overlay" data-ut-no-scrim
+             role="dialog" aria-modal="false" aria-labelledby="plugin-overlay-title" hidden>
+      <div class="plugin-overlay-head">
+        <h2 id="plugin-overlay-title"></h2>
+        <button type="button" class="plugin-overlay-close" id="plugin-overlay-close"
+                data-testid="plugin-overlay-close"
+                title="Close" aria-label="Close">
+          <span class="btn-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" data-icon="x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span></button>
+      </div>
+      
+      <div id="plugin-overlay-view-alert" class="plugin-view-alert" aria-live="polite"></div>
+      <div id="plugin-overlay-view" class="plugin-view"></div>
+    </section>
+    <script>
+    (function () {
+      var ov = document.getElementById('plugin-overlay');
+      if (!ov) return;
+      var title = document.getElementById('plugin-overlay-title');
+      var view = document.getElementById('plugin-overlay-view');
+      var closeBtn = document.getElementById('plugin-overlay-close');
+      var alertBox = document.getElementById('plugin-overlay-view-alert');
+      var T = { unavailable: "This plugin page can\u0027t be shown right now. Try again in a moment — the rest of the till keeps working." };
+      var opener = null;
+      var route = '';
+      function pathOf(u) {
+        try { return new URL(u, location.href).pathname; } catch (err) { return ''; }
+      }
+      function close() {
+        if (ov.hidden) return;
+        ov.hidden = true;
+        if (opener) {
+          opener.setAttribute('aria-expanded', 'false');
+          if (document.body.contains(opener)) opener.focus({ preventScroll: true });
+        }
+      }
+      
+      
+      document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('[data-ut-plugin-overlay]') : null;
+        if (!b) return;
+        if (opener && opener !== b) opener.setAttribute('aria-expanded', 'false');
+        opener = b;
+        b.setAttribute('aria-expanded', 'true');
+        route = b.getAttribute('hx-get') || '';
+        title.textContent = b.getAttribute('data-ut-overlay-title') || '';
+        view.innerHTML = '';
+        alertBox.innerHTML = '';
+        ov.hidden = false;
+        
+        closeBtn.focus({ preventScroll: true });
+      }, true);
+      
+      
+      
+      
+      document.addEventListener('htmx:beforeSwap', function (e) {
+        if (e.detail.target !== view) return;
+        var p = e.detail.pathInfo && (e.detail.pathInfo.finalRequestPath || e.detail.pathInfo.requestPath);
+        if (!route || pathOf(p) !== route) e.detail.shouldSwap = false;
+      });
+      
+      
+      function failed(e) {
+        if (e.detail.target !== view && !(e.detail.elt && e.detail.elt === opener)) return;
+        var n = document.createElement('div');
+        n.className = 'plugin-view-notice warn';
+        n.textContent = T.unavailable;
+        alertBox.replaceChildren(n);
+      }
+      document.addEventListener('htmx:responseError', failed);
+      document.addEventListener('htmx:sendError', failed);
+      closeBtn.addEventListener('click', close);
+      ov.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      });
+    })();
+    </script>
+    
+    
+    
+    <dialog id="subscription-panel" class="modifier-modal subscription-panel" aria-labelledby="subscription-panel-title"
+            data-ut-escape-close data-testid="subscription-panel">
+      <div class="subscription-panel-head">
+        <h3 id="subscription-panel-title">Renew or change plan <a class="help-hint" href="/help/claim" title="Help for this page" aria-label="Help for this page" data-testid="help-hint">?</a></h3>
+        <button type="button" class="btn secondary btn-touch" aria-label="Close"
+                data-action="close:subscription-panel" data-testid="subscription-panel-close"><span aria-hidden="true">✕</span></button>
+      </div>
+      <div id="subscription-panel-body" class="subscription-panel-body"></div>
+      <template id="subscription-panel-loading"><p class="muted" role="status">Loading…</p></template>
+    </dialog>
+    <script>
+      (function () {
+        var d = document.getElementById('subscription-panel');
+        if (!d) return;
+        var body = document.getElementById('subscription-panel-body');
+        var opener = null;
+        
+        
+        document.addEventListener('click', function (e) {
+          var b = e.target && e.target.closest && e.target.closest('[data-sub-panel-open]');
+          if (!b || b.disabled) return;
+          try {
+            opener = b;
+            var tpl = document.getElementById('subscription-panel-loading');
+            body.replaceChildren(tpl ? tpl.content.cloneNode(true) : '');
+            if (!d.open) d.show();
+            var first = d.querySelector('[data-testid="subscription-panel-close"]');
+            if (first) first.focus({ preventScroll: true });
+          } catch (err) {   }
+        }, true);
+        d.addEventListener('close', function () {
+          try {
+            body.replaceChildren();
+            if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+            opener = null;
+          } catch (err) {   }
+        });
+      })();
+    </script>
+    
+    <dialog id="elevation-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
+    
+    <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
+    
+    <dialog id="ut-confirm" class="modifier-modal confirm-dialog" data-ut-focus-trap
+            aria-labelledby="ut-confirm-msg" data-testid="till-confirm">
+      <p id="ut-confirm-msg" class="ut-confirm-msg"></p>
+      <div class="modifier-actions">
+        <button type="button" class="btn secondary" data-ut-confirm="cancel"
+                data-default-label="Cancel"
+                data-testid="till-confirm-cancel">Cancel</button>
+        <button type="button" class="btn danger" data-ut-confirm="ok"
+                data-default-label="Confirm"
+                data-testid="till-confirm-ok">Confirm</button>
+      </div>
+    </dialog>
+    
+    
+    <div id="ut-scrim" hidden aria-hidden="true"></div>
+  </body>
+</html>
