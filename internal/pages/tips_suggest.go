@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -26,6 +28,13 @@ const (
 	tipsSuggestTimeout    = 5 * time.Second
 	// maxTipsSuggestRows bounds what one answer can put on screen.
 	maxTipsSuggestRows = 200
+	// maxTipsSuggestLabelRunes caps an unmapped label (plugin text on a
+	// manager's screen) after control/format characters are stripped.
+	maxTipsSuggestLabelRunes = 80
+	// maxTipsSuggestAmountMinor is the sanity ceiling for one suggested
+	// amount (the same 1,000,000.00 ceiling as pos.MaxVoucherIssueAmount):
+	// anything above it is a plugin bug, never a prefill.
+	maxTipsSuggestAmountMinor = 100_000_000
 )
 
 type tipsSuggestPayload struct {
@@ -92,7 +101,7 @@ func registerTipsSuggestAPI(mux *http.ServeMux, d *common.Deps) {
 		seen := map[string]bool{}
 		for _, s := range ans.Suggestions {
 			name, real := names[s.UserID]
-			if !real || s.AmountMinor <= 0 || seen[s.UserID] || len(rows) >= maxTipsSuggestRows {
+			if !real || s.AmountMinor <= 0 || s.AmountMinor > maxTipsSuggestAmountMinor || seen[s.UserID] || len(rows) >= maxTipsSuggestRows {
 				continue
 			}
 			seen[s.UserID] = true
@@ -104,14 +113,34 @@ func registerTipsSuggestAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var unmapped []tipsUnmappedRow
 		for _, u := range ans.Unmapped {
-			if u.AmountMinor > 0 && strings.TrimSpace(u.Label) != "" && len(unmapped) < maxTipsSuggestRows {
-				unmapped = append(unmapped, tipsUnmappedRow{Label: u.Label, AmountMinor: u.AmountMinor})
+			label := tipsSuggestLabel(u.Label)
+			if u.AmountMinor > 0 && u.AmountMinor <= maxTipsSuggestAmountMinor && label != "" && len(unmapped) < maxTipsSuggestRows {
+				unmapped = append(unmapped, tipsUnmappedRow{Label: label, AmountMinor: u.AmountMinor})
 			}
 		}
 		httpx.RenderPartial("ui/partials/reports_tips_suggest.html", map[string]any{
 			"Rows": rows, "Unmapped": unmapped, "From": from, "To": to,
 		})(w, r)
 	})
+}
+
+// tipsSuggestLabel drops control and format characters (incl. bidi
+// overrides) from a plugin's unmapped label, trims it and cuts it to
+// maxTipsSuggestLabelRunes runes.
+func tipsSuggestLabel(raw string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range raw {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
+			continue
+		}
+		if n == maxTipsSuggestLabelRunes {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func validTipsDate(s string) bool {

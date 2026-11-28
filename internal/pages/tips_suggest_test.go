@@ -99,3 +99,47 @@ func TestTipsSuggest_GatedAndNeedsPermission(t *testing.T) {
 		}
 	}
 }
+
+// A plugin's answer is untrusted text on a manager's screen: an unmapped
+// label is stripped of control/format characters and cut to
+// maxTipsSuggestLabelRunes, and an amount above maxTipsSuggestAmountMinor
+// (suggested or unmapped) is dropped rather than prefilled.
+func TestTipsSuggest_BoundsLabelAndAmount_7108(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1),('worker2','worker2','Worker Two','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("é", 200)
+	ans, _ := json.Marshal(map[string]any{
+		"suggestions": []map[string]any{
+			{"user_id": "worker1", "amount_minor": 100_000_001},
+			{"user_id": "worker2", "amount_minor": 700},
+		},
+		"unmapped": []map[string]any{
+			{"label": "Sam\x07‮evil\r\nX", "amount_minor": 500},
+			{"label": long, "amount_minor": 600},
+			{"label": "Huge", "amount_minor": 100_000_001},
+			{"label": "\x00\x01", "amount_minor": 50},
+		},
+	})
+	installTipsSuggester(t, dp.Db, "tips-bounds", true, string(ans), nil)
+	today := time.Now().Format("2006-01-02")
+	rec := getWithUser(mux, "/api/reports/tips-suggestions?from="+today+"&to="+today, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Worker One") || strings.Contains(body, "100000001") || strings.Contains(body, "Huge") {
+		t.Fatalf("an amount above the ceiling must be dropped: %s", body)
+	}
+	if !strings.Contains(body, "Worker Two") {
+		t.Fatalf("an in-range suggestion must stay: %s", body)
+	}
+	if strings.ContainsAny(body, "\x07‮\x00\x01") || !strings.Contains(body, "SamevilX") {
+		t.Fatalf("control/format characters must be stripped from the label: %q", body)
+	}
+	if strings.Contains(body, strings.Repeat("é", maxTipsSuggestLabelRunes+1)) || !strings.Contains(body, strings.Repeat("é", maxTipsSuggestLabelRunes)) {
+		t.Fatalf("label must be cut to %d runes: %s", maxTipsSuggestLabelRunes, body)
+	}
+}
