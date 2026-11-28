@@ -711,3 +711,46 @@ func TestServerReasonIsClampedBeforeItIsSaved(t *testing.T) {
 		t.Fatalf("saved code %q is not clamped", got)
 	}
 }
+
+// ut-docs#2630: store_purged is terminal and needs a person; store_deleted
+// without recover stays the undo-window state.
+func TestClassify_StorePurgedIsFinalNeedsPerson(t *testing.T) {
+	v := classify(Signal{Code: "device_revoked", Reason: "store_purged"})
+	if v.kind != kindNeedsPerson || v.reason != ReasonStorePurged {
+		t.Fatalf("store_purged = %+v, want needs-person store_purged", v)
+	}
+	if !FinalReason(ReasonStorePurged) {
+		t.Error("store_purged must be final: no timer may leave it")
+	}
+	if FinalReason(ReasonStoreDeleted) {
+		t.Error("store_deleted is inside the undo window: not final")
+	}
+	if v := classify(Signal{Code: "device_revoked", Reason: "store_deleted"}); v.kind != kindNeedsPerson || v.reason != ReasonStoreDeleted {
+		t.Fatalf("store_deleted = %+v", v)
+	}
+}
+
+// ut-docs#2630: Check again only reacts to a non-final deleted shop.
+func TestCheckAgainOnlyForDeletedShop(t *testing.T) {
+	r := newRig(t)
+	active.Store(r.e)
+	t.Cleanup(func() { active.Store(nil) })
+	CheckAgain()
+	if len(r.e.checkCh) != 0 {
+		t.Fatal("ok state must not queue a check")
+	}
+	r.e.mu.Lock()
+	r.e.st = Status{State: StateNeedsPerson, Reason: ReasonStorePurged}
+	r.e.mu.Unlock()
+	CheckAgain()
+	if len(r.e.checkCh) != 0 {
+		t.Fatal("a purged shop is final: no check")
+	}
+	r.e.mu.Lock()
+	r.e.st = Status{State: StateNeedsPerson, Reason: ReasonStoreDeleted}
+	r.e.mu.Unlock()
+	CheckAgain()
+	if len(r.e.checkCh) != 1 {
+		t.Fatal("a deleted shop queues one check")
+	}
+}

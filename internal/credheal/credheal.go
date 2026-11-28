@@ -52,6 +52,7 @@ const (
 	ReasonMoved          = "moved"
 	ReasonRemoved        = "removed"
 	ReasonStoreDeleted   = "store_deleted"
+	ReasonStorePurged    = "store_purged" // ut-docs#2630 offboarding: the undo window is over; terminal
 	ReasonRoleConflict   = "role_conflict"
 	ReasonInUseElsewhere = "in_use_elsewhere"
 	ReasonPairAgain      = "pair_again" // today's behaviour: an older cloud, switched off, stopped or pinned
@@ -60,7 +61,7 @@ const (
 // FinalReason reports whether a reason can only be left by pairing, joining or
 // registering (never by a timer): the owner's or the cloud's decision.
 func FinalReason(r string) bool {
-	return r == ReasonReplaced || r == ReasonMoved || r == ReasonRemoved
+	return r == ReasonReplaced || r == ReasonMoved || r == ReasonRemoved || r == ReasonStorePurged
 }
 
 // Status is what the chip and the Tills page read. Local, never blocks.
@@ -98,6 +99,7 @@ type ProbeResult struct {
 	Code    string
 	Reason  string
 	Recover bool
+	Detail  string // store_deleted: data.restorable_until (RFC 3339), "" when the cloud sends none
 	Err     error
 }
 
@@ -190,6 +192,7 @@ type Engine struct {
 
 	sig      chan Signal
 	resumeCh chan struct{}
+	checkCh  chan struct{}
 }
 
 func newEngine(d Deps) *Engine {
@@ -215,7 +218,7 @@ func newEngine(d Deps) *Engine {
 	if d.Recover == nil {
 		d.Recover = func(ctx context.Context) (enroll.RecoverOutcome, error) { return enroll.Recover(ctx, d.Cfg, d.KV) }
 	}
-	return &Engine{d: d, st: Status{State: StateOK}, sig: make(chan Signal, sigBuffer), resumeCh: make(chan struct{}, 1)}
+	return &Engine{d: d, st: Status{State: StateOK}, sig: make(chan Signal, sigBuffer), resumeCh: make(chan struct{}, 1), checkCh: make(chan struct{}, 1)}
 }
 
 // Start loads the saved state and runs the engine until ctx ends. wg, when
@@ -292,6 +295,23 @@ func Current() Status {
 	return e.status()
 }
 
+// CheckAgain is the "Check again" button of a deleted shop: it asks the cloud
+// now instead of at the next daily look. Only a non-final needs-person state
+// reacts; never blocks; nothing without a running engine.
+func CheckAgain() {
+	e := active.Load()
+	if e == nil {
+		return
+	}
+	if st := e.status(); st.State != StateNeedsPerson || st.Reason != ReasonStoreDeleted {
+		return // never skips a backoff or a waiting date
+	}
+	select {
+	case e.checkCh <- struct{}{}:
+	default:
+	}
+}
+
 // Working tells the engine a check-in or sync really succeeded: the credential
 // is fine, whatever it believed. Clears saved state. Cheap when already ok.
 func Working() {
@@ -333,7 +353,7 @@ func classify(s Signal) verdict {
 		return verdict{kind: kindHeal}
 	case "device_revoked":
 		switch s.Reason {
-		case "replaced", "moved", "removed":
+		case "replaced", "moved", "removed", "store_purged":
 			return verdict{kind: kindNeedsPerson, reason: s.Reason}
 		}
 		if s.Recover {
@@ -372,6 +392,12 @@ func (e *Engine) run(ctx context.Context) {
 			e.handle(ctx, s)
 		case <-e.resumeCh:
 			e.resume(ctx)
+		case <-e.checkCh:
+			// Re-checked here: a press queued before a round that ended in a
+			// waiting date or a backoff must not skip it (ut-docs#2630).
+			if st := e.status(); st.State == StateNeedsPerson && st.Reason == ReasonStoreDeleted {
+				e.wake(ctx)
+			}
 		case <-timer.C:
 			e.wake(ctx)
 		}
@@ -521,7 +547,7 @@ func (e *Engine) round(ctx context.Context, skipProbe bool, s Signal) {
 		default:
 			switch v := classify(Signal{Code: pr.Code, Reason: pr.Reason, Recover: pr.Recover}); v.kind {
 			case kindNeedsPerson:
-				e.enter(ctx, StateNeedsPerson, v.reason, "", time.Time{}, signalKey(pr.Code, pr.Reason))
+				e.enter(ctx, StateNeedsPerson, v.reason, pr.Detail, time.Time{}, signalKey(pr.Code, pr.Reason))
 				e.scheduleRecheck(ctx, v.reason)
 				return
 			case kindIgnore:

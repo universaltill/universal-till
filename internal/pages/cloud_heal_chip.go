@@ -28,6 +28,7 @@ const (
 	healHrefRegister = "/settings#registration"
 	healHrefJoin     = "/tills?tab=add&need=join"
 	healHrefThis     = "/tills?tab=this"
+	healHrefData     = "/settings#settings-backup-region" // Settings > Data & backup: the backup download
 )
 
 // healView is what the partials render.
@@ -38,6 +39,11 @@ type healView struct {
 	Sentence string // title, banner body, registration notice
 	Button   string // "" = no button
 	Href     string // the button's target; the chip's target when there is no button
+	// Button2 is an optional second action: a link to Button2Href, or, when
+	// Button2Href is "", a POST to /api/cloud/heal/check-again (ut-docs#2630).
+	ButtonHref  string // the banner button's own target when it differs from Href (the chip's)
+	Button2     string
+	Button2Href string
 }
 
 // healChip returns the view for a status, false when the heal chip stays out
@@ -73,10 +79,17 @@ func healChip(locale string, st credheal.Status, hasOwner bool) (healView, bool)
 		name := t("unnamed_shop")
 		return healView{Reason: st.Reason, Short: fmt.Sprintf(t("moved_short"), name), Sentence: fmt.Sprintf(t("moved_full"), name), Button: t("btn_open"), Href: healHrefRegister}, true
 	case credheal.ReasonStoreDeleted:
-		// ux-notes 3.6 asks for a "Check again" button; it needs a new engine
-		// route that this slice may not add (internal/credheal is T1's), so
-		// the sentence stands alone as in design 4.7: at most one button.
-		return healView{Reason: st.Reason, Short: t("shop_deleted_short"), Sentence: t("shop_deleted"), Href: healHrefThis}, true
+		// ut-docs#2630 offboarding: inside the undo window the sentence names the
+		// date (the cloud's restorable_until, kept in Detail) and offers the
+		// data download and "Check again". An older cloud sends no date: the
+		// old sentence, plus the same two buttons.
+		v := healView{Reason: st.Reason, Short: t("shop_deleted_short"), Sentence: t("shop_deleted"), Button: t("btn_download_data"), Href: healHrefThis, ButtonHref: healHrefData, Button2: t("btn_check_again")}
+		if until, err := time.Parse(time.RFC3339, st.Detail); err == nil && until.After(healChipClock()) {
+			v.Sentence = fmt.Sprintf(t("shop_deleted_until"), httpx.FormatDateTime(until.Local(), locale))
+		}
+		return v, true
+	case credheal.ReasonStorePurged:
+		return healView{Reason: st.Reason, Short: t("shop_purged_short"), Sentence: t("shop_purged"), Button: t("btn_download_data"), Href: healHrefThis, ButtonHref: healHrefData, Button2: t("btn_new_shop"), Button2Href: healHrefRegister}, true
 	case credheal.ReasonRoleConflict:
 		return healView{Reason: st.Reason, Short: t("role_conflict_short"), Sentence: t("role_conflict"), Button: t("btn_join"), Href: healHrefJoin}, true
 	case credheal.ReasonInUseElsewhere:
@@ -87,6 +100,19 @@ func healChip(locale string, st credheal.Status, hasOwner bool) (healView, bool)
 		return healView{Reason: credheal.ReasonCannotProve, Short: t("cannot_prove_short"), Sentence: t("cannot_prove"), Button: t("btn_code"), Href: healHrefCode}, true
 	}
 	return healView{Reason: credheal.ReasonCannotProve, Short: t("cannot_prove_no_account_short"), Sentence: t("cannot_prove_no_account"), Button: t("btn_new_shop"), Href: healHrefRegister}, true
+}
+
+// registerHealCheckAgain wires the "Check again" button: it asks the engine to
+// look at the cloud now. Manager only; the answer arrives through the chip.
+func registerHealCheckAgain(mux *http.ServeMux, d *common.Deps) {
+	mux.HandleFunc("POST /api/cloud/heal/check-again", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "settings") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		credheal.CheckAgain()
+		http.Redirect(w, r, healHrefThis, http.StatusSeeOther)
+	})
 }
 
 // healNoticeView is the heal engine's sentence for Settings > Till registration
@@ -115,7 +141,7 @@ func healNeedsCode(st credheal.Status) bool {
 		return false
 	}
 	switch st.Reason {
-	case credheal.ReasonReplaced, credheal.ReasonRoleConflict, credheal.ReasonStoreDeleted:
+	case credheal.ReasonReplaced, credheal.ReasonRoleConflict, credheal.ReasonStoreDeleted, credheal.ReasonStorePurged:
 		return false
 	}
 	return true

@@ -84,7 +84,7 @@ func ProbeCredential(ctx context.Context, cfg *config.Config) credheal.ProbeResu
 	case errors.As(err, &se):
 		switch se.StatusCode {
 		case http.StatusUnauthorized:
-			return credheal.ProbeResult{Code: se.Code, Reason: se.Reason, Recover: se.Recover}
+			return credheal.ProbeResult{Code: se.Code, Reason: se.Reason, Recover: se.Recover, Detail: se.Detail}
 		case http.StatusPaymentRequired:
 			return credheal.ProbeResult{OK: true}
 		}
