@@ -20,8 +20,8 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewTillsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("POST /api/sync/tills/revoke-stale", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "sync_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		actor, ok := authorizeTillRemoval(w, r, d)
+		if !ok {
 			return
 		}
 		if d.SyncPrimaryURL(r.Context()) != "" {
@@ -41,7 +41,6 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 		selfID, _ := discovery.ReportedTillID(r.Context(), d.Settings)
 		rows := tills.Merge(tills.Source{Cloud: devs, CloudOK: true, Local: list,
 			Self: tills.SelfInfo{ID: selfID, Role: tills.RoleMain}}, time.Now(), tillsStaleAfter)
-		actor := getSessionUserID(r)
 		// Only the tills the manager was shown and confirmed (the form posts
 		// their ids), and only those still stale AND unseen past the window:
 		// a till seen lately is never bulk-removed.
@@ -54,7 +53,7 @@ func registerTillsRevokeStale(mux *http.ServeMux, d *common.Deps) {
 			if (row.State != tills.StateLocalOnly && row.State != tills.StateOldEntry) || row.IsSelf || !row.LongUnseen || !confirmed[row.ID] {
 				continue
 			}
-			if err := repo.DeleteTill(r.Context(), row.ID); err != nil {
+			if err := revokeTillAndRetireRegister(r.Context(), repo, posRepo, row.ID, data.RetiredOldEntry, actor); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "tills_revoke_stale", err)
 				return
 			}

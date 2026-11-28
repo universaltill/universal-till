@@ -229,12 +229,12 @@ func TestTillsOthers_UnpairedSaysNotConnectedNotUnreachable(t *testing.T) {
 	if !strings.Contains(body, "not connected to a shop account") || !strings.Contains(body, "Pair with a shop") {
 		t.Fatalf("unpaired: want not-connected wording and the pair action: %s", body)
 	}
-	if strings.Contains(body, "could not reach your account") || strings.Contains(body, "Try again") {
+	if strings.Contains(body, "could not reach your shop list") || strings.Contains(body, "Try again") {
 		t.Fatalf("unpaired: must not offer a retry that can never work: %s", body)
 	}
 	dp.Cfg.Marketplace = config.MarketplaceConfig{EndpointURL: "https://x.invalid", StoreID: "s", MerchantToken: "t"}
 	body = tabsGet(mux, "/ui/tills/tab/others?refresh=1").Body.String()
-	if !strings.Contains(body, "could not reach your account") || strings.Contains(body, "not connected to a shop account") {
+	if !strings.Contains(body, "could not reach your shop list") || strings.Contains(body, "not connected to a shop account") {
 		t.Fatalf("paired but account down: want the unreachable wording: %s", body)
 	}
 }

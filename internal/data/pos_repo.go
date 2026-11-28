@@ -4674,11 +4674,20 @@ func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName strin
 		return "", "", err
 	}
 	name := baseName
+	// ut-docs#7098: a register enrolment creates sells from the shop's main
+	// location, so it is created assigned to it rather than "Unassigned"
+	// (which silently meant the same). No main location yet, or any error:
+	// NULL as before; enrolment never fails on this.
+	var defaultLoc *string
+	var locID string
+	if err := r.db.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE (name = 'Main' OR id = 'loc_main') AND is_active = 1 ORDER BY id LIMIT 1`).Scan(&locID); err == nil && locID != "" {
+		defaultLoc = &locID
+	}
 	for i := 1; i <= maxAttempts; i++ {
 		if i > 1 {
 			name = fmt.Sprintf("%s (%d)", baseName, i)
 		}
-		id, err := r.createRegister(ctx, name, nil)
+		id, err := r.createRegister(ctx, name, defaultLoc)
 		if err == nil {
 			return id, name, nil
 		}
@@ -4763,15 +4772,28 @@ func (r *POSRepo) DeleteUnusedEnrolmentRegister(ctx context.Context, id string) 
 	if id == "" {
 		return false, nil
 	}
-	res, err := r.db.ExecContext(ctx, `
-DELETE FROM registers WHERE id = ?
+	// ut-docs#7098: its register_devices link goes with it (the FK would
+	// refuse the delete), but only when the register itself is unused.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("delete unused enrolment register: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	const unused = `
   AND NOT EXISTS (SELECT 1 FROM sales WHERE register_id = ?)
   AND NOT EXISTS (SELECT 1 FROM shifts WHERE register_id = ?)
-  AND NOT EXISTS (SELECT 1 FROM no_sale_events WHERE register_id = ?)`, id, id, id, id)
+  AND NOT EXISTS (SELECT 1 FROM no_sale_events WHERE register_id = ?)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM register_devices WHERE register_id = ?`+unused, id, id, id, id); err != nil {
+		return false, fmt.Errorf("delete unused enrolment register link: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM registers WHERE id = ?`+unused, id, id, id, id)
 	if err != nil {
 		return false, fmt.Errorf("delete unused enrolment register: %w", err)
 	}
 	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("delete unused enrolment register: %w", err)
+	}
 	return n == 1, nil
 }
 

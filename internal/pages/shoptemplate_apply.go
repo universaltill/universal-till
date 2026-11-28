@@ -70,3 +70,39 @@ func applyShopTemplate(ctx context.Context, d *common.Deps, shopType string) {
 		httpx.InitOrderTypePromptMode(v)
 	}
 }
+
+// seedJoinedTillTemplate seeds the per-till template keys (the theme) of a
+// till that joined a main till after setup (ADR-0190, ADR-0171 §4). The join
+// replaces this till's database with the main till's snapshot at restart, so
+// the first-run wizard's applyShopTemplate never ran here; the shop type
+// arrives with the snapshot or a later admin pull. Main/single tills do
+// nothing (the wizard or the type-change flow owns their seeding), and
+// applyShopTemplate sends a satellite only to ApplyPerTill, which is
+// once-per-till (marker) and never writes a shop-wide key or the ledger.
+func seedJoinedTillTemplate(ctx context.Context, d *common.Deps) {
+	if d == nil || d.Settings == nil || !tillFollowsMain(ctx, d) {
+		return
+	}
+	shopType, _, err := d.Settings.Get(ctx, common.KeyShopType)
+	if err != nil || shopType == "" {
+		return
+	}
+	r := shopTemplateFor(d, shopType)
+	if r == nil {
+		return
+	}
+	// ApplyPerTill directly, not applyShopTemplate: a promotion clearing the
+	// primary URL between the check above and a second tillFollowsMain check
+	// would otherwise run the full main-till Apply (ledger + shop-wide keys).
+	before, _, _ := d.Settings.Get(ctx, common.KeyTheme)
+	if err := shoptemplate.ApplyPerTill(ctx, templateSettingsStore{d}, r); err != nil {
+		logging.L().Warnf("join: seed per-till theme for shop_type %q: %v", shopType, err)
+		return
+	}
+	// A seeded theme is effective now, not at the next restart: republish it to
+	// the live state and the cached error-page theme (as the settings save does).
+	if after, _, err := d.Settings.Get(ctx, common.KeyTheme); err == nil && after != "" && after != before {
+		d.UpdateState(func(s *common.RuntimeState) { s.Theme = after })
+		httpx.InitTheme(after)
+	}
+}

@@ -8,7 +8,7 @@
 # cmd/unitill-desktop alone (independent review, ut-docs#1581): only 1 of
 # the 78 seeded baseline entries is actually under cmd/unitill-desktop/; the
 # other 77 are `internal/**` code unreachable from any of this script's
-# three roots (`.`, `./cmd/unitill-desktop`, `./cmd/unitill-uninstall` —
+# roots (`.`, `./cmd/unitill-desktop`, `./cmd/unitill-uninstall`, `./cmd/register-audit` —
 # see the `go run` invocation below). That's deliberate, not a bug --
 # `deadcode` needs real entry
 # points to compute reachability, and scoping the *roots* to just
@@ -82,10 +82,10 @@ if [[ ! -f "${BASELINE_FILE}" ]]; then
 fi
 
 if pkg-config --exists gtk+-3.0 webkit2gtk-4.1 2>/dev/null; then
-  deadcode_args=(-tags=desktop -test=false . ./cmd/unitill-desktop ./cmd/unitill-uninstall)
+  deadcode_args=(-tags=desktop -test=false . ./cmd/unitill-desktop ./cmd/unitill-uninstall ./cmd/register-audit)
 else
   echo "⚠ deadcode-baseline guard: GTK3/WebKit2GTK dev headers not found via pkg-config -- skipping ./cmd/unitill-desktop (unrunnable without them); real CI still analyzes all three roots" >&2
-  deadcode_args=(-test=false . ./cmd/unitill-uninstall)
+  deadcode_args=(-test=false . ./cmd/unitill-uninstall ./cmd/register-audit)
 fi
 
 raw_output="$(go run "${DEADCODE_PKG}" "${deadcode_args[@]}" 2>/tmp/deadcode-baseline-guard-stderr.$$)" \

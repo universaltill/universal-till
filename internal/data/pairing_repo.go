@@ -47,6 +47,10 @@ type PendingPairingRow struct {
 	// carried the request, "" over plain HTTP (ut-docs#4091, migration
 	// 070). The verification code binds it.
 	ServedPin string
+	// RequesterDeviceID is the device id the requester named ("" for an older
+	// till). Filled by ListPending and GetByID only (ut-docs#7098: the
+	// "same device?" prompt on the approval card).
+	RequesterDeviceID string
 }
 
 // CreatePendingRequest records a new pair request for an additional till;
@@ -111,7 +115,7 @@ func (r *PairingRepo) ListPending(ctx context.Context) ([]PendingPairingRow, err
 		return nil, fmt.Errorf("expire pending pairings: %w", err)
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin, COALESCE(requester_device_id, '')
 FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending pairings: %w", err)
@@ -120,7 +124,7 @@ FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC
 	var out []PendingPairingRow
 	for rows.Next() {
 		var p PendingPairingRow
-		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin); err != nil {
+		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin, &p.RequesterDeviceID); err != nil {
 			return nil, fmt.Errorf("scan pending pairing: %w", err)
 		}
 		out = append(out, p)
@@ -170,10 +174,10 @@ ORDER BY requested_at ASC, id ASC`, now)
 func (r *PairingRepo) GetByID(ctx context.Context, id string) (PendingPairingRow, bool, error) {
 	var p PendingPairingRow
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin, COALESCE(requester_device_id, '')
 FROM pending_pairings WHERE id = ? AND expires_at >= ?`,
 		id, r.now().UTC().Format(time.RFC3339)).
-		Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin)
+		Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin, &p.RequesterDeviceID)
 	if err == sql.ErrNoRows {
 		return PendingPairingRow{}, false, nil
 	}
@@ -217,6 +221,14 @@ func (r *PairingRepo) Approve(ctx context.Context, id, token string, extendTTL t
 // for the till (ut-docs#2781) over the one the replica requested; a blank
 // role keeps the requested one. The caller validates a non-blank role.
 func (r *PairingRepo) ApproveWithRole(ctx context.Context, id, token, role string, extendTTL time.Duration) error {
+	return r.ApproveWithReplace(ctx, id, token, role, "", extendTTL)
+}
+
+// ApproveWithReplace is ApproveWithRole that also stores the manager's choice
+// "this is the same device as that old entry" (ut-docs#7098): replaceTillID is
+// the tills.id to replace, "" for a new device. The caller validates it; it is
+// bound to this request's token (ReplaceTillForToken).
+func (r *PairingRepo) ApproveWithReplace(ctx context.Context, id, token, role, replaceTillID string, extendTTL time.Duration) error {
 	if role != "" && !ValidPairingRole(role) {
 		return fmt.Errorf("approve pending pairing: invalid role %q", role)
 	}
@@ -226,10 +238,10 @@ func (r *PairingRepo) ApproveWithRole(ctx context.Context, id, token, role strin
 	// compare-and-swap, so no race can slip a role change in.
 	res, err := r.db.ExecContext(ctx, `
 UPDATE pending_pairings SET status = 'approved', token = ?, expires_at = ?,
-	requested_role = COALESCE(NULLIF(?, ''), requested_role)
+	requested_role = COALESCE(NULLIF(?, ''), requested_role), replace_till_id = ?
 WHERE id = ? AND status = 'pending' AND expires_at >= ?
   AND (? = '' OR (? = 'card_reader') = (requested_role = 'card_reader'))`,
-		token, now.Add(extendTTL).Format(time.RFC3339), role, id, now.Format(time.RFC3339), role, role)
+		token, now.Add(extendTTL).Format(time.RFC3339), role, replaceTillID, id, now.Format(time.RFC3339), role, role)
 	if err != nil {
 		return fmt.Errorf("approve pending pairing: %w", err)
 	}
@@ -325,6 +337,27 @@ WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
 		return "", false, fmt.Errorf("pending pairing device by token: %w", err)
 	}
 	return deviceID, true, nil
+}
+
+// ReplaceTillForToken returns the till id a manager chose to replace when
+// approving the request this enrolment token belongs to ("" = a new device).
+// ok is false when no approved, unexpired request carries the token, so a
+// choice made on request A can never be used by the token of request B.
+func (r *PairingRepo) ReplaceTillForToken(ctx context.Context, token string) (tillID string, ok bool, err error) {
+	if token == "" {
+		return "", false, nil
+	}
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(replace_till_id, '') FROM pending_pairings
+WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
+		token, r.now().UTC().Format(time.RFC3339)).Scan(&tillID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("pending pairing replace by token: %w", err)
+	}
+	return tillID, true, nil
 }
 
 // Deny resolves a request as refused. A till request is deleted outright (a

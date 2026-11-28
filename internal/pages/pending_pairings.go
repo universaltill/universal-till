@@ -45,6 +45,7 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairings", err)
 			return
 		}
+		tillsRepo0 := data.NewTillsRepo(d.Db)
 		type row struct {
 			ID               string
 			DeviceName       string
@@ -55,8 +56,16 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			// name is live right now (a different device): NameInUse.
 			AlreadyEnrolled bool
 			NameInUse       bool
+			// ut-docs#7098: the same device coming back under a new name. A
+			// device-id match is the strong prompt (SamePhoneID/SamePhoneOf);
+			// otherwise Candidates are non-live same-role old entries the
+			// manager may pick. Never a live row (replaceLiveWindow).
+			SamePhoneID string
+			SamePhoneOf string
+			Candidates  []replaceCandidate
 		}
-		tillsRepo := data.NewTillsRepo(d.Db)
+		allTills, _ := tillsRepo0.ListTills(r.Context())
+		tillsRepo := tillsRepo0
 		now := time.Now()
 		rows := make([]row, 0, len(list))
 		for _, p := range list {
@@ -76,6 +85,7 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 					rw.AlreadyEnrolled = true
 				}
 			}
+			rw.SamePhoneID, rw.SamePhoneOf, rw.Candidates = replacePrompt(allTills, p, now, httpx.RequestLocale(r))
 			rows = append(rows, rw)
 		}
 		httpx.RenderPartial("ui/partials/pending_pairings.html", map[string]any{"Pending": rows})(w, r)
@@ -137,6 +147,42 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			"Fingerprint": strings.Join(ids, ","),
 		})(w, r)
 	})
+}
+
+// replaceCandidate is one option of the "Replace an old entry?" select.
+type replaceCandidate struct{ ID, Label string }
+
+// replacePrompt works out what the approval card offers for a request
+// (ut-docs#7098). A till row holding the requester's device id that is not live
+// and is not already the same name gives the "same device?" prompt; otherwise
+// every non-live till of the requested role is a candidate. The requester's
+// device id is self-asserted, so it only ever produces a prompt: the effect
+// needs the manager's approve and a non-live target, both re-checked by the
+// approve handler.
+func replacePrompt(all []data.TillRow, p data.PendingPairingRow, now time.Time, locale string) (id, name string, cands []replaceCandidate) {
+	if p.RequesterDeviceID != "" {
+		for _, t := range all {
+			if t.DeviceID == p.RequesterDeviceID && !t.SeenWithin(now, replaceLiveWindow) &&
+				!strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(p.DeviceName)) && t.Role == p.RequestedRole {
+				return t.ID, t.Name, nil
+			}
+		}
+	}
+	for _, t := range all {
+		if t.SeenWithin(now, replaceLiveWindow) || t.Role != p.RequestedRole ||
+			strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(p.DeviceName)) {
+			continue
+		}
+		seen := "-"
+		if tm, err := time.Parse(time.RFC3339, t.LastSeenAt); err == nil {
+			seen = httpx.FormatDateTime(tm.Local(), locale)
+		}
+		cands = append(cands, replaceCandidate{ID: t.ID, Label: fmt.Sprintf(httpx.T(locale, "tills.pending.replace_option"), t.Name, seen)})
+		if len(cands) >= 20 {
+			break
+		}
+	}
+	return "", "", cands
 }
 
 const (

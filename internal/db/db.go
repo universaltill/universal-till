@@ -194,6 +194,24 @@ func OpenReadOnly(path string) (*DB, error) {
 	return &DB{DB: sqlDB}, nil
 }
 
+// OpenAuditReadOnly opens an existing database for an audit that must never
+// write (ut-docs#7098, cmd/register-audit): mode=ro as OpenReadOnly, plus
+// query_only(1) so even a statement that slipped through is refused at the
+// SQLite layer. It runs no migration and creates nothing; a missing file is an
+// error.
+func OpenAuditReadOnly(path string) (*DB, error) {
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(5000)", escapeSQLiteURIPath(path))
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite (audit, read-only): %w", err)
+	}
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("ping sqlite (audit, read-only): %w", err)
+	}
+	return &DB{DB: sqlDB}, nil
+}
+
 // ErrDatabasePredatesReset is returned (wrapped) by Open when the database
 // carries schema_migrations rows but no schema_lineage marker: it was
 // created by the pre-2026-09 78-migration ledger, and there is no supported
