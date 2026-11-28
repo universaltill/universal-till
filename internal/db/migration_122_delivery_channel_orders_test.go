@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// 120 / 121 (ADR-0215, ut-docs#6581 / #6583): delivery columns on the channel
+// 122 / 123 (ADR-0215, ut-docs#6581 / #6583): delivery columns on the channel
 // order tables, the delivery actions in channel_order_actions, items.
 // unavailable_until and the delivery_signals outbox.
 
-func TestMigration120_DeliveryActionsAndColumns(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "m120.db"))
+func TestMigration122_DeliveryActionsAndColumns(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "m122.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ VALUES ('bad','o1','c1','e1','refund',1,'now')`); err == nil {
 	}
 }
 
-func TestMigration121_UnavailableUntilAndSignals(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "m121.db"))
+func TestMigration123_UnavailableUntilAndSignals(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "m123.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
