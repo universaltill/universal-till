@@ -36,13 +36,21 @@ func main() {
 	if len(os.Args) > 1 {
 		return // explicit registry path: the classes artefact is repo-root only
 	}
+	if err := writeClassesJSON(shopTemplateClassesJSONPath); err != nil {
+		fmt.Fprintln(os.Stderr, "gen-settings-registry:", err)
+		os.Exit(1)
+	}
+}
+
+// writeClassesJSON renders the classes artefact and writes it to path,
+// creating the directory first.
+func writeClassesJSON(path string) error {
 	cb, err := shopTemplateClassesJSON()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gen-settings-registry:", err)
-		os.Exit(1)
+		return err
 	}
-	if err := os.WriteFile(shopTemplateClassesJSONPath, cb, 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "gen-settings-registry:", err)
-		os.Exit(1)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
+	return os.WriteFile(path, cb, 0o644)
 }

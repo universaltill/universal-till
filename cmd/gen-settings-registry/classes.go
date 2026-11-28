@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -17,6 +18,21 @@ import (
 // root. ut-cloud pins a verbatim copy; my. reads "rarely needed for type T"
 // from it (ut-docs#6352, ADR-0190). It carries no shop data.
 const shopTemplateClassesJSONPath = "docs/shop-template-classes.json"
+
+// neverRarelyPrefixes are registry key prefixes the artefact never flags as
+// rarely needed, whatever a template demotes (ADR-0190: no payments/fiscal/
+// tax/auth/permission setting is hidden by a template). my.'s rarelyNeeded.ts
+// denies the same list; keep the two identical.
+var neverRarelyPrefixes = []string{"store.", "shop.", "payments.", "payment.", "fiscal.", "tax.", "auth.", "security."}
+
+func neverRarely(key string) bool {
+	for _, p := range neverRarelyPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
 
 type typeClassesJSON struct {
 	Template string `json:"template"`
@@ -94,7 +110,7 @@ func shopTemplateClassesJSON() ([]byte, error) {
 		}
 		keys := []string{}
 		for _, s := range data.AgentSettings {
-			if inCard[registrydesc.CardForRegion(s.Region)] {
+			if inCard[registrydesc.CardForRegion(s.Region)] && !neverRarely(s.Key) {
 				keys = append(keys, s.Key)
 			}
 		}

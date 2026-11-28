@@ -79,3 +79,37 @@ func TestShopTemplateClassesJSON_RetailDemotesOrderNo(t *testing.T) {
 		t.Error("retail has demoted cards but no keys")
 	}
 }
+
+// ADR-0190: a template never hides an auth/payment/fiscal/tax key, even when
+// it demotes the card holding it (market_stall demotes settings-idle-lock).
+func TestShopTemplateClassesJSON_NeverFlagsSecurityKeys(t *testing.T) {
+	raw, err := shopTemplateClassesJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d classesDoc
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	for st, tc := range d.ShopTypes {
+		for _, k := range tc.RarelyNeededKeys {
+			if neverRarely(k) {
+				t.Errorf("%s flags %s as rarely needed", st, k)
+			}
+		}
+	}
+	if !neverRarely("auth.idle_lock_minutes") {
+		t.Error("auth.idle_lock_minutes must be protected")
+	}
+}
+
+// The generator must create the output directory before writing.
+func TestWriteClassesCreatesDir(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "docs", "x", "classes.json")
+	if err := writeClassesJSON(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal(err)
+	}
+}
