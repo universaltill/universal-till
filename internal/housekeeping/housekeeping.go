@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/db/plugindb"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/stagedupload"
 )
@@ -104,6 +106,7 @@ const (
 	KindLogs            = "logs"
 	KindDiagnostics     = "diagnostics_spool"
 	KindStagedUploads   = "staged_uploads"
+	KindPluginData      = "plugin_data"
 
 	// Sync-history tables (ut-docs#3123). Housekeeping never opens the
 	// database; each of these is bounded, or kept on purpose, by the code
@@ -150,6 +153,9 @@ func Retention() []Rule {
 		{KindStagedUploads, "<system temp dir>/" + strings.Join(stagedupload.Patterns(), ", "),
 			fmt.Sprintf("deleted when the upload, import or import preview that made them ends; leftovers after a crash removed after %d hours", int(stagedupload.MaxAge/time.Hour)),
 			"the request handlers + housekeeping (stagedupload.PruneOlderThan)"},
+		{KindPluginData, "plugin-data/.removed/<plugin>-YYYYMMDD/",
+			fmt.Sprintf("an uninstalled plugin's own database is moved here, never deleted at uninstall; purged daily once %d days have passed and, when the plugin's manifest declares retention.keep_years, that many years too (deleting it by hand is refused until then)", plugindb.SoftDeleteDays),
+			"housekeeping (plugindb.Manager.Prune via plugins.PrunePluginData)"},
 		{KindSyncAggregateLedger, "database: sales_aggregate_uploads",
 			"rows for business days before the upload look-back window are deleted on every upload round",
 			"cloudsync (salesAggregateLookbackDays, POSRepo.PruneSalesAggregateUploads)"},
@@ -188,6 +194,7 @@ func RunWith(dbPath string, now time.Time, minRetain time.Duration, l Limits) []
 		result(KindIssueReports)(issuereport.PruneOlderThan(now.Add(-l.IssueReportMaxAge))),
 		result(KindUpdateDownloads)(selfupdate.PruneStaleAttempts(now.Add(-l.UpdateDownloadMaxAge))),
 		result(KindStagedUploads)(stagedupload.PruneOlderThan(now.Add(-stagedupload.MaxAge))),
+		sweepPluginData(),
 	}
 }
 
@@ -223,6 +230,14 @@ func CapBackups(dbPath string, free uint64) Result {
 		return res
 	}
 	return diffBackups(dbPath, list, res)
+}
+
+// sweepPluginData purges soft-deleted plugin data past both its soft-delete
+// window and its retention period (plugindb.Manager.Prune); anything still
+// inside either is left alone.
+func sweepPluginData() Result {
+	purged, err := plugins.PrunePluginData()
+	return Result{Kind: KindPluginData, Removed: len(purged), Err: err}
 }
 
 func result(kind string) func(int, int64, error) Result {

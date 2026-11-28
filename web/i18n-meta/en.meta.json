@@ -1873,5 +1873,9 @@
   "tender.tip.total_with_tip": {"description": "Payment panel, tip row: the bill plus the chosen tip, shown before the cashier taps a payment method.", "review": "standard", "placeholders": ["bill total plus tip, formatted as money"]},
   "tender.tip.too_large": {"description": "Payment panel, tip row: shown when the typed tip is more than the whole bill. Nothing is charged until it is corrected.", "review": "standard"},
   "tender.tip.pill": {"description": "Split tab: note on a pending payment line showing the part of it that is a tip.", "review": "standard", "placeholders": ["tip amount, formatted as money"], "max_length": 30},
-  "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"}
+  "tender.status.tip_exceeds": {"description": "Split tab: error when the tip typed for a payment is more than the amount handed over less change.", "review": "standard"},
+  "plugins.data.delete_now.confirm": {"description": "Confirmation shown before an admin deletes a removed plugin's saved data immediately; irreversible.", "review": "standard"},
+  "plugins.data.delete_now.none": {"description": "Message when no removed data is kept for the plugin, so there is nothing to delete.", "review": "standard"},
+  "plugins.data.delete_now.removed_kept_days": {"description": "Explains that a removed plugin's data is kept for a recovery period for reinstall, then deleted automatically.", "review": "standard"},
+  "plugins.data.delete_now.retained": {"description": "Refusal shown when the plugin's data is under a legal retention period and cannot be deleted yet.", "review": "standard"}
 }

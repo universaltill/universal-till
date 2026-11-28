@@ -12,3 +12,9 @@
 // ships no loadable-extension support (load_extension is an error), which a
 // test pins so a driver upgrade that changes it fails CI.
 package plugindb
+
+// Slice B (ut-docs#3157) adds, still without feature code: BLOB base64 args
+// and results, a semaphore with ErrBusy, per-id locks, NoMigrate, idle close
+// and an LRU cap, symlink refusal, statement limits, SnapshotFile (VACUUM
+// INTO), install/upgrade migration with a .pre-upgrade copy, rollback restore,
+// retention reason keys, and a read-only immutable ImportDB.

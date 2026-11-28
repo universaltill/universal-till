@@ -495,6 +495,7 @@ var nonAdminTables = map[string]string{
 	"plugin_catalog":          "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
 	"plugin_entries":          "plugin-contributed menu/hook entries — recreated on re-install, not synced",
 	"plugin_hooks":            "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_handover":         "this till's own core->plugin data handover flag (ut-docs#3157): each till migrates its own local data, so the flag is per-till and never synced",
 	"plugin_provides":         "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
 	"plugin_markets":          "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
 	"plugin_schedules":        "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",

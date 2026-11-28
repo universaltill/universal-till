@@ -53,6 +53,18 @@ type FakeHost struct {
 	// permission or outside a bound payment dispatch.
 	PaymentCall func(provider, op string, body json.RawMessage) (json.RawMessage, error)
 	TapToPay    func(body json.RawMessage) (json.RawMessage, error)
+	// DBExec and DBQuery stand in for the plugin's own SQLite database
+	// (db_exec / db_query; the fake has no SQL engine). They receive one
+	// statement that already passed the host's refusals (single statement,
+	// no ATTACH/PRAGMA/VACUUM/transaction control, args decoded to nil,
+	// bool, string, int64, float64 or []byte) and return the changed rows or
+	// the JSON rows array. nil → ErrDenied, as without "db:own". A
+	// DBQuery result over 1 MiB is ErrInvalid, as on the till. See fakedb.go.
+	DBExec  func(sql string, args []any) (int64, error)
+	DBQuery func(sql string, args []any) ([]byte, error)
+	// ImportDBQuery answers db_query_h on a db_open_import handle: file is
+	// the ImportFiles entry the handle was opened from. nil → ErrDenied.
+	ImportDBQuery func(file []byte, sql string, args []any) ([]byte, error)
 	// Propose answers action_propose with a proposal id (nil: ErrDenied).
 	Propose func(name string, args json.RawMessage) (string, error)
 
@@ -90,7 +102,13 @@ type FakeHost struct {
 	// Calls counts host calls by function name.
 	Calls map[string]int
 
-	next      int32
+	next    int32
+	dbErr   string
+	dbCache struct {
+		key string
+		out []byte
+	}
+	dbImports map[int32]int32
 	httpCache struct{ req, resp []byte }
 	streams   map[int32]*fakeStream
 	tcp       map[int32]io.ReadWriteCloser

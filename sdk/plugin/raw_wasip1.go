@@ -133,6 +133,21 @@ func utPaymentProviderCall(pPtr, pLen, oPtr, oLen, rPtr, rLen, dstPtr, dstCap ui
 //go:wasmimport ut tap_to_pay_request
 func utTapToPayRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut db_exec
+func utDBExec(sqlPtr, sqlLen, argsPtr, argsLen uint32) int64
+
+//go:wasmimport ut db_query
+func utDBQuery(sqlPtr, sqlLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut db_error
+func utDBError(dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut db_open_import
+func utDBOpenImport(importHandle int32) int32
+
+//go:wasmimport ut db_query_h
+func utDBQueryH(dbh int32, sqlPtr, sqlLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32
+
 // ptr is the guest address and length of b; (0, 0) for an empty slice. The
 // caller keeps b alive across the host call with runtime.KeepAlive.
 func ptr(b []byte) (uint32, uint32) {
@@ -417,6 +432,46 @@ func rawTapToPayRequest(body, dst []byte) int32 {
 	dp, dc := ptr(dst)
 	r := utTapToPayRequest(rp, rl, dp, dc)
 	runtime.KeepAlive(body)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawDBExec(sql, args []byte) int64 {
+	sp, sl := ptr(sql)
+	ap, al := ptr(args)
+	r := utDBExec(sp, sl, ap, al)
+	runtime.KeepAlive(sql)
+	runtime.KeepAlive(args)
+	return r
+}
+
+func rawDBQuery(sql, args, dst []byte) int32 {
+	sp, sl := ptr(sql)
+	ap, al := ptr(args)
+	dp, dc := ptr(dst)
+	r := utDBQuery(sp, sl, ap, al, dp, dc)
+	runtime.KeepAlive(sql)
+	runtime.KeepAlive(args)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawDBError(dst []byte) int32 {
+	dp, dc := ptr(dst)
+	r := utDBError(dp, dc)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawDBOpenImport(importHandle int32) int32 { return utDBOpenImport(importHandle) }
+
+func rawDBQueryH(dbh int32, sql, args, dst []byte) int32 {
+	sp, sl := ptr(sql)
+	ap, al := ptr(args)
+	dp, dc := ptr(dst)
+	r := utDBQueryH(dbh, sp, sl, ap, al, dp, dc)
+	runtime.KeepAlive(sql)
+	runtime.KeepAlive(args)
 	runtime.KeepAlive(dst)
 	return r
 }

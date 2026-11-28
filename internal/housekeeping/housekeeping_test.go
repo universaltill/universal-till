@@ -399,3 +399,40 @@ func TestRun_BackupsKeepTheLastNDays(t *testing.T) {
 		t.Fatalf("a 30-day setting removed %d more", r.Removed)
 	}
 }
+
+// ut-docs#3157: the daily run purges soft-deleted plugin data only once both
+// its soft-delete window and its keep_years retention have passed.
+func TestRun_PluginDataSweepDeletesOnlyExpired(t *testing.T) {
+	root, dbPath := layout(t)
+	removed := filepath.Join(root, "plugin-data", ".removed")
+	mk := func(name, marker string) {
+		d := filepath.Join(removed, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "plugin.db"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "removed.json"), []byte(marker), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().AddDate(-1, 0, 0).Format(time.RFC3339)
+	past := time.Now().AddDate(0, 0, -1).Format(time.RFC3339)
+	future := time.Now().AddDate(2, 0, 0).Format(time.RFC3339)
+	mk("expired-20240101", `{"plugin_id":"expired","removed_at":"`+old+`","purge_after":"`+past+`"}`)
+	mk("retained-20240101", `{"plugin_id":"retained","removed_at":"`+old+`","purge_after":"`+past+`","retain_until":"`+future+`"}`)
+	mk("fresh-20240101", `{"plugin_id":"fresh","removed_at":"`+old+`","purge_after":"`+future+`"}`)
+
+	for _, r := range RunWith(dbPath, time.Now(), 0, Normal) {
+		if r.Kind == KindPluginData && (r.Err != nil || r.Removed != 1) {
+			t.Fatalf("plugin data sweep = %+v, want exactly 1 removed", r)
+		}
+	}
+	for name, want := range map[string]bool{"expired-20240101": false, "retained-20240101": true, "fresh-20240101": true} {
+		_, err := os.Stat(filepath.Join(removed, name))
+		if (err == nil) != want {
+			t.Errorf("%s present=%v want %v", name, err == nil, want)
+		}
+	}
+}

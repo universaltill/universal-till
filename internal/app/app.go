@@ -192,6 +192,13 @@ func Run(ctx context.Context) error {
 			} else if n > 0 {
 				log.Infof("restored %d photo file(s) from the backup", n)
 			}
+			// Plugin databases and blobs a restored backup carries
+			// (ut-docs#3157), before any plugin loads. Same terms.
+			if n, pdErr := db.RestoreBackupPluginData(cfg.DBPath, paths.Data("plugin-data")); pdErr != nil {
+				log.Warnf("restore backup plugin data: %v", pdErr)
+			} else if n > 0 {
+				log.Infof("restored %d plugin data file(s) from the backup", n)
+			}
 			// Best-effort housekeeping, never fatal: a sweep failure must
 			// not block boot (offline-first — startup can't depend on this
 			// succeeding).
@@ -586,6 +593,10 @@ func Run(ctx context.Context) error {
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
+
+	// ADR-0121 §4: ask plugins to take over their legacy core rows
+	// (plugin.data.handover.ask), in the background, with retries (ut-docs#3157).
+	plugins.StartHandoverRunner(bgCtx, database.DB, pluginManager.Wasm)
 
 	// ut-docs#6653 (ADR-0136 Decision 9): return card payments the last run
 	// captured but never turned into a sale, in the background, once the

@@ -98,7 +98,20 @@ func UninstallPluginTree(ctx context.Context, db *sql.DB, pluginBaseDir, pluginI
 	}
 	defer lockPluginTree(pluginBaseDir, pluginID)()
 
+	// The plugin's data is never deleted here (ut-docs#3157): it moves aside
+	// for the soft-delete window and the manifest's retention.keep_years, and
+	// is read from the manifest before the code tree goes. A failure stops the
+	// uninstall with the rows and files untouched.
+	years, reason := retentionFromTree(pluginBaseDir, pluginID)
+	if _, err := DataManager().UninstallRetained(pluginID, years, reason); err != nil {
+		return fmt.Errorf("keep plugin data: %w", err)
+	}
+
 	if err := UninstallPlugin(ctx, db, pluginID); err != nil {
+		// Still installed: put its data back where it was.
+		if rerr := DataManager().Restore(pluginID); rerr != nil {
+			logging.L().Warnf("failed to restore plugin data of %s after a failed uninstall: %v", pluginID, rerr)
+		}
 		return err
 	}
 	dir := filepath.Join(pluginBaseDir, pluginID)
