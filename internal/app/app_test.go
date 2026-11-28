@@ -132,7 +132,9 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 	// shutdown that hangs well past every drain.
 	const bootAllowance = 10 * time.Second
 
-	t.Setenv("UT_DATA_DIR", t.TempDir())
+	dataDir := t.TempDir()
+	seedMigratedDB(t, dataDir) // ut-docs#7275: boot, not migration, is under test
+	t.Setenv("UT_DATA_DIR", dataDir)
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_OPEN_BROWSER", "false")
@@ -153,6 +155,7 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 		// this test exists for. A real bgCtx/join regression ALWAYS costs the
 		// full drain bound on top of boot time AND logs the drain-timeout
 		// error; a slow-but-healthy boot does neither.
+		t.Logf("Run returned after %s", time.Since(start))
 		if elapsed := time.Since(start); elapsed >= backgroundDrainTimeout+bootAllowance {
 			t.Fatalf("Run took %s (>= the %s drain timeout + %s boot allowance) to return a startup error — "+
 				"shutdown hung well past the drain bound",
@@ -201,7 +204,9 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 // bug), database.Close() runs while the goroutine is still asleep and its
 // query fails with "sql: database is closed".
 func TestRun_WaitsForAsyncWorkBeforeClosingDatabase(t *testing.T) {
-	t.Setenv("UT_DATA_DIR", t.TempDir())
+	dataDir := t.TempDir()
+	seedMigratedDB(t, dataDir) // ut-docs#7275: boot, not migration, is under test
+	t.Setenv("UT_DATA_DIR", dataDir)
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_OPEN_BROWSER", "false")

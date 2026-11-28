@@ -21,6 +21,7 @@ func TestRun_WritesLogFileWithStartupLine(t *testing.T) {
 	if err := os.WriteFile(envFile, []byte("UT_MARKETPLACE_ENDPOINT_URL=https://cloud.example.test/api\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	seedMigratedDB(t, dataDir) // ut-docs#7275: boot, not migration, is under test
 	t.Setenv("UT_DATA_DIR", dataDir)
 	t.Setenv("UT_ENV_FILE", envFile)
 	t.Setenv("UT_MARKETPLACE_ENDPOINT_URL", "") // pos.env must supply it

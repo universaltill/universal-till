@@ -51,6 +51,7 @@ func observePagesInit(t *testing.T) <-chan struct{} {
 // than a wall-clock guess about how fast it should have got there.
 func TestRun_RefusesSecondInstanceAgainstSameDataDirectory(t *testing.T) {
 	dataDir := t.TempDir()
+	seedMigratedDB(t, dataDir) // ut-docs#7275: boot, not migration, is under test
 	t.Setenv("UT_DATA_DIR", dataDir)
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
 	t.Setenv("UT_AUTH", "off")
@@ -96,6 +97,7 @@ func TestRun_RefusesSecondInstanceAgainstSameDataDirectory(t *testing.T) {
 // released too early.
 func TestRun_AcquiresLockAndStillBootsNormally(t *testing.T) {
 	dataDir := t.TempDir()
+	seedMigratedDB(t, dataDir) // ut-docs#7275: boot, not migration, is under test
 	t.Setenv("UT_DATA_DIR", dataDir)
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
 	t.Setenv("UT_AUTH", "off")
