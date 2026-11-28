@@ -50,6 +50,28 @@ type ChannelOrderActionInput struct {
 	Shipment                 *ChannelShipment
 	Cancel                   *ChannelCancel
 	Now                      time.Time
+	// Delivery actions (ADR-0215): RejectReason is for reject only (one of
+	// DeliveryRejectReasons); PrepMinutes is for accept (optional) and
+	// prep_time (required), 1..DeliveryMaxPrepMinutes.
+	RejectReason string
+	PrepMinutes  int64
+}
+
+// DeliveryRejectReasons are the reasons the till posts for a reject, in
+// display order. The adapter maps them to the platform's own reasons.
+var DeliveryRejectReasons = []string{"busy", "item_unavailable", "closing_early", "other"}
+
+// DeliveryMaxPrepMinutes bounds a prep time.
+const DeliveryMaxPrepMinutes = 180
+
+// ValidDeliveryRejectReason reports whether s is one of DeliveryRejectReasons.
+func ValidDeliveryRejectReason(s string) bool {
+	for _, r := range DeliveryRejectReasons {
+		if s == r {
+			return true
+		}
+	}
+	return false
 }
 
 // ChannelOrderAction is a stored outbox row.
@@ -61,6 +83,8 @@ type ChannelOrderAction struct {
 	Shipment                                                 *ChannelShipment
 	Cancel                                                   *ChannelCancel
 	State, ResultCode, Writeback, AnsweredAt                 string
+	RejectReason                                             string
+	PrepMinutes                                              int64
 }
 
 // Action states.
@@ -110,6 +134,98 @@ func ChannelOrderAllowedActions(status string, rank int, pending []string) []str
 	return out
 }
 
+// deliveryActionRank is the delivery chain step an action leads to.
+var deliveryActionRank = map[string]int{"accept": 1, "preparing": 2, "ready": 3, "collected": 4}
+
+// DeliveryOrderAllowedActions is the subset of accept, reject, preparing,
+// ready, collected and prep_time that may be queued for a DELIVERY order
+// (ADR-0215 state machine judged on what the till knows), in display order.
+// status/rank are the stored status and fulfilment_rank; pending are the
+// actions already queued. A queued accept lets preparing/ready/collected be
+// queued behind it; a queued reject ends the chain; a step already reached
+// is hidden. prep_time is offered from accepted until ready. A till never
+// cancels or refunds a platform order, so cancel is not offered.
+func DeliveryOrderAllowedActions(status string, rank int, pending []string) []string {
+	switch status {
+	case "rejected", "cancelled", "refunded", "collected":
+		return nil
+	}
+	eff := rank
+	for _, p := range pending {
+		if p == "reject" {
+			return nil
+		}
+		if r := deliveryActionRank[p]; r > eff {
+			eff = r
+		}
+	}
+	if eff == 0 {
+		return []string{"accept", "reject"}
+	}
+	var out []string
+	if eff < 2 {
+		out = append(out, "preparing")
+	}
+	if eff < 3 {
+		out = append(out, "ready", "prep_time")
+	}
+	if eff < 4 {
+		out = append(out, "collected")
+	}
+	return out
+}
+
+// channelActionRow is one row of channel_order_actions to insert.
+type channelActionRow struct {
+	OrderID, ConnectionID, ExternalOrderID, Action string
+	BaseRevision                                   int64
+	StaffID, Now                                   string
+	Shipment                                       ChannelShipment
+	CancelReason                                   string
+	CancelRestock                                  bool
+	RejectReason                                   string
+	PrepMinutes                                    int64
+}
+
+// insertChannelActionTx writes the outbox row and its audit row (ids only) in
+// the caller's transaction and returns the new action id.
+func insertChannelActionTx(ctx context.Context, tx *sql.Tx, a channelActionRow) (string, error) {
+	id := uuid.NewString()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO channel_order_actions (action_id, order_id, connection_id, external_order_id, action, base_revision, created_at, staff_id,
+  carrier, tracking_number, tracking_url, cancel_reason, cancel_restock, reject_reason, prep_minutes)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, a.OrderID, a.ConnectionID, a.ExternalOrderID, a.Action, a.BaseRevision, a.Now, a.StaffID,
+		a.Shipment.Carrier, a.Shipment.TrackingNumber, a.Shipment.TrackingURL, a.CancelReason, boolInt(a.CancelRestock),
+		a.RejectReason, a.PrepMinutes); err != nil {
+		return "", fmt.Errorf("insert channel order action: %w", err)
+	}
+	// Ids only; a system action (the unmapped-line reject) has no staff actor.
+	if err := NewPOSRepo(nil).InsertAudit(ctx, tx, a.StaffID, "channel_order", a.OrderID, "channel_order_action_queued",
+		map[string]any{"action_id": id, "action": a.Action}, a.Now, ""); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// deliveryActionShapeOK checks that a delivery action's data fits it:
+// reject needs a known reason; prep_time needs minutes in range; accept may
+// carry minutes; nothing else carries either.
+func deliveryActionShapeOK(in ChannelOrderActionInput) bool {
+	okMinutes := in.PrepMinutes >= 1 && in.PrepMinutes <= DeliveryMaxPrepMinutes
+	switch in.Action {
+	case "reject":
+		return ValidDeliveryRejectReason(in.RejectReason) && in.PrepMinutes == 0
+	case "prep_time":
+		return okMinutes && in.RejectReason == ""
+	case "accept":
+		return in.RejectReason == "" && (in.PrepMinutes == 0 || okMinutes)
+	case "preparing", "ready", "collected":
+		return in.RejectReason == "" && in.PrepMinutes == 0
+	}
+	return false
+}
+
 // ChannelOrderActionsRepo owns the channel_order_actions table.
 type ChannelOrderActionsRepo struct{ db *sql.DB }
 
@@ -135,17 +251,18 @@ func (r *ChannelOrderActionsRepo) Enqueue(ctx context.Context, in ChannelOrderAc
 	if blocked > 0 {
 		return "", false, ErrChannelActionsBlocked
 	}
-	var conn, ext, status string
+	var conn, ext, status, kind string
 	var revision int64
 	var rank int
-	err = tx.QueryRowContext(ctx, `SELECT connection_id, external_order_id, revision, status, fulfilment_rank FROM channel_orders WHERE id = ?`, in.OrderID).
-		Scan(&conn, &ext, &revision, &status, &rank)
+	err = tx.QueryRowContext(ctx, `SELECT connection_id, external_order_id, revision, status, fulfilment_rank, order_kind FROM channel_orders WHERE id = ?`, in.OrderID).
+		Scan(&conn, &ext, &revision, &status, &rank, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, ErrChannelOrderNotFound
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("read channel order: %w", err)
 	}
+	delivery := kind == ChannelKindDelivery
 	rows, err := tx.QueryContext(ctx, `SELECT action_id, action FROM channel_order_actions WHERE order_id = ? AND state = 'pending' ORDER BY seq`, in.OrderID)
 	if err != nil {
 		return "", false, fmt.Errorf("read pending channel actions: %w", err)
@@ -159,6 +276,13 @@ func (r *ChannelOrderActionsRepo) Enqueue(ctx context.Context, in ChannelOrderAc
 		}
 		if a == in.Action {
 			rows.Close()
+			if in.Action == "prep_time" && in.PrepMinutes > 0 && in.PrepMinutes <= DeliveryMaxPrepMinutes {
+				// A second prep-time tap before the first is sent replaces its value.
+				if _, err := tx.ExecContext(ctx, `UPDATE channel_order_actions SET prep_minutes = ? WHERE action_id = ?`, in.PrepMinutes, id); err != nil {
+					return "", false, fmt.Errorf("update pending prep time: %w", err)
+				}
+				return id, true, tx.Commit()
+			}
 			return id, true, nil
 		}
 		pending = append(pending, a)
@@ -169,12 +293,21 @@ func (r *ChannelOrderActionsRepo) Enqueue(ctx context.Context, in ChannelOrderAc
 	}
 	rows.Close()
 
-	if (in.Action != "ship" && in.Shipment != nil) || (in.Action != "cancel" && in.Cancel != nil) ||
-		(in.Action == "ship" && in.Shipment == nil) || (in.Action == "cancel" && in.Cancel == nil) {
+	if delivery {
+		if in.Shipment != nil || in.Cancel != nil || !deliveryActionShapeOK(in) {
+			return "", false, ErrChannelActionNotAllowed
+		}
+	} else if (in.Action != "ship" && in.Shipment != nil) || (in.Action != "cancel" && in.Cancel != nil) ||
+		(in.Action == "ship" && in.Shipment == nil) || (in.Action == "cancel" && in.Cancel == nil) ||
+		in.RejectReason != "" || in.PrepMinutes != 0 {
 		return "", false, ErrChannelActionNotAllowed
 	}
+	allowedNow := ChannelOrderAllowedActions(status, rank, pending)
+	if delivery {
+		allowedNow = DeliveryOrderAllowedActions(status, rank, pending)
+	}
 	ok := false
-	for _, a := range ChannelOrderAllowedActions(status, rank, pending) {
+	for _, a := range allowedNow {
 		if a == in.Action {
 			ok = true
 		}
@@ -186,26 +319,17 @@ func (r *ChannelOrderActionsRepo) Enqueue(ctx context.Context, in ChannelOrderAc
 		return "", false, fmt.Errorf("supersede channel outcomes: %w", err)
 	}
 	now := in.Now.UTC().Format(time.RFC3339)
-	id := uuid.NewString()
 	var sh ChannelShipment
 	if in.Shipment != nil {
 		sh = *in.Shipment
 	}
-	var cr string
-	var restock int
+	row := channelActionRow{OrderID: in.OrderID, ConnectionID: conn, ExternalOrderID: ext, Action: in.Action, BaseRevision: revision,
+		StaffID: in.StaffID, Now: now, Shipment: sh, RejectReason: in.RejectReason, PrepMinutes: in.PrepMinutes}
 	if in.Cancel != nil {
-		cr, restock = in.Cancel.Reason, boolInt(in.Cancel.Restock)
+		row.CancelReason, row.CancelRestock = in.Cancel.Reason, in.Cancel.Restock
 	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO channel_order_actions (action_id, order_id, connection_id, external_order_id, action, base_revision, created_at, staff_id,
-  carrier, tracking_number, tracking_url, cancel_reason, cancel_restock)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, in.OrderID, conn, ext, in.Action, revision, now, in.StaffID, sh.Carrier, sh.TrackingNumber, sh.TrackingURL, cr, restock); err != nil {
-		return "", false, fmt.Errorf("insert channel order action: %w", err)
-	}
-	// Ids only: no tracking values in the audit log.
-	if err := NewPOSRepo(r.db).InsertAudit(ctx, tx, in.StaffID, "channel_order", in.OrderID, "channel_order_action_queued",
-		map[string]any{"action_id": id, "action": in.Action}, now, ""); err != nil {
+	id, err := insertChannelActionTx(ctx, tx, row)
+	if err != nil {
 		return "", false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -216,7 +340,8 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 
 const channelActionSelect = `
 SELECT seq, action_id, order_id, connection_id, external_order_id, action, base_revision, created_at, staff_id,
-  carrier, tracking_number, tracking_url, cancel_reason, cancel_restock, state, result_code, writeback, answered_at
+  carrier, tracking_number, tracking_url, cancel_reason, cancel_restock, state, result_code, writeback, answered_at,
+  reject_reason, prep_minutes
 FROM channel_order_actions a`
 
 func scanChannelAction(s rowScanner) (ChannelOrderAction, error) {
@@ -224,7 +349,8 @@ func scanChannelAction(s rowScanner) (ChannelOrderAction, error) {
 	var carrier, num, url, reason string
 	var restock int
 	if err := s.Scan(&a.Seq, &a.ActionID, &a.OrderID, &a.ConnectionID, &a.ExternalOrderID, &a.Action, &a.BaseRevision, &a.CreatedAt,
-		&a.StaffID, &carrier, &num, &url, &reason, &restock, &a.State, &a.ResultCode, &a.Writeback, &a.AnsweredAt); err != nil {
+		&a.StaffID, &carrier, &num, &url, &reason, &restock, &a.State, &a.ResultCode, &a.Writeback, &a.AnsweredAt,
+		&a.RejectReason, &a.PrepMinutes); err != nil {
 		return a, err
 	}
 	switch a.Action {

@@ -312,20 +312,30 @@ func TestStart_ListensOnAllInterfacesButReturnsLoopbackAddress(t *testing.T) {
 
 // nonLoopbackIPv4s mirrors internal/discovery.localIPs's interface walk
 // (minus its loopback fallback) — the addresses a LAN peer would reach
-// this host on.
+// this host on. Down and point-to-point interfaces (VPN utun tunnels) are
+// skipped: dialling their own address from this host times out.
 func nonLoopbackIPv4s(t *testing.T) []net.IP {
 	t.Helper()
-	addrs, err := net.InterfaceAddrs()
+	ifaces, err := net.Interfaces()
 	if err != nil {
-		t.Fatalf("net.InterfaceAddrs: %v", err)
+		t.Fatalf("net.Interfaces: %v", err)
 	}
 	var ips []net.IP
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.To4() == nil {
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagPointToPoint != 0 {
 			continue
 		}
-		ips = append(ips, ipNet.IP)
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.IsLoopback() || ipNet.IP.To4() == nil {
+				continue
+			}
+			ips = append(ips, ipNet.IP)
+		}
 	}
 	return ips
 }
