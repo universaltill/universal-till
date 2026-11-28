@@ -421,6 +421,13 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 				if len(e.Architectures) > 0 {
 					entry["architectures"] = e.Architectures
 				}
+				// ut-docs#7246/#3706: the real gateway's camelCase key.
+				if len(e.ShopTypes) > 0 {
+					entry["shopTypes"] = e.ShopTypes
+				}
+				if e.Description != "" {
+					entry["description"] = e.Description
+				}
 				wire = append(wire, entry)
 			}
 			w.Header().Set("Content-Type", "application/json")

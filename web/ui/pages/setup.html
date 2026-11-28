@@ -434,6 +434,21 @@
           {{/* ut-docs#6332 S7: the same tile group the Settings pick step uses
                (shop_type_tiles.html, pre-rendered: this page has no shared partial set). */}}
           {{ .shopTypeTiles }}
+          {{/* ut-docs#3706: optional, catalogue-driven (neutral shop_types field).
+               Never pre-ticked; an unticked or hidden box (disabled) posts nothing,
+               so skipping leaves no trace. The name/description are the listing's. */}}
+          {{ range .shopTypeSuggestions }}
+          <div class="setup-shop-type-suggest" data-shop-type-suggestion="{{ .ShopType }}" x-show="shopType === '{{ .ShopType }}'" x-cloak>
+            <h2>{{ T "setup.shop_type.suggest.title" }}</h2>
+            <p><strong>{{ .Name }}</strong></p>
+            {{ if .Description }}<p class="muted">{{ .Description }}</p>{{ end }}
+            <label class="setup-shop-type-suggest-opt">
+              <input type="checkbox" name="suggest_plugin" value="{{ .ListingID }}" :disabled="shopType !== '{{ .ShopType }}'">
+              {{ T "setup.shop_type.suggest.install" }}
+            </label>
+            <p class="muted">{{ T "setup.shop_type.suggest.hint" }}</p>
+          </div>
+          {{ end }}
           <div class="setup-nav shop-type-bar">
             <button type="button" class="btn secondary" @click="step = prv(5)">{{ T "setup.back" }}</button>
             <button type="button" class="btn secondary" @click="shopType = ''; step = nxt(5)">{{ T "setup.shop_type.skip" }}</button>

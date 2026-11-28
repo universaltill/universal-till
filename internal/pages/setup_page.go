@@ -228,6 +228,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#6332 S7: the tile group shared with the Settings pick step.
 			"shopTypeTiles": renderShopTypeTiles(w, r, shopTypeTiles(d, httpx.ResolveLocale(w, r), "")),
 			"errKey":        errKey,
+			// ut-docs#3706: optional, catalogue-driven suggestions (neutral
+			// `shop_types` field); empty when offline or nothing is published.
+			"shopTypeSuggestions": shopTypeSuggestionViews(r.Context(), d),
 			// Matches the wizard's pre-#590 default (tax-inclusive on) for the
 			// case nothing was detected — only overridden below when a country
 			// actually matches, same as the country step's own @change handler
@@ -794,6 +797,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// one short-timeout synchronous attempt; either way this never
 		// blocks or fails the wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
+
+		// ut-docs#3706: the shop-type step's optional suggestion installs only
+		// when the operator ticked it (nothing posted otherwise). Best effort,
+		// never queued: skipping or failing leaves no trace.
+		installShopTypeSuggestionForSetup(r.Context(), d, strings.TrimSpace(r.Form.Get("shop_type")), r.Form.Get("suggest_plugin"))
 
 		// ut-docs#4259: the new shop starts with its gift voucher item,
 		// named in the shop's language. After the base-plugin install, so
