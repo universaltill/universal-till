@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -403,6 +404,10 @@ var adminTables = []adminTable{
 // Grouped by why, not alphabetically — the reason is what matters to a
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
+	// ut-docs#3697 (ADR-0149 §3): the plugin-records channel.
+	"plugin_record_outbox": "this replica's queued plugin records, sent to the main till by POST /api/sync/plugin-records — till-local operational bookkeeping, never synced (ut-docs#3697)",
+	"plugin_record_inbox":  "the main till's ledger of plugin records it already applied (dedupe) — till-local, never synced (ut-docs#3697)",
+	"plugin_snapshot":      "a plugin's main-owned snapshot values — NOT a generic admin table: they travel as the bundle's additive plugin_snapshots section (AdminBundle.PluginSnapshots), replaced wholesale on a replica, with their own generation triggers (migration 120, ut-docs#3697)",
 	// Already named in this var's own top comment above.
 	"register_devices":        "which device each register belongs to (ut-docs#7098): this till's own link table, rebuilt by enrolment on each till, never synced",
 	"cloud_notices":           "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
@@ -496,6 +501,7 @@ var nonAdminTables = map[string]string{
 	"plugin_catalog":          "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
 	"plugin_entries":          "plugin-contributed menu/hook entries — recreated on re-install, not synced",
 	"plugin_hooks":            "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_handover":         "this till's own core->plugin data handover flag (ut-docs#3157): each till migrates its own local data, so the flag is per-till and never synced",
 	"plugin_provides":         "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
 	"plugin_markets":          "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
 	"plugin_schedules":        "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
@@ -931,12 +937,21 @@ func perTillSetting(key string) bool {
 // AdminBundle is the wire payload of GET /api/sync/admin.
 type AdminBundle struct {
 	Tables map[string][]map[string]any `json:"tables"`
+	// PluginSnapshots (ut-docs#3697): the main till's plugin-owned
+	// snapshot values, replaced wholesale on a replica. Additive and
+	// omitempty: a till with no snapshots sends and fingerprints exactly
+	// what it did before, and an older replica ignores the field.
+	PluginSnapshots []PluginSnapshotRow `json:"plugin_snapshots,omitempty"`
 }
 
 // Fingerprint identifies the bundle content: rows are ordered by PK and
 // json.Marshal sorts map keys, so equal state hashes equal.
 func (b AdminBundle) Fingerprint() string {
 	raw, _ := json.Marshal(b.Tables)
+	if len(b.PluginSnapshots) > 0 {
+		snap, _ := json.Marshal(b.PluginSnapshots)
+		raw = append(append(raw, "\x00plugin_snapshots\x00"...), snap...)
+	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:16])
 }
@@ -1040,7 +1055,7 @@ func (r *SyncAdminRepo) adminGeneration(ctx context.Context) (gen int64, tracked
 }
 
 func (b AdminBundle) shallowCopy() AdminBundle {
-	out := AdminBundle{Tables: make(map[string][]map[string]any, len(b.Tables))}
+	out := AdminBundle{Tables: make(map[string][]map[string]any, len(b.Tables)), PluginSnapshots: b.PluginSnapshots}
 	for k, v := range b.Tables {
 		out.Tables[k] = v
 	}
@@ -1107,6 +1122,11 @@ func (r *SyncAdminRepo) scanAdmin(ctx context.Context) (AdminBundle, error) {
 		}
 		bundle.Tables[t.name] = recs
 	}
+	snaps, err := listSnapshots(ctx, r.db)
+	if err != nil {
+		return AdminBundle{}, err
+	}
+	bundle.PluginSnapshots = snaps
 	return bundle, nil
 }
 
@@ -1368,6 +1388,13 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		if err := upsertRows(ctx, tx, t, cols, toApply); err != nil {
 			return fmt.Errorf("apply %s: %w", t.name, err)
 		}
+	}
+
+	// ut-docs#3697: the primary's plugin snapshots replace this till's. A
+	// replica never writes one itself, so an absent section means the
+	// primary holds none.
+	if err := replacePluginSnapshots(ctx, tx, bundle.PluginSnapshots, time.Now().UTC()); err != nil {
+		return fmt.Errorf("apply plugin snapshots: %w", err)
 	}
 
 	if err := backfillCodelessSyncedVariants(ctx, tx); err != nil {

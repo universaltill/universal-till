@@ -40,6 +40,7 @@ func TestHandlerCapsFitExemptBodyLimit(t *testing.T) {
 		{"/api/sync/closes", salesMirrorClosesMaxBody},
 		{"/api/sync/settings/apply", maxSyncSettingsBody},
 		{"/api/sync/users/apply", maxSyncUserBody},
+		{"/api/sync/plugin-records", pluginRecordsMaxBody},
 		{"/csp-report", cspReportMaxBody},
 	} {
 		if limit := auth.ExemptBodyLimit(c.path); c.cap > limit {

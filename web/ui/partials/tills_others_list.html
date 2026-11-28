@@ -6,7 +6,13 @@
      manager types a manager PIN into the one box below. */}}
 {{ with .Others }}
 <div id="tills-others" data-ut-refresh="#tills-others" data-testid="tills-others">
-{{ if not .CloudOK }}
+{{ if and (not .CloudOK) .Unpaired }}
+<div class="card" data-testid="tills-not-paired" role="status">
+  <p>{{ T "tills.list.not_paired" }}</p>
+  <a class="btn" href="/settings#registration">{{ T "tills.list.pair_action" }}</a>
+  <small class="muted">{{ T "tills.list.pair_where" }}</small>
+</div>
+{{ else if not .CloudOK }}
 <div class="card" data-testid="tills-account-unavailable" role="status">
   <p>{{ T "tills.list.account_unavailable" }}</p>
   <a class="btn secondary" href="/tills?tab=others&amp;refresh=1" hx-get="/ui/tills/tab/others?refresh=1" hx-target="#tills-tab" hx-swap="innerHTML">{{ T "tills.list.try_again" }}</a>

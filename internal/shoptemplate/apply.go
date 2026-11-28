@@ -86,3 +86,39 @@ func Apply(ctx context.Context, st SettingsStore, r *Resolved) error {
 	}
 	return nil
 }
+
+// ApplyPerTill seeds ONLY this till's own per-till keys (the theme and its
+// marker, ADR-0190 design section 3 point 4) and nothing else: never a
+// shop-wide key, never the ledger. A satellite calls it instead of Apply,
+// because the main till owns the ledger and the shop-wide values. Once per
+// till (the marker) and never over a value already set. A nil template or one
+// with no theme seed writes nothing.
+func ApplyPerTill(ctx context.Context, st SettingsStore, r *Resolved) error {
+	if r == nil {
+		return nil
+	}
+	if done, _, err := st.Get(ctx, ThemeSeededKey); err != nil {
+		return fmt.Errorf("shoptemplate: read theme marker: %w", err)
+	} else if done != "" {
+		return nil
+	}
+	for _, s := range r.Seeds() {
+		if !IsPerTillSeedKey(s.Key) || !SeedValueValid(s.Key, s.Value) {
+			continue
+		}
+		cur, _, err := st.Get(ctx, s.Key)
+		if err != nil {
+			return fmt.Errorf("shoptemplate: read %s: %w", s.Key, err)
+		}
+		if cur != "" {
+			continue
+		}
+		if err := st.SetPerTill(ctx, s.Key, s.Value); err != nil {
+			return fmt.Errorf("shoptemplate: seed %s: %w", s.Key, err)
+		}
+		if err := st.SetPerTill(ctx, ThemeSeededKey, s.Value); err != nil {
+			return fmt.Errorf("shoptemplate: seed marker: %w", err)
+		}
+	}
+	return nil
+}

@@ -110,7 +110,8 @@ func cachedRemovedTills() []enroll.RemovedTill {
 type tillsOthers struct {
 	Rows     []tills.Row
 	CloudOK  bool
-	Disagree int // rows whose state is not ok (excluding this till)
+	Unpaired bool // never paired with a shop account: there is nothing to reach (ut-docs#7204)
+	Disagree int  // rows whose state is not ok (excluding this till)
 	// Actionable counts only what a manager can fix on the spot (ut-docs#7098):
 	// old entries, long-unseen network-only rows and live account-only rows
 	// that carry a Remove. It alone raises the banner and the tab badge; a
@@ -133,6 +134,7 @@ func tillsOthersView(ctx context.Context, d *common.Deps, m map[string]any, refr
 	} else {
 		devs, out.CloudOK = cachedAccountFleet()
 	}
+	out.Unpaired = d.Cfg != nil && !enroll.CredentialsComplete(enroll.Effective(d.Cfg).Marketplace)
 	list, err := data.NewTillsRepo(d.Db).ListTills(ctx)
 	if err != nil {
 		return out, err

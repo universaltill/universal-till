@@ -101,3 +101,36 @@ func TestApplyShopTemplateNoTemplateIsNoOp(t *testing.T) {
 		t.Fatalf("ledger %q written with no template", v)
 	}
 }
+
+// A satellite seeds only its own per-till theme from the template: no
+// shop-wide key, no ledger (design section 3 point 4).
+func TestApplyShopTemplateSatelliteSeedsOnlyPerTillTheme(t *testing.T) {
+	set := shoptemplatetest.TestSet(t, &shoptemplate.Template{
+		Schema: 1, ID: "retail", Version: 1, ShopTypes: []string{"retail"},
+		Seed: []shoptemplate.Seed{
+			{Key: data.OrderTypePromptModeKey, Value: data.OrderTypePromptModeOff},
+			{Key: "theme", Value: "dark"},
+		},
+	})
+	prev := shopTemplateFor
+	shopTemplateFor = func(_ *common.Deps, st string) *shoptemplate.Resolved { return set.ForType(st) }
+	t.Cleanup(func() { shopTemplateFor = prev })
+
+	_, _, d := newFullAuthDeps(t)
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	applyShopTemplate(t.Context(), d, "retail")
+	if v, _, _ := d.Settings.Get(t.Context(), "theme"); v != "dark" {
+		t.Fatalf("satellite theme = %q, want dark", v)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), shoptemplate.ThemeSeededKey); v != "dark" {
+		t.Fatalf("satellite theme marker = %q, want dark", v)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), data.OrderTypePromptModeKey); v != "" {
+		t.Fatalf("satellite seeded shop-wide %s = %q", data.OrderTypePromptModeKey, v)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), shoptemplate.LedgerKey); v != "" {
+		t.Fatalf("satellite wrote a ledger %q", v)
+	}
+}

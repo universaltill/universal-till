@@ -8,7 +8,7 @@
      page-head-wrap is a page-scoped override, not a change to the shared
      rule every other .page-head usage relies on. -->
 <div class="page-head page-head-wrap">
-  <h1>{{ T "nav.catalog" }}</h1>
+  <h1>{{ T (or .HeadingKey "nav.catalog") }}</h1>
   <!-- ut-docs#2092: Modifiers and Option sets were removed from this row —
        both duplicated the /items left rail exactly (ut-docs#1950 promoted
        them to rail sections; #1957's in-context "Manage customization

@@ -48,12 +48,37 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 		logging.L().Warnf("failed to clear plugin storage: %v", err)
 	}
 
+	// Plugin-records rows (ut-docs#3697 review M1): queued records, the inbox
+	// ledger and snapshots carry no FK to plugins either. Best-effort after
+	// the commit, like plugin_storage above: an uninstall never fails on
+	// them, and a main would answer a later push plugin_inactive anyway.
+	audit := map[string]any{}
+	if n, err := deletePluginRecords(ctx, db, pluginID); err != nil {
+		logging.L().Warnf("failed to clear plugin records of %s: %v", pluginID, err)
+	} else if n > 0 {
+		audit["records_deleted"] = n
+	}
+
 	// Record uninstall event
-	if err := repo.InsertAudit(ctx, nil, "plugin_uninstall", pluginID, map[string]any{}, time.Now()); err != nil {
+	if err := repo.InsertAudit(ctx, nil, "plugin_uninstall", pluginID, audit, time.Now()); err != nil {
 		logging.L().Warnf("failed to record uninstall audit: %v", err)
 	}
 
 	return nil
+}
+
+// deletePluginRecords drops the plugin's records rows in one transaction.
+func deletePluginRecords(ctx context.Context, db *sql.DB, pluginID string) (int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	n, err := data.DeletePluginRecords(ctx, tx, pluginID)
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }
 
 // UpdatePluginTrustLevel changes the trust level of a plugin
@@ -98,7 +123,20 @@ func UninstallPluginTree(ctx context.Context, db *sql.DB, pluginBaseDir, pluginI
 	}
 	defer lockPluginTree(pluginBaseDir, pluginID)()
 
+	// The plugin's data is never deleted here (ut-docs#3157): it moves aside
+	// for the soft-delete window and the manifest's retention.keep_years, and
+	// is read from the manifest before the code tree goes. A failure stops the
+	// uninstall with the rows and files untouched.
+	years, reason := retentionFromTree(pluginBaseDir, pluginID)
+	if _, err := DataManager().UninstallRetained(pluginID, years, reason); err != nil {
+		return fmt.Errorf("keep plugin data: %w", err)
+	}
+
 	if err := UninstallPlugin(ctx, db, pluginID); err != nil {
+		// Still installed: put its data back where it was.
+		if rerr := DataManager().Restore(pluginID); rerr != nil {
+			logging.L().Warnf("failed to restore plugin data of %s after a failed uninstall: %v", pluginID, rerr)
+		}
 		return err
 	}
 	dir := filepath.Join(pluginBaseDir, pluginID)

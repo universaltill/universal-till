@@ -38,6 +38,11 @@ var exactPermissions = map[string]bool{
 	"secret:write":    true,
 	"ui:page":         true,
 
+	// ut-docs#3697 (ADR-0149 §3): share this plugin's records between the
+	// shop's tills (records_forward, snapshot_set/get, the main till's
+	// plugin.records.received.ask). Bare name, no wildcard form.
+	"records:sync": true,
+
 	// ut-docs#6455 (ADR-0198 §3.1): a payment plugin's two broker
 	// permissions, granted only by a manager. Exact names so the net: host
 	// rule never sees "payment_broker" as a host, and no net: host or

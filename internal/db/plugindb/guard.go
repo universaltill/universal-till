@@ -27,6 +27,23 @@ var refusedFirst = map[string]bool{
 // A plugin that really has a column with such a name quotes it.
 var refusedAnywhere = map[string]bool{"ATTACH": true, "DETACH": true, "VACUUM": true, "PRAGMA": true}
 
+// refusedFragments are SQLite internals that read/write files or raw pages
+// (and pragma_database_list, which would tell the guest the host's file path).
+// They are refused wherever they appear in the text (case-insensitive), so a
+// plugin cannot reach them through a view, trigger or comment trick. A column
+// that really contains one of these words must be renamed.
+var refusedFragments = []string{"sqlite_dbpage", "load_extension", "readfile", "writefile", "fts3_tokenizer", "sqlite_dbdata", "zipfile(", "pragma_database_list"}
+
+func hasRefusedFragment(q string) bool {
+	l := strings.ToLower(q)
+	for _, f := range refusedFragments {
+		if strings.Contains(l, f) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkStatement refuses anything but a single, non-privileged statement.
 func checkStatement(q string) error {
 	kw, rest, ok := firstKeyword(q)
@@ -39,7 +56,7 @@ func checkStatement(q string) error {
 	if hasSecondStatement(rest) {
 		return ErrStatementRefused
 	}
-	if strings.Contains(strings.ToLower(q), "_ut_migrations") {
+	if strings.Contains(strings.ToLower(q), "_ut_migrations") || hasRefusedFragment(q) {
 		return ErrStatementRefused
 	}
 	return nil
@@ -53,7 +70,7 @@ func checkStatement(q string) error {
 // body does not end the statement; the body ends at the END that is not
 // closing a CASE.
 func splitMigration(q string) ([]string, error) {
-	if strings.Contains(strings.ToLower(q), "_ut_migrations") {
+	if strings.Contains(strings.ToLower(q), "_ut_migrations") || hasRefusedFragment(q) {
 		return nil, ErrStatementRefused
 	}
 	var out []string
