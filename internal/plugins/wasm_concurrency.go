@@ -44,7 +44,10 @@ func isSalePathEvent(eventType string) bool {
 	// plugin.records.received.ask (ut-docs#3697) is a record delivery from
 	// the replica sync loop, never part of a sale: it must not take the
 	// reserved slot a tax.rate.ask needs.
-	if strings.HasPrefix(eventType, "ui.") || eventType == RecordsReceivedEvent || isExportClassEvent(eventType) || isImportClassEvent(eventType) {
+	// tips.suggest.* (ut-docs#7108, contracts/tips-suggest.md) is the
+	// reports payout form asking for a suggestion: a back-office ask that is
+	// explicitly non-reserved, so it may never hold the sale-path slot.
+	if strings.HasPrefix(eventType, "ui.") || strings.HasPrefix(eventType, "tips.suggest.") || eventType == RecordsReceivedEvent || isExportClassEvent(eventType) || isImportClassEvent(eventType) {
 		return false
 	}
 	return strings.HasSuffix(eventType, ".ask") ||
