@@ -159,6 +159,9 @@ var demoDeniedRoutes = map[string]bool{
 	// ut-docs#6955: network access of the host machine, not a demo concern.
 	"GET /ui/settings/lan-access":   true,
 	"POST /api/settings/lan-access": true,
+	// ut-docs#2630 offboarding: asks the cloud about the shop's credential;
+	// a demo till has no cloud shop.
+	"POST /api/cloud/heal/check-again": true,
 	// Translate mode (ut-docs#4370, ADR-0160 §7): a manager tool that links
 	// every string into Weblate and writes shop overrides. A public demo
 	// visitor gets neither the mode nor its panel (translateModeAllowed
