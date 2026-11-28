@@ -15,7 +15,7 @@ func TestPOSRepo_SaleLinePluginRef_RoundTrip_7206(t *testing.T) {
 	mustExec(t, d, `INSERT OR IGNORE INTO items (id, sku, name, base_price, is_active) VALUES ('itm-ref', 'SVC', 'Service', 2500, 1)`)
 	if err := repo.InsertSale(ctx, nil, InsertSaleParams{
 		SaleID: "sale-ref", ReceiptNo: "000000778", SaleType: "sale", Currency: "GBP",
-		Subtotal: 7500, Total: 7500, CreatedAt: "2026-11-28T09:00:00Z", TenderType: "cash", SyncStatus: "synced",
+		Subtotal: 7500, Total: 7500, CreatedAt: "2026-11-28T09:00:00Z", TenderType: "cash", SyncStatus: "synced", // fixed-date:ok stored and read back only, never compared to the clock
 	}); err != nil {
 		t.Fatalf("InsertSale: %v", err)
 	}
