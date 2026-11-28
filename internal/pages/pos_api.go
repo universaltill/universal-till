@@ -1670,6 +1670,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if sellable := sellableVariants(variants); len(sellable) > 0 {
+				if _, viaPlugin := scanRefFrom(r.Context()); viaPlugin {
+					// A plugin's line cannot open the variant picker: it
+					// names one SKU and the operator picks nothing here.
+					b := d.Engine.Basket()
+					b.ToastMessage = httpx.T(locale, "pos.toast.plugin_line_needs_choice")
+					b.ToastLevel = "error"
+					render(&b)
+					return
+				}
 				groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), base.ItemID)
 				if err != nil {
 					// Same fail-closed reasoning as above — checked BEFORE
@@ -1691,8 +1700,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			d.Engine.MarkNoSellableVariants(base.ItemID)
 		}
 
+		// ut-docs#7206: a plugin overlay pick adds its own NEW line, stamped
+		// with its ref and never merged (pos.ScanRefLine), through the very
+		// same scan rules; every other scan adds as ever.
+		refIntent, hasRef := scanRefFrom(r.Context())
+		addItem := func() (*pos.Basket, bool) {
+			if hasRef {
+				return d.Engine.ScanRefLine(code, in.Qty, refIntent.PluginID, refIntent.Ref)
+			}
+			b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty)
+			return b, found
+		}
 		if itemAllowed && (d.Engine.HasScanCache(code) || d.Engine.HasLine(code)) {
-			b, _, _ := d.Engine.ScanQtyWithResult(code, in.Qty)
+			b, _ := addItem()
 			render(b)
 			return
 		}
@@ -1787,7 +1807,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		// Fast path: resolve item before any DB lookups to keep scan latency low.
 		if itemAllowed {
-			if b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty); found {
+			if b, found := addItem(); found {
 				render(b)
 				return
 			}
@@ -1877,6 +1897,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// handler (ADR-0121 R2a, ut-docs#4006).
 	mux.HandleFunc("POST /api/pos/identify/plugin/pick", func(w http.ResponseWriter, r *http.Request) {
 		servePluginIdentifyPick(w, r, d, scan)
+	})
+	// A sell-screen overlay view's basket suggestion (ADR-0121 amendment
+	// 2026-11-28, ut-docs#7206).
+	mux.HandleFunc("POST /api/pos/plugin-view/pick", func(w http.ResponseWriter, r *http.Request) {
+		servePluginViewPick(w, r, d, scan)
 	})
 
 	// Remove a line. Prefers the line-specific key (ADR-0020 — safe once an
@@ -3029,6 +3054,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// ADR-0073: the line's own mode — the context taxBP above was
 				// resolved for — persisted alongside it.
 				OrderType: l.OrderType,
+				// ut-docs#7206: the page plugin's opaque per-line ref.
+				PluginRef:   l.PluginRef,
+				PluginRefBy: l.PluginRefBy,
 			})
 		}
 		blockedLines = append(blockedLines, gvTaxBlocked...)
@@ -4478,6 +4506,8 @@ func saleCompletedEventFor(detail data.SaleDetail) plugins.SaleCompletedEvent {
 			TaxCents:       l.TaxAmount,
 			TotalCents:     l.LineTotal,
 			OrderType:      l.OrderType,
+			Ref:            l.PluginRef,
+			RefPlugin:      l.PluginRefBy,
 		})
 	}
 	for i, p := range detail.Payments {

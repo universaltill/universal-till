@@ -78,6 +78,9 @@ type Context struct {
 	// is a plugin page or slot. In a seam only text, notice and
 	// suggestions are allowed, and never a redirect or job answer.
 	Seam Seam
+	// ViewSales: the answering plugin holds view:sales (ut-docs#7206); the
+	// sell.overlay seam refuses suggestions without it.
+	ViewSales bool
 }
 
 // ValidFieldName reports whether s is a valid form field name (a file

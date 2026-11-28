@@ -336,6 +336,11 @@ type SaleLineInput struct {
 	// RefundLineKey pool, which is only exact when every line sharing a
 	// key applies the same discount rate.
 	RefundOfLineID string
+	// PluginRef / PluginRefBy (ut-docs#7206): the opaque per-line ref a page
+	// plugin attached from the sell-screen overlay and that plugin's id, "" for
+	// an ordinary line. Stored on the sale line and echoed on sale.completed.
+	PluginRef   string
+	PluginRefBy string
 }
 
 // json tags (independent review, ut-docs#543): PaymentInput is never
@@ -1290,6 +1295,8 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TotalAfterTax:  totalAfterTax.Minor(),
 					OrderType:      l.OrderType,
 					RefundOfLineID: l.RefundOfLineID,
+					PluginRef:      l.PluginRef,
+					PluginRefBy:    l.PluginRefBy,
 				})
 
 				for _, m := range l.Modifiers {

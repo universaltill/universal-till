@@ -5666,6 +5666,10 @@ type SaleLineRow struct {
 	// RefundOfLineID (ut-docs#1560): for a return line, the original
 	// sale_lines.id it was refunded against; "" for an original line.
 	RefundOfLineID string
+	// PluginRef / PluginRefBy (ut-docs#7206): the opaque per-line ref a page
+	// plugin attached from the sell-screen overlay and that plugin's id;
+	// both "" for an ordinary line (stored NULL).
+	PluginRef, PluginRefBy string
 }
 
 // InsertSaleLinesBatch writes many sale_lines rows via chunked multi-row
@@ -5674,7 +5678,7 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 17
+	const cols = 19
 	exec := r.exec(tx)
 	chunk := batchChunkSize(cols)
 	for start := 0; start < len(rows); start += chunk {
@@ -5686,14 +5690,14 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 		placeholders := make([]string, 0, len(part))
 		args := make([]any, 0, len(part)*cols)
 		for _, row := range part {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args, row.ID, row.SaleID, row.LineNo, nullIfEmpty(row.ItemID), nullIfEmpty(row.VariantID),
 				row.Name, row.SKU, row.Barcode, row.Qty, row.UnitPrice, row.LineDiscount,
 				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType,
-				nullIfEmpty(row.RefundOfLineID))
+				nullIfEmpty(row.RefundOfLineID), nullIfEmpty(row.PluginRef), nullIfEmpty(row.PluginRefBy))
 		}
 		if _, err := exec.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id)
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id, plugin_ref, plugin_ref_by)
 VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
 			return fmt.Errorf("insert sale lines batch: %w", err)
 		}
@@ -8050,6 +8054,12 @@ type SaleDetailLine struct {
 	// treats an absent line value under a "takeaway" header as takeaway
 	// (the only meaning it could have had on that peer).
 	OrderType string `json:"order_type,omitempty"`
+	// PluginRef / PluginRefBy (ut-docs#7206): the opaque ref a page plugin set
+	// on this line from the sell-screen overlay, and its plugin id. Never on
+	// the sync wire (json:"-"): v1 stores and echoes it on the till that
+	// completes the sale only.
+	PluginRef   string `json:"-"`
+	PluginRefBy string `json:"-"`
 }
 
 type SaleDetailPayment struct {
@@ -8154,7 +8164,8 @@ WHERE s.receipt_no = ?`, receiptNo).Scan(
 	lineRows, err := r.db.QueryContext(ctx, `
 SELECT id, name_snapshot, COALESCE(sku_snapshot, ''), COALESCE(item_id, ''),
        COALESCE(variant_id, ''), COALESCE(tax_rate_bp, 0), quantity, unit_price,
-       line_discount, tax_amount, total_after_tax, COALESCE(order_type, '')
+       line_discount, tax_amount, total_after_tax, COALESCE(order_type, ''),
+       COALESCE(plugin_ref, ''), COALESCE(plugin_ref_by, '')
 FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale lines: %w", err)
@@ -8163,7 +8174,7 @@ FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	for lineRows.Next() {
 		var id string
 		var l SaleDetailLine
-		if err := lineRows.Scan(&id, &l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal, &l.OrderType); err != nil {
+		if err := lineRows.Scan(&id, &l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal, &l.OrderType, &l.PluginRef, &l.PluginRefBy); err != nil {
 			lineRows.Close()
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}

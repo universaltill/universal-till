@@ -254,6 +254,13 @@ type SaleLineItem struct {
 	// OrderType (ut-docs#1181, ADR-0073): this line's own mode, "" (dine-in,
 	// omitted) or "takeaway" — never "mixed". Additive.
 	OrderType string `json:"order_type,omitempty"`
+	// Ref / RefPlugin (ut-docs#7206, ADR-0121 amendment 2026-11-28): the
+	// opaque per-line ref a page plugin attached when it added this line to
+	// the basket from the sell-screen overlay, and that plugin's id. Additive;
+	// both omitted when the line carries none. A ref is an id, never personal
+	// data; a plugin matches only the refs whose RefPlugin is its own.
+	Ref       string `json:"ref,omitempty"`
+	RefPlugin string `json:"ref_plugin,omitempty"`
 }
 
 // SalePayment is one tender applied to a sale (ERP contract).

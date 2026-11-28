@@ -2041,6 +2041,7 @@
   "pos.toast.fiscal_tse_failing": "Sale not completed: the shop's fiscal-signing device is currently reported as failing, so the till will not record this sale. An owner (admin) can grant a temporary, time-limited override, or try again once the device is working.",
   "pos.toast.insufficient_stock": "Not enough stock to complete this sale",
   "pos.toast.item_not_found": "Item not found",
+  "pos.toast.plugin_line_needs_choice": "This item needs a size or option. Pick it on the sell screen instead.",
   "pos.toast.payment_outcome_unknown": "The card may have been charged. Tap Pay again to settle it. Do not take another payment.",
   "pos.toast.payment_journal_unavailable": "This till could not record the card payment safely, so it was not taken. Nothing was charged. Try again, or use another method.",
   "pos.toast.payment_cancelled": "Card payment cancelled. Nothing was charged. The sale is still open.",
