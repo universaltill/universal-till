@@ -247,18 +247,6 @@ func (s *Store) raiseSync(ctx context.Context) error {
 	return nil
 }
 
-// Synchronous reports the connection's PRAGMA synchronous (1 NORMAL, 2 FULL).
-func (s *Store) Synchronous(ctx context.Context) (int, error) {
-	release, err := s.acquire(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer release()
-	var v int
-	err = s.conn.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&v)
-	return v, err
-}
-
 // openStore opens (and optionally migrates) dir/plugin.db. dir must already be
 // a vetted real directory (Manager.safeDir).
 func openStore(ctx context.Context, id, dir string, o Options, now time.Time) (*Store, error) {

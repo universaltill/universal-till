@@ -1,6 +1,9 @@
 package plugindb
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // ut-docs#7230 (R9): keep_years > 0 implies synchronous=FULL (2); every other
 // plugin stays NORMAL (1).
@@ -74,4 +77,16 @@ func TestOpenStoreIsRaisedToFullWhenRetentionAppears_7230(t *testing.T) {
 	if got := syncOf(t, s); got != 2 {
 		t.Fatalf("a retention store must never be lowered while open: %d", got)
 	}
+}
+
+// Synchronous (test-only: the deadcode guard rejects an unused production method) reports the connection's PRAGMA synchronous (1 NORMAL, 2 FULL).
+func (s *Store) Synchronous(ctx context.Context) (int, error) {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	var v int
+	err = s.conn.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&v)
+	return v, err
 }
