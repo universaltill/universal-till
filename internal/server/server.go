@@ -486,7 +486,8 @@ func diskLowOpen(now time.Time) bool {
 // runHousekeeping runs the daily device clean-up when due — or at once,
 // with each kind pruned to its minimum, when free space is below the
 // low-disk floor (ut-docs#3121) — then caps the backups' share of the free
-// space and reports a disk still below the floor. Called hourly by the
+// space, sweeps the plugin-records outbox and reports a disk still below
+// the floor. Called hourly by the
 // background loop. Failures are logged and skipped; nothing here blocks
 // selling.
 func runHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now time.Time) {
@@ -499,6 +500,10 @@ func runHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now ti
 	if s.Due(now) || low {
 		sweepHousekeeping(s, db, dbPath, now, low, usage)
 	}
+	// Plugin-records outbox sweep + Problems refresh, hourly on every till
+	// whatever its role (ut-docs#3697 review M2): the replica push step
+	// only runs while sync.primary_url is set.
+	plugins.RecordsHousekeeping(context.Background(), db, now)
 	if probeErr != nil {
 		// Unknown free space: never cap or warn on a guess, and don't
 		// keep claiming a low disk nobody can measure any more.

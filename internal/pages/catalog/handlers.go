@@ -867,8 +867,18 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// internal/pages/*.go glob, so this handler (one directory deeper,
 		// internal/pages/catalog/) was never reached. Reuses nav.catalog,
 		// the /items rail's own label key for this same destination.
+		// ut-docs#7203: the panel heading follows the shop type's relabel of
+		// this rail section (service: "Services"), like the rail itself.
+		headingKey := "nav.catalog"
+		for _, sec := range itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()) {
+			if sec.Href == "/catalog" {
+				headingKey = sec.NameKey
+				break
+			}
+		}
 		data := map[string]any{
-			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
+			"title":                 httpx.T(httpx.RequestLocale(r), headingKey),
+			"HeadingKey":            headingKey,
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.ResolvedTheme(r),
 			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, icons, currentPrices, updatedAts),
