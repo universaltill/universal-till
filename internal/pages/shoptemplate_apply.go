@@ -70,3 +70,22 @@ func applyShopTemplate(ctx context.Context, d *common.Deps, shopType string) {
 		httpx.InitOrderTypePromptMode(v)
 	}
 }
+
+// seedJoinedTillTemplate seeds the per-till template keys (the theme) of a
+// till that joined a main till after setup (ADR-0190, ADR-0171 §4). The join
+// replaces this till's database with the main till's snapshot at restart, so
+// the first-run wizard's applyShopTemplate never ran here; the shop type
+// arrives with the snapshot or a later admin pull. Main/single tills do
+// nothing (the wizard or the type-change flow owns their seeding), and
+// applyShopTemplate sends a satellite only to ApplyPerTill, which is
+// once-per-till (marker) and never writes a shop-wide key or the ledger.
+func seedJoinedTillTemplate(ctx context.Context, d *common.Deps) {
+	if d == nil || d.Settings == nil || !tillFollowsMain(ctx, d) {
+		return
+	}
+	shopType, _, err := d.Settings.Get(ctx, common.KeyShopType)
+	if err != nil || shopType == "" {
+		return
+	}
+	applyShopTemplate(ctx, d, shopType)
+}

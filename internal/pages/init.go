@@ -418,6 +418,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// amendments for the shop's type (a plugin reload already does).
 	// Never without the templates: a failed template load must not also take
 	// the salon layout away from a service shop (nothing would replay it).
+	// A till that joined a main till after setup seeds its own per-till
+	// template keys (theme); the wizard never ran on it (ut-docs#6347).
+	seedJoinedTillTemplate(ctx, dp)
 	if shopTemplates != nil && removeRetiredLayoutPlugins(ctx, db, dp.Settings) {
 		if err := dp.ReloadPlugins(ctx); err != nil {
 			log.Warnf("boot: could not reload plugins after removing the retired layout plugin: %v", err)
