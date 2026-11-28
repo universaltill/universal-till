@@ -75,16 +75,26 @@ func requireOnePromotedInfo(t *testing.T, logs *bytes.Buffer) {
 	}
 }
 
+// relinkEvery runs ContactFailed as relink does and fails the test if any
+// call relinks or warns: the first call already warns and browses (the
+// fixture's last contact is old), so checking only the last outcome would
+// miss a promoted till that still raised "main till unreachable".
+func relinkEvery(t *testing.T, f *watchFixture) {
+	t.Helper()
+	for i := 0; i < UnreachableThreshold; i++ {
+		if out := f.w.ContactFailed(context.Background()); out.Relinked || out.Warn {
+			t.Errorf("ContactFailed #%d = %+v; a promoted till must neither relink nor warn", i+1, out)
+		}
+	}
+}
+
 func TestPrimaryWatch_PromotedDuringRediscoverProofStaysPromoted_7209(t *testing.T) {
 	logs := captureLogs(t)
 	p := newFakePrimary(t, testPrimaryID, testBearerHash())
 	f := newWatchFixture(t, Candidate{TillID: testPrimaryID, BaseURL: p.srv.URL})
 	p.beforeReply = promoteHook(t, f)
 
-	out := relink(t, f)
-	if out.Relinked || out.Warn {
-		t.Errorf("outcome %+v; a promoted till must neither relink nor warn", out)
-	}
+	relinkEvery(t, f)
 	requireAbsent(t, f, "sync.primary_url", PrimaryTillIDSettingKey, PrimaryCertPinSettingKey, PrimaryCertNextPinSettingKey)
 	requireNotReplica(t, f)
 	requireOnePromotedInfo(t, logs)
@@ -105,10 +115,7 @@ func TestPrimaryWatch_PromotedDuringPinnedRediscoverWritesNoPin_7209(t *testing.
 	}
 	p.beforeReply = promoteHook(t, f)
 
-	out := relink(t, f)
-	if out.Relinked || out.Warn {
-		t.Errorf("outcome %+v; want neither relink nor warn", out)
-	}
+	relinkEvery(t, f)
 	requireAbsent(t, f, "sync.primary_url", PrimaryTillIDSettingKey, PrimaryCertPinSettingKey, PrimaryCertNextPinSettingKey)
 	requireNotReplica(t, f)
 	requireOnePromotedInfo(t, logs)
