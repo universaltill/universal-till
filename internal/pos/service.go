@@ -889,7 +889,7 @@ func (s *Service) ScanRefLine(code string, qty float64, pluginID, ref string) (*
 	}
 	if !ok || line.IsGiftVoucherItem() {
 		s.recomputeTotals()
-		return &s.basket, false
+		return s.basketCopyLocked(), false
 	}
 	if !line.QtyFromCode {
 		line.Qty = qty
@@ -899,7 +899,7 @@ func (s *Service) ScanRefLine(code string, qty float64, pluginID, ref string) (*
 	line.NoMerge = true
 	line.PluginRef, line.PluginRefBy = ref, pluginID
 	s.mergeResolved(line)
-	return &s.basket, true
+	return s.basketCopyLocked(), true
 }
 
 // AddLineWithModifiers adds a resolved base line to the basket with chosen
