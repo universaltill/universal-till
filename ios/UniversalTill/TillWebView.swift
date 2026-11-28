@@ -47,8 +47,24 @@ struct TillWebView: UIViewRepresentable {
         }
         #endif
         context.coordinator.loadedToken = reloadToken
-        webView.load(URLRequest(url: baseURL))
+        webView.load(URLRequest(url: Self.startURL(baseURL)))
         return webView
+    }
+
+    /// Store-screenshot capture (ut-docs#6404): `simctl launch ... -UTStartPath
+    /// /categories` opens that page instead of the start page, because simctl
+    /// cannot tap. Compiled only into Debug builds for the simulator: no
+    /// Release, TestFlight or device build can take a start path.
+    static func startURL(_ base: URL) -> URL {
+        #if DEBUG && targetEnvironment(simulator)
+        if let path = UserDefaults.standard.string(forKey: "UTStartPath"),
+           path.hasPrefix("/"), !path.hasPrefix("//"),
+           let url = URL(string: path, relativeTo: base)?.absoluteURL,
+           url.scheme == base.scheme, url.host == base.host, url.port == base.port {
+            return url
+        }
+        #endif
+        return base
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
