@@ -141,6 +141,10 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		// marker are its own sequences' state, not the replica's.
 		execErr = deleteSettingsPrefixes(cdb, []string{"restore."})
 	}
+	if execErr == nil {
+		// ut-docs#6347: nor the main till's look (theme and its seeded marker).
+		execErr = DeletePerTillLook(cdb)
+	}
 	if closeErr := cdb.Close(); execErr == nil {
 		execErr = closeErr
 	}
@@ -185,6 +189,26 @@ func DeleteTillCloudIdentity(exec interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }) error {
 	return deleteSettingsPrefixes(exec, TillCloudIdentityPrefixes)
+}
+
+// PerTillLookKeys are this till's own look: its UI theme (ut-docs#2783, never
+// synced) and the marker that a template seeded it (shoptemplate.ThemeSeededKey,
+// pinned by TestPerTillLookKeysMatchShopTemplate). A joining till must not
+// inherit the main till's, so its own template seed sees an unset theme
+// (ut-docs#6347): dropped from the join snapshot copy and, as defence at the
+// sink, from the replica's restored DB (ApplyReplicaIdentity). Exact keys.
+var PerTillLookKeys = []string{"theme", "template.theme_seeded"}
+
+// DeletePerTillLook removes the PerTillLookKeys rows behind exec.
+func DeletePerTillLook(exec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}) error {
+	for _, k := range PerTillLookKeys {
+		if _, err := exec.Exec(`DELETE FROM settings WHERE key = ?`, k); err != nil {
+			return fmt.Errorf("delete %s setting: %w", k, err)
+		}
+	}
+	return nil
 }
 
 // deleteSettingsPrefixes removes every settings row whose key starts with
