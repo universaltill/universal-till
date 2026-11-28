@@ -812,6 +812,14 @@ body.menu-screen .session-admin-link { display: none; }
   grid-column: 1 / -1; margin: .4rem 0 -.5rem; font-size: 1rem; font-weight: 600;
   color: var(--muted); text-align: start;
 }
+/* ADR-0190: one quiet line under the grid when the shop-type template tucks
+   tiles away; the link is its own 44px touch target and wraps under the text
+   on a narrow screen (logical properties only). */
+.menu-tucked {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
+  margin-block: 1rem 0; text-align: start;
+}
+.menu-tucked-link { min-block-size: 44px; display: inline-flex; align-items: center; }
 .menu-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .7rem; min-height: 160px; padding: 1.4rem;
@@ -6528,6 +6536,20 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 .settings-cat-title:focus { outline: none; }
 .settings-cat-title:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .settings-home-link:hover, .settings-home-link:focus-visible { background: var(--surface-2); }
+/* ut-docs#6332: shop-type template labels (text, never colour alone). */
+.settings-card-tag { margin: 0 0 .25rem; font-size: .8rem; color: var(--muted); }
+.settings-card-tag-recommended { font-weight: 600; }
+.settings-more-intro, .settings-more-hint { padding-inline: .6rem; font-size: .9rem; line-height: 1.35; }
+.settings-more-hint[hidden], .settings-more-intro[hidden] { display: none; }
+.settings-more-hint-link { display: inline-flex; align-items: center; min-block-size: 44px; }
+.settings-hit-chip { display: inline-block; margin-block-start: .2rem; padding: .05rem .5rem;
+                     border: 1px solid var(--border, currentColor); border-radius: 999px;
+                     font-size: .75rem; color: var(--muted); }
+.settings-home-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+                        gap: .4rem 1rem; margin-block-start: 1rem; padding-inline: .2rem; }
+.settings-home-footer p { margin: 0; }
+.settings-footer-change { display: inline-flex; align-items: center; min-block-size: 44px;
+                          padding-inline: .6rem; font-weight: 600; }
 .settings-cat-title { margin: .2rem 0 .6rem; padding-inline: .6rem; font-size: 1.15rem; text-align: start; }
 @media (max-width: 56.25rem) {
   .settings-shell { grid-template-columns: 1fr; }
@@ -8653,3 +8675,57 @@ input[data-scanned] { direction: ltr; text-overflow: ellipsis; }
 .refund-leg:has(input:disabled) { cursor: not-allowed; opacity: .6; }
 /* The sticky status bar must not cover a refusal scrolled into view (1024x600, 360). */
 #refund-msg { scroll-margin-block: 5rem; }
+
+/* ut-docs#6332 S7: shop-type tiles (shared by the setup wizard and the
+   Settings pick step), the type-change preview and the undo banner. Logical
+   properties only; every target is >= 44px at base styles (the windowed till
+   gets no kiosk class). */
+.shop-type-tiles { grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: .75rem; }
+.shop-type-tile {
+  position: relative; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: .25rem;
+  min-block-size: 4.5rem; padding-block: .7rem; padding-inline: .8rem; padding-inline-end: 2.4rem;
+  text-align: start; border-width: 1px; min-inline-size: 0; overflow-wrap: anywhere;
+}
+.shop-type-tile[aria-checked="true"] { border-width: 3px; }
+.shop-type-tile[aria-disabled="true"] { cursor: default; opacity: .75; }
+.shop-type-tile-label { font-weight: 700; }
+.shop-type-tile-sum { font-weight: 400; font-size: .85rem; }
+.shop-type-tile-tag { font-size: .8rem; border: 1px solid var(--control-border); border-radius: 999px; padding-block: .05rem; padding-inline: .5rem; }
+.shop-type-tile-check { display: none; position: absolute; inset-block-start: .6rem; inset-inline-end: .6rem; color: var(--accent); }
+.shop-type-tile[aria-checked="true"] .shop-type-tile-check { display: inline-flex; }
+.shop-type-bar {
+  display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; align-items: center;
+  position: sticky; inset-block-end: 0; padding-block: .6rem; padding-inline: 0; background: var(--surface);
+  padding-block-end: max(.6rem, env(safe-area-inset-bottom));
+}
+.shop-type-bar .btn { min-block-size: 2.75rem; min-inline-size: 2.75rem; }
+.shop-type-preview-body { max-block-size: min(60vh, 20rem); overflow-y: auto; padding-inline-end: .25rem; }
+.shop-type-preview-body h3:focus { outline: none; }
+.shop-type-list { margin-block: .25rem .75rem; padding-inline-start: 1.25rem; overflow-wrap: anywhere; }
+.shop-type-values { border: 0; padding: 0; margin-block: .5rem; min-inline-size: 0; }
+.shop-type-value { display: flex; align-items: flex-start; gap: .6rem; min-block-size: 2.75rem; padding-block: .35rem; overflow-wrap: anywhere; }
+.shop-type-value input { inline-size: 1.4rem; block-size: 1.4rem; flex: none; }
+.shop-type-more summary { min-block-size: 2.75rem; display: flex; align-items: center; cursor: pointer; }
+.shop-type-undo {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin-block-end: .75rem;
+  padding-block: .5rem; padding-inline: .8rem; border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--surface-2);
+}
+.shop-type-undo-text { flex: 1 1 14rem; min-inline-size: 0; overflow-wrap: anywhere; }
+.shop-type-undo-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.shop-type-undo-actions .btn { min-block-size: 2.75rem; }
+.shop-type-undo-msg { flex-basis: 100%; }
+.shop-type-undone { margin-block-end: .75rem; }
+.template-offer {
+  margin-block-end: .75rem; padding-block: .75rem; padding-inline: 1rem;
+  border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--surface-2);
+}
+.template-offer h2 { margin-block: 0 .35rem; font-size: 1.05rem; }
+.template-offer p { margin-block: 0 .5rem; }
+.template-offer-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.template-offer-actions .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; gap: .25rem; }
+@media (max-width: 480px) {
+  .shop-type-bar { flex-direction: column-reverse; align-items: stretch; }
+  .shop-type-undo-actions { inline-size: 100%; }
+  .template-offer-actions { flex-direction: column; }
+  .template-offer-actions .btn { inline-size: 100%; justify-content: center; }
+}

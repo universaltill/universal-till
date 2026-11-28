@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "id": "service",
+  "version": 1,
+  "shop_types": [
+    "service"
+  ],
+  "label_key": "setup.shop_type.service",
+  "summary_key": "shoptemplate.service.summary",
+  "seed": [
+    {
+      "key": "sale.order_type_prompt",
+      "value": "off"
+    }
+  ],
+  "settings": {
+    "settings-kiosk": "advanced",
+    "settings-order-no": "advanced",
+    "settings-order-type-prompt": "advanced",
+    "settings-sell-screen": "advanced",
+    "settings-stock-tracking": "advanced",
+    "settings-about": "advanced",
+    "settings-notices": "advanced"
+  },
+  "settings_layout": {
+    "settings-theme": {
+      "order": 50
+    },
+    "settings-printer": {
+      "group": "layout.salon.settings_group"
+    },
+    "settings-tills-this": {
+      "group": "layout.salon.settings_group"
+    }
+  },
+  "menu": {
+    "/tables": "advanced",
+    "/kitchen-stations": "advanced",
+    "/bluetooth-devices": "advanced",
+    "/items": {
+      "label_key": "layout.salon.services",
+      "icon": "scissors",
+      "order": 50
+    }
+  },
+  "items": {
+    "/catalog": {
+      "label_key": "layout.salon.services",
+      "order": 50
+    }
+  },
+  "rail": {
+    "/orders": {
+      "order": 250
+    }
+  },
+  "legacy_layout": {
+    "menu": [
+      {
+        "key": "/tables",
+        "hide": true
+      },
+      {
+        "key": "/kitchen-stations",
+        "hide": true
+      },
+      {
+        "key": "/items",
+        "label_key": "layout.salon.services",
+        "icon": "scissors",
+        "order": 50
+      }
+    ],
+    "items": [
+      {
+        "key": "/catalog",
+        "label_key": "layout.salon.services",
+        "order": 50
+      }
+    ],
+    "rail": [
+      {
+        "key": "/orders",
+        "order": 250
+      }
+    ],
+    "settings": [
+      {
+        "key": "settings-theme",
+        "order": 50
+      },
+      {
+        "key": "settings-printer",
+        "group": "layout.salon.settings_group"
+      },
+      {
+        "key": "settings-tills-this",
+        "group": "layout.salon.settings_group"
+      }
+    ]
+  }
+}

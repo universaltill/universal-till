@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "cafe",
+  "version": 1,
+  "shop_types": [
+    "cafe"
+  ],
+  "label_key": "setup.shop_type.cafe",
+  "summary_key": "shoptemplate.cafe.summary",
+  "settings": {
+    "settings-kiosk": "advanced",
+    "settings-order-no": "essential",
+    "settings-order-type-prompt": "essential",
+    "settings-printer": "essential",
+    "settings-invoice": "advanced",
+    "settings-about": "advanced",
+    "settings-notices": "advanced"
+  },
+  "menu": {
+    "/tables": "advanced",
+    "/kitchen-stations": "advanced",
+    "/bluetooth-devices": "advanced",
+    "/vouchers": "advanced"
+  }
+}

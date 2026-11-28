@@ -127,3 +127,31 @@ func TestSavePluginSettingsBatch_SealFailureWritesNothing(t *testing.T) {
 		t.Fatalf("unsealable secret left %d rows", n)
 	}
 }
+
+// The checked save runs its guard inside the transaction: a guard error
+// aborts with nothing written and comes back unchanged; a passing guard saves.
+func TestSavePluginSettingsBatchChecked_GuardAbortsInsideTx(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+	writes := []PluginSettingWrite{{Key: "limit", Scope: "global", ValueJSON: `7`, Meta: &PluginSettingMeta{Ver: 2, Origin: PluginSettingOriginCloud}}}
+	errRefuse := context.Canceled
+	if _, err := repo.SavePluginSettingsBatchChecked(ctx, "com.example.pay", writes,
+		func(func(string) (int64, error)) error { return errRefuse }); err != errRefuse {
+		t.Fatalf("guard error = %v, want it returned unchanged", err)
+	}
+	if _, _, found, _ := repo.PluginSettingVer(ctx, "com.example.pay", "limit"); found {
+		t.Fatal("a refused guard must write nothing")
+	}
+	var seen int64 = -1
+	if _, err := repo.SavePluginSettingsBatchChecked(ctx, "com.example.pay", writes,
+		func(local func(string) (int64, error)) error { var e error; seen, e = local("limit"); return e }); err != nil {
+		t.Fatal(err)
+	}
+	if seen != 0 {
+		t.Errorf("guard saw ver %d for an absent row, want 0", seen)
+	}
+	if ver, _, found, _ := repo.PluginSettingVer(ctx, "com.example.pay", "limit"); !found || ver != 2 {
+		t.Errorf("after a passing guard ver=%d found=%v, want 2 true", ver, found)
+	}
+	_ = d
+}

@@ -84,3 +84,54 @@ func TestPluginSettingsReportHasOneCaller(t *testing.T) {
 		t.Fatalf("plugin_settings report importers = %v, want only internal/pages/cloudsync_wire.go (ADR-0214)", importers)
 	}
 }
+
+// TestPluginSettingsWritersAreNamed (design B 4.3): every plugin setting now
+// carries a per-field version that the cloud's conflict rule trusts, so a
+// write path must not appear unnoticed. Only these files call a
+// plugin-settings writer: the repository itself, the settings page (the
+// operator's own edit, bumps ver/origin till), the cloud directive wiring
+// (pluginsecretapply, stores the cloud's ver), the tax-takeaway import merge
+// and the WASM secret_set host function (both till-side edits, bump ver).
+// A new writer must be added here deliberately, with its versioning decided.
+// (The LAN replica applies primary rows with raw SQL inside internal/data and
+// never originates a value: it keeps the primary's ver and origin.)
+func TestPluginSettingsWritersAreNamed(t *testing.T) {
+	allowed := map[string]bool{
+		"internal/data/plugin_repo.go":           true,
+		"internal/pages/plugin_settings_page.go": true,
+		"internal/pages/cloud_plugin_secret.go":  true,
+		"internal/pages/import_page.go":          true,
+		"internal/plugins/wasm_secret_set.go":    true,
+	}
+	callers := []string{".SavePluginSettingsBatch(", ".UpsertPluginSetting(", ".UpsertPluginSettingScoped(", ".MergeAdditiveJSONMapSetting("}
+	root := filepath.Join("..", "..")
+	var found []string
+	err := filepath.Walk(filepath.Join(root, "internal"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		for _, c := range callers {
+			if strings.Contains(string(src), c) {
+				rel, _ := filepath.Rel(root, path)
+				found = append(found, filepath.ToSlash(rel))
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 {
+		t.Fatal("no writer found: the guard is looking in the wrong place")
+	}
+	for _, f := range found {
+		if !allowed[f] {
+			t.Errorf("%s writes plugin settings but is not a named writer (design B 4.3): decide its ver/origin handling and add it to this test", f)
+		}
+	}
+}

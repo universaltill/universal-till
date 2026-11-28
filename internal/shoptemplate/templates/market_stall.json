@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "market_stall",
+  "version": 1,
+  "shop_types": [
+    "market_stall"
+  ],
+  "label_key": "setup.shop_type.market_stall",
+  "summary_key": "shoptemplate.market_stall.summary",
+  "settings": {
+    "settings-kiosk": "advanced",
+    "settings-order-no": "advanced",
+    "settings-order-type-prompt": "advanced",
+    "settings-sell-screen": "advanced",
+    "settings-stock-tracking": "essential",
+    "settings-printer": "advanced",
+    "settings-tills-this": "advanced",
+    "settings-tills-others": "advanced",
+    "settings-tills-old": "advanced",
+    "settings-tills-add": "advanced",
+    "settings-tills-readers": "advanced",
+    "settings-invoice": "advanced",
+    "settings-idle-lock": "advanced",
+    "settings-staff-links": "advanced",
+    "settings-staff-languages": "advanced",
+    "settings-about": "advanced",
+    "settings-notices": "advanced"
+  },
+  "menu": {
+    "/tables": "advanced",
+    "/kitchen-stations": "advanced",
+    "/bluetooth-devices": "advanced",
+    "/open-orders": "advanced",
+    "/vouchers": "advanced",
+    "/locations": "advanced",
+    "/registers": "advanced"
+  }
+}

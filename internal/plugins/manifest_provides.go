@@ -23,8 +23,12 @@ const (
 	CapabilityFiscalRegister = "fiscal.register"
 	// CapabilityAI is the AI engine (ADR-0126).
 	CapabilityAI = "ai"
-	// CapabilityLayoutShopTypePrefix + a ShopTypes value names the builtin
-	// layout for that shop type. Embedded-builtin only.
+	// CapabilityLayoutShopTypePrefix + a ShopTypes value named the builtin
+	// layout for that shop type. No build ships or consumes a provider any
+	// more (ADR-0190: shop-type templates replaced the builtin layout
+	// plugin); the value stays in the closed set only because ut-cloud's
+	// pkg/manifest mirrors the set (TestProvidesClosedSetMirrorsPOS) and
+	// retiring it is a coordinated ADR-0129 amendment plus cloud change.
 	CapabilityLayoutShopTypePrefix = "layout.shop_type:"
 )
 

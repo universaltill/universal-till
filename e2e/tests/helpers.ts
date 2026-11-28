@@ -379,7 +379,7 @@ export async function ensureOperator(page: Page) {
     // control, no restore step), and finishing lands on
     // /import?welcome=1.
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
-    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type
+    await step(5).locator('.setup-nav button', { hasText: 'Skip for now' }).click(); // shop type: Next is disabled until a pick (ut-docs#6332), so skip
     await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
     await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
     await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN

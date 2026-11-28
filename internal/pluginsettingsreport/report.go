@@ -46,10 +46,12 @@ const (
 	MaxEntries           = 600
 	// secretLast4MinRunes: a value shorter than this never reports last4.
 	secretLast4MinRunes = 16
-	// InitialVer / OriginTill: until phase 2 adds per-field versioning,
-	// every existing value is version 1 with origin "till".
-	InitialVer = 1
-	OriginTill = "till"
+	// InitialVer / OriginTill: a value nobody versioned (a row from before
+	// per-field versions, or a seeded manifest default) is version 1, origin
+	// "till". OriginCloud: the value the cloud itself pushed.
+	InitialVer  = 1
+	OriginTill  = "till"
+	OriginCloud = "cloud"
 )
 
 // Setting is one reported setting. Value is set for a non-secret value (a
@@ -78,6 +80,13 @@ type Row struct {
 	ValueJSON  string
 	Unreadable bool
 	UpdatedAt  time.Time
+	// Ver/Origin/VerAt: the row's per-field version (data.PluginSettingRow).
+	// Zero Ver reads as InitialVer; Origin other than "cloud" reads as "till"
+	// (a seeded default has no edit to report); a zero VerAt falls back to
+	// UpdatedAt.
+	Ver    int64
+	Origin string
+	VerAt  time.Time
 }
 
 // Plugin is Build's input: the installed manifest's settings and the stored
@@ -126,7 +135,15 @@ func buildSetting(ms plugins.ManifestSetting, row Row, found bool) (Setting, boo
 		return Setting{}, false
 	}
 	s := Setting{Key: ms.Key, Ver: InitialVer, Origin: OriginTill}
-	if found && !row.UpdatedAt.IsZero() {
+	if found && row.Ver > InitialVer {
+		s.Ver = int(row.Ver)
+	}
+	if found && row.Origin == OriginCloud {
+		s.Origin = OriginCloud
+	}
+	if at := row.VerAt; found && !at.IsZero() {
+		s.At = at.UTC().Format(time.RFC3339)
+	} else if found && !row.UpdatedAt.IsZero() {
 		s.At = row.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	decoded, isSet := decode(row)
@@ -241,7 +258,7 @@ func Collect(ctx context.Context, db *sql.DB) ([]PluginEntry, error) {
 		p := Plugin{ID: mp.ID, Version: mp.Version, Settings: m.Settings, Rows: map[string]Row{}}
 		for _, r := range rows {
 			if r.Scope == "global" {
-				p.Rows[r.Key] = Row{ValueJSON: r.ValueJSON, Unreadable: r.Unreadable, UpdatedAt: r.UpdatedAt}
+				p.Rows[r.Key] = Row{ValueJSON: r.ValueJSON, Unreadable: r.Unreadable, UpdatedAt: r.UpdatedAt, Ver: r.Ver, Origin: r.Origin, VerAt: r.VerAt}
 			}
 		}
 		in = append(in, p)

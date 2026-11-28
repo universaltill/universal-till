@@ -2518,7 +2518,6 @@ settings.sell_screen.title
 settings.service_charge.invalid_rate
 settings.service_charge.tr_forbidden
 settings.shop_type.help
-settings.shop_type.service_layout_note
 settings.shop_type.title
 settings.staff_languages.default
 settings.staff_languages.error_default

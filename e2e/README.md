@@ -174,3 +174,12 @@ Rules learned the hard way:
   (already past setup), the test fails against that stale server instead
   of a fresh one — kill it first if this test starts failing for no
   obvious reason (`pkill -f run-till-auth`).
+
+## Temp data dirs are removed on every exit (ut-docs#7177)
+
+Each `run-till*.sh` launcher boots its till from a `mktemp -d` data dir
+(~100 MB: DB, plugins, TLS and a copy of the binary) removed by an `EXIT`
+trap. Serve through `ut_e2e_serve "$BIN"` from `run-till-lib.sh` — never
+`exec "$BIN"`, which drops the trap — and give every `webServer` entry
+`gracefulShutdown: TILL_SHUTDOWN` (`till-webserver.ts`), because Playwright's
+default stop is SIGKILL. `scripts/ci/guard-e2e-till-cleanup.sh` enforces both.

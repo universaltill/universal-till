@@ -47,10 +47,28 @@ type Row struct {
 	// Badge is a short count tag drawn after the label ("" = none). The
 	// page fills it from local or cached data only (never a fetch).
 	Badge string
+	// Tag is "" unless a shop-type template is in effect (ResolveClassed
+	// with a non-nil ClassFunc): TagRecommended for an essential row,
+	// TagTucked for a row the template moved to More settings.
+	Tag string
+	// HomeCat is, for a TagTucked row, the category it belongs to when not
+	// demoted (its "Something missing?" hint goes on that category's page).
+	HomeCat string
 }
 
 // subRows are the core rows drawn as a sub-row of the row before them.
 var subRows = map[string]bool{"settings-tills-old": true}
+
+// Template tags carried by Row.Tag.
+const (
+	TagRecommended = "recommended"
+	TagTucked      = "tucked"
+)
+
+// ClassFunc is the effective visibility class of a settings row: its base
+// class given, the active shop-type template's answer (ADR-0190). A nil
+// ClassFunc means "no template": every row keeps its base class.
+type ClassFunc func(key string, base uislot.Class) uislot.Class
 
 // Category is one resolved tile of the /settings landing grid
 // (ut-docs#3090), already localized for this render.
@@ -99,17 +117,18 @@ var emojiPrefix = map[string]string{
 	"settings-invoice":   "🧾 ",
 }
 
-// Resolve returns the /settings sidebar's rows for one render: uislot.CoreSettings
-// amended by amendments (ADR-0088 Decision C) — the same
-// uislot.Resolve+label-fallback pattern menu_page.go/itemsnav.go use for
-// their own slots, generalized to the Settings slot by ut-docs#1913. With no
-// amendments (the till's normal, zero-plugin state) uislot.Resolve hands
-// CoreSettings straight back (Decision I's zero-allocation fast path).
-//
-// Rows are then gathered by category (ut-docs#3090) with a stable sort, so
-// categories keep their declared order and a plugin's Order amendment
-// reorders rows WITHIN a category.
-func Resolve(locale string, amendments []uislot.Amendment) []Row {
+// ResolveClassed resolves the /settings sidebar rows for one render (see
+// uislot.Resolve and ut-docs#1913, #3090; rows gather by category with a stable
+// sort so a plugin Order amendment reorders WITHIN a category), with a shop-type template's effective classes
+// (ut-docs#6332, ADR-0190). A row whose effective class is advanced (and
+// whose base class is not) gets Cat = advanced: it leaves its category page
+// for More settings. Its Group, and its place in the list, stay those of
+// its normal category, so the More settings view still lists every row
+// under the normal category headings. Rows a layout plugin put into its own
+// group are never demoted (plugin layout wins), nor are fixed-class rows.
+// Rows the template promotes to essential sort first within their category and are tagged. With a nil
+// classOf the result is exactly Resolve's pre-template output.
+func ResolveClassed(locale string, amendments []uislot.Amendment, classOf ClassFunc) []Row {
 	resolved := uislot.Resolve(uislot.CoreSettings, amendments)
 	out := make([]Row, len(resolved))
 	rank := make(map[string]int, len(resolved))
@@ -132,14 +151,30 @@ func Resolve(locale string, amendments []uislot.Amendment) []Row {
 			}
 			idOfGroup[e.Group], groupOfID[cat] = cat, e.Group
 		}
-		rank[e.Key] = r
-		out[i] = Row{
+		rank[e.Key] = 2 * r
+		row := Row{
 			Key:   e.Key,
 			Label: emojiPrefix[e.Key] + rowLabel(locale, e),
 			Group: group,
 			Cat:   cat,
 			Sub:   subRows[e.Key],
 		}
+		if classOf != nil && !strings.HasPrefix(cat, "g-") && !uislot.FixedClassFor(uislot.KindSettings, e.Key) {
+			switch classOf(e.Key, e.Class) {
+			case uislot.ClassEssential:
+				// Only a row the template PROMOTED is "recommended":
+				// rows essential by default (e.g. Theme) stay as today.
+				if e.Class != uislot.ClassEssential {
+					row.Tag = TagRecommended
+					rank[e.Key]-- // before the rest of its category
+				}
+			case uislot.ClassAdvanced:
+				if cat != uislot.SettingsAdvancedCategory {
+					row.Tag, row.HomeCat, row.Cat = TagTucked, cat, uislot.SettingsAdvancedCategory
+				}
+			}
+		}
+		out[i] = row
 	}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Key] < rank[out[j].Key] })
 	return out

@@ -14,7 +14,6 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 )
 
 // ut-docs#2569 (ADR-0060 §6): the subscription chip, the Settings →
@@ -146,12 +145,12 @@ func cardSection(t *testing.T, body, id string) string {
 	// groups of the one Shop and sync card, still carrying their old ids.
 	switch id {
 	case "registration":
-		return between(body, `<div id="registration">`, `id="subscription"`) +
-			between(body, `id="pair-details"`, `<div class="card" id="settings-tills-others"`)
+		return sectionBetween(body, `<div id="registration">`, `id="subscription"`) +
+			sectionBetween(body, `id="pair-details"`, `<div class="card" id="settings-tills-others"`)
 	case "subscription":
-		return between(body, `id="subscription"`, `id="pair-details"`)
+		return sectionBetween(body, `id="subscription"`, `id="pair-details"`)
 	case "settings-tills-shop":
-		return between(body, `<div class="card" id="settings-tills-shop"`, `<div class="card" id="settings-tills-others"`)
+		return sectionBetween(body, `<div class="card" id="settings-tills-shop"`, `<div class="card" id="settings-tills-others"`)
 	}
 	start := strings.Index(body, `<div class="card" id="`+id+`"`)
 	if start == -1 {
@@ -164,9 +163,9 @@ func cardSection(t *testing.T, body, id string) string {
 	return body[start:]
 }
 
-// between returns body from the first start marker up to the next end marker
+// sectionBetween returns body from the first start marker up to the next end marker
 // after it ("" when start is absent).
-func between(body, start, end string) string {
+func sectionBetween(body, start, end string) string {
 	i := strings.Index(body, start)
 	if i == -1 {
 		return ""
@@ -403,7 +402,7 @@ func TestSubscriptionViewPausedOnly(t *testing.T) {
 func TestSettingsSubscriptionCard_NavRowFilteredForNonManager(t *testing.T) {
 	for _, isManager := range []bool{true, false} {
 		shop, old := false, false
-		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true, true, true) {
+		for _, r := range filterSettingsNavForRender(settingsNavPlain("en", nil), isManager, true, true, true, true, true) {
 			switch r.Key {
 			case "settings-tills-shop":
 				shop = true

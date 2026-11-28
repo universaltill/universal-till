@@ -471,7 +471,7 @@ func TestCoreItems_ModifiersIsTopLevel(t *testing.T) {
 // A layout plugin amending the Items slot follows the same schema and
 // refusal shapes ParseMenuAmendments already has for order/label_key — this
 // pins that the generalization (parseSlotAmendments) didn't silently break
-// what the shipped plugins/layout-salon demo actually needs. (The Items
+// what the retired salon layout plugin (now the service template) actually needed. (The Items
 // slot's capability set is deliberately NARROWER than Menu's — see
 // TestParseItemsAmendments_RefusesHideIconGroup below.)
 func TestParseItemsAmendments_RelabelAndReorder(t *testing.T) {

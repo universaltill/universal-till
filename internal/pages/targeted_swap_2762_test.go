@@ -229,8 +229,8 @@ func TestPairingRevokeBackupSwapRegionNotReload(t *testing.T) {
 			`data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}"`,
 		}},
 		{"web/ui/partials/tills_roster.html", []string{
-			`hx-post="/api/sync/tills/{{ .ID }}/revoke"`,
-			`data-after-request="ok refresh-region:tills-roster"`,
+			`data-pin-open aria-expanded="false" aria-controls="pin-{{ .ID }}-revoke"`,
+			`(printf "/api/sync/tills/%s/revoke" .ID)`,
 		}},
 		{"web/ui/pages/settings.html", []string{
 			`<div id="settings-backup-region" data-ut-refresh="#settings-backup-region">`,
