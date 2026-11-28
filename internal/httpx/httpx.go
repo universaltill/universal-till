@@ -1573,6 +1573,7 @@ var renderFiles = []string{
 	"ui/partials/tills_tab_add.html",
 	"ui/partials/tills_tab_body.html",
 	"ui/partials/tills_tab_frame.html",
+	"ui/partials/tills_others_list.html", // ut-docs#7098: the Other tills banner + list, included by tills_tab_others.html
 	"ui/partials/tills_tab_others.html",
 	"ui/partials/tills_tab_readers.html",
 	"ui/partials/tills_tab_settings.html",

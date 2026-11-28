@@ -237,3 +237,18 @@ func TestMerge_OldEntry(t *testing.T) {
 		t.Fatalf("account unavailable: %+v, want ok and no action", got)
 	}
 }
+
+// ut-docs#7098: a local till seen a day ago that the cloud lists as removed is an
+// old entry at once; without the removed list it is only "not in the list".
+func TestMergeRemovedTillIDsFlipOldEntry(t *testing.T) {
+	self := SelfInfo{ID: "self", Name: "C", Role: RoleMain}
+	local := []data.TillRow{{ID: "t1", Name: "phone till", Role: data.TillRoleAdditional, LastSeenAt: testNow.Add(-26 * time.Hour).Format(time.RFC3339)}}
+	got := rowByID(t, Merge(Source{CloudOK: true, Self: self, Local: local, RemovedTillIDs: map[string]bool{"t1": true}}, testNow, stale), "t1")
+	if got.State != StateOldEntry || !got.LongUnseen || len(got.Actions) != 1 || got.Actions[0] != ActionRemove {
+		t.Fatalf("with removed list: %+v, want old_entry, long unseen, [remove]", got)
+	}
+	got = rowByID(t, Merge(Source{CloudOK: true, Self: self, Local: local}, testNow, stale), "t1")
+	if got.State != StateLocalOnly {
+		t.Fatalf("control without the list: state %q, want local_only", got.State)
+	}
+}
