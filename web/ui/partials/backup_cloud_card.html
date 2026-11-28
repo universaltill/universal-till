@@ -15,11 +15,11 @@
   </p>
   {{ if .reason }}<p class="muted" data-testid="backup-cloud-reason">{{ .reasonText }}</p>{{ end }}
   {{ if .reasonLink }}<div class="set-row set-below"><a class="btn secondary" href="{{ .reasonLink }}" data-testid="backup-cloud-reason-link">{{ T "backup.cloud.err.open_registration" }}</a></div>{{ end }}
+  <p class="muted">{{ T "backup.cloud.privacy" }}{{ if and .entitled (not .blocked) (or (eq .choice "on") .held) }} {{ T "backup.cloud.privacy_copy" }}{{ end }}</p>
   {{ if .msg }}<p role="status" data-testid="backup-cloud-notice">{{ .msg }}</p>{{ end }}
-  <p class="muted">{{ T "backup.cloud.privacy" }}</p>
   {{ if .entitled }}
   {{ if and .hasKey (eq .choice "") }}
-  <div class="cloud-key-ask" data-testid="cloud-key-ask">
+  <div class="cloud-key-ask" id="cloud-key-ask" tabindex="-1" data-testid="cloud-key-ask">
     <h4>{{ T "backup.cloud.key.ask_title" }}</h4>
     <p>{{ T "backup.cloud.key.ask_on_text" }}</p>
     <p>{{ T "backup.cloud.key.ask_off_text" }}</p>
@@ -29,7 +29,7 @@
     </div>
   </div>
   {{ else if .choice }}
-  <p class="muted" data-testid="cloud-key-status">{{ if eq .choice "on" }}{{ T "backup.cloud.key.status_on" }}{{ else }}{{ T "backup.cloud.key.status_off" }}{{ end }}{{ if .blocked }} {{ T "backup.cloud.key.blocked" }}{{ end }}</p>
+  <p class="muted" data-testid="cloud-key-status"{{ if and .held (not .blocked) (ne .choice "on") }} data-held="true"{{ end }}>{{ if .blocked }}{{ T "backup.cloud.key.blocked" }}{{ else if eq .choice "on" }}{{ T "backup.cloud.key.status_on" }}{{ else if .held }}{{ T "backup.cloud.key.status_off_held" }}{{ else }}{{ T "backup.cloud.key.status_off" }}{{ end }}</p>
   {{ end }}
   {{ if .hasKey }}
   <div class="set-row set-below">

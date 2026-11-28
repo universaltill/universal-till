@@ -281,6 +281,20 @@ func (r *Resolved) ClassFor(kind Kind, key string, base uislot.Class) uislot.Cla
 	return base
 }
 
+// ExplicitClasses returns a copy of the classes the template (after extends)
+// names for a row kind, keyed by row id. It exists for the generated
+// shop-template-classes artefact; the render path uses ClassFor.
+func (r *Resolved) ExplicitClasses(kind Kind) map[string]uislot.Class {
+	if r == nil {
+		return nil
+	}
+	out := make(map[string]uislot.Class, len(r.classes[kind]))
+	for k, v := range r.classes[kind] {
+		out[k] = v
+	}
+	return out
+}
+
 // Amendments returns the template's amendments for a slot, sorted by key,
 // stamped PluginID core.template (nil for a nil receiver or a slot with
 // none). Read-only: callers must not modify the slice.

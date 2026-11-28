@@ -65,6 +65,9 @@ var railIcons = map[string]string{
 	// Operator / change PIN (auth.change_pin)
 	"user": `<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
 	// Lock (auth.lock)
+	// Lucide "key", unmodified: the backup-key question chip (ut-docs#5066)
+	// needs its own glyph apart from the backup-settings hard-drive.
+	"key":  `<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>`,
 	"lock": `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
 	// Sync chip / tills (sync.chip_tills_title, ut-docs#1539) — the one
 	// rail item ut-docs#1423 missed, still a bare "⇅" emoji + tinted pill
@@ -94,6 +97,8 @@ var railIcons = map[string]string{
 	// per-platform emoji-metrics risk (ut-docs#1423). Lucide's "puzzle"
 	// path, unmodified.
 	"puzzle": `<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>`,
+	// Printer (Lucide, unmodified) — the service/salon Hardware tile.
+	"printer": `<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>`,
 	// Scissors — a services/salon tile (the service template re-icons
 	// /items with it, ADR-0088 Decision H: a `layout` plugin names an icon
 	// from THIS set, never a file). Lucide's "scissors" path, unmodified.

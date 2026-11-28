@@ -189,6 +189,7 @@ func loadManifestFacts(ctx context.Context, s *hostState) bool {
 		}
 		if ok && m != nil {
 			s.viewsUsed, s.viewsOK = m.ViewsUsed, true
+			s.recordsForward = m.RecordsForward
 			s.aiAgent = slices.Contains(m.Permissions, AIAgentPermission)
 		}
 	})

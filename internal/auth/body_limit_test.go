@@ -26,6 +26,7 @@ func TestExemptBodyLimit(t *testing.T) {
 		"/api/sync/settings/apply":    256 << 10,
 		"/api/sync/no-sales":          256 << 10,
 		"/api/sync/cleared-baskets":   256 << 10,
+		"/api/sync/plugin-records":    3 << 19, // ut-docs#3697: 1.5 MiB
 	}
 	for p, w := range want {
 		if got := ExemptBodyLimit(p); got != w {
