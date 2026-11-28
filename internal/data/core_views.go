@@ -264,6 +264,15 @@ type ShopContextRow struct {
 	Locale           string `json:"locale"` // the shop's default locale
 }
 
+// ShopContextV2Row is shop.context.v2's row (ut-docs#7231, ADR-0149 amendment
+// item 4): the v1 fields plus the shop's country and the till's current
+// business day. v1 keeps ShopContextRow, so its five fields never change.
+type ShopContextV2Row struct {
+	ShopContextRow
+	Country      string `json:"country"`       // ISO 3166-1 alpha-2, upper case; "" when unset
+	BusinessDate string `json:"business_date"` // YYYY-MM-DD, honouring reports.business_day_start
+}
+
 // ShopContextFunc resolves the shop.context.vN row.
 type ShopContextFunc func(ctx context.Context, db *sql.DB) (ShopContextRow, error)
 
@@ -397,7 +406,7 @@ var coreViews = map[string]CoreView{
 	// price_minor) learns the decimals without view:sales, which also opens
 	// every receipt. v1 keeps view:sales until no signed plugin lists it.
 	"shop.context.v2": {
-		Name: "shop.context.v2", Permission: "view:shop", DataClass: DataClassShop, Run: runShopContext("shop.context.v2"),
+		Name: "shop.context.v2", Permission: "view:shop", DataClass: DataClassShop, Run: runShopContextV2,
 	},
 }
 
@@ -415,4 +424,30 @@ func runShopContext(name string) func(context.Context, *sql.DB, map[string]int) 
 		}
 		return []ShopContextRow{row}, nil
 	}
+}
+
+// runShopContextV2 is shop.context.v2's Run: the v1 row plus country and
+// business_date, both read on every call (a plugin must not cache them).
+func runShopContextV2(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+	out, err := runShopContext("shop.context.v2")(ctx, db, args)
+	if err != nil {
+		return nil, err
+	}
+	base := out.([]ShopContextRow)[0]
+	kv := NewSettingsRepo(db)
+	country, _, err := kv.Get(ctx, StoreCountrySettingsKey)
+	if err != nil {
+		return nil, err
+	}
+	start, _, err := kv.Get(ctx, "reports.business_day_start")
+	if err != nil {
+		return nil, err
+	}
+	hh, mm := ParseBusinessDayStart(start)
+	date, _, _ := receiptsBusinessDay(coreViewNow().In(time.Local), hh, mm, 0)
+	return []ShopContextV2Row{{
+		ShopContextRow: base,
+		Country:        strings.ToUpper(strings.TrimSpace(country)),
+		BusinessDate:   date,
+	}}, nil
 }
