@@ -152,6 +152,9 @@ type hostState struct {
 	// jobProgress is the job_progress sink when this call is a job
 	// (WithJob, wasm_job.go); nil otherwise.
 	jobProgress func(pct int, key string) error
+	// dbev is this event's db_* state (wasm_db.go): permission/manifest
+	// resolution, last error, retry cache and import handles.
+	dbev dbEvent
 }
 
 type hostStateKey struct{}
@@ -255,6 +258,11 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostDeviceTimezoneGet).Export("device_timezone_get").
 		NewFunctionBuilder().WithFunc(hostPaymentProviderCall).Export("payment_provider_call").
 		NewFunctionBuilder().WithFunc(hostTapToPayRequest).Export("tap_to_pay_request").
+		NewFunctionBuilder().WithFunc(hostDBExec).Export("db_exec").
+		NewFunctionBuilder().WithFunc(hostDBQuery).Export("db_query").
+		NewFunctionBuilder().WithFunc(hostDBError).Export("db_error").
+		NewFunctionBuilder().WithFunc(hostDBOpenImport).Export("db_open_import").
+		NewFunctionBuilder().WithFunc(hostDBQueryH).Export("db_query_h").
 		NewFunctionBuilder().WithFunc(hostRecordsForward).Export("records_forward").
 		NewFunctionBuilder().WithFunc(hostRecordsRole).Export("records_role").
 		NewFunctionBuilder().WithFunc(hostRecordsStatus).Export("records_status").

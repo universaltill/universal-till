@@ -198,6 +198,35 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		return nil, err
 	}
 
+	// Own-database migrations (ADR-0121 4): the SQL must be covered by the
+	// signed manifest, i.e. the archive hash equals manifest.artifact_hash.
+	// Only an explicit devplugins unsigned import skips that.
+	covered := skipSignature
+	if manifest.DB != nil && !covered {
+		if h := normalizeMarketplaceChecksum(manifest.ArtifactHash); h != "" {
+			if sum, herr := ComputeSHA256(req.FilePath); herr == nil && strings.EqualFold(sum, h) {
+				covered = true
+			}
+		}
+	}
+	if err := requireDigestCoveredMigrations(manifest, covered); err != nil {
+		return nil, err
+	}
+	fromVersion, _, fvErr := data.NewPluginRepo(imp.db).GetInstalledPluginVersion(ctx, manifest.ID)
+	if fvErr != nil {
+		fromVersion = ""
+	}
+	dataUpgrade, err := migrateDataForInstall(ctx, manifest, tempDir, fromVersion)
+	if err != nil {
+		return nil, err
+	}
+	importOK := false
+	defer func() {
+		if !importOK {
+			undoDataMigration(dataUpgrade, manifest.ID)
+		}
+	}()
+
 	// Move to permanent location
 	permanentDir := filepath.Join(imp.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(permanentDir); err != nil && !os.IsNotExist(err) {
@@ -228,6 +257,7 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		return nil, fmt.Errorf("failed to persist plugin: %w", err)
 	}
 
+	importOK = true
 	log.Infof("[Importer] Successfully imported plugin %s v%s", manifest.Name, manifest.Version)
 	return result, nil
 }

@@ -15,8 +15,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db/plugindb"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -156,6 +158,112 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /api/plugins/check-updates", handleCheckUpdates(d))
 	mux.HandleFunc("POST /api/plugins/import-from-file", handleImportFromFile(d))
 	mux.HandleFunc("GET /api/plugins/{id}/export", handleExportPlugin(d))
+	mux.HandleFunc("GET /api/plugins/{id}/data/status", handlePluginDataStatus(d))
+	mux.HandleFunc("POST /api/plugins/{id}/data/delete", handleDeletePluginData(d))
+}
+
+// pluginDataReason is the translated reason a plugin's data is retained: the
+// manifest's retention.reason_key when the locale has it, else the generic
+// text. A manifest-supplied key never reaches the screen untranslated.
+func pluginDataReason(locale, reasonKey string) string {
+	if reasonKey != "" {
+		if s, ok := httpx.TExact(locale, reasonKey); ok && s != "" {
+			return s
+		}
+	}
+	return httpx.T(locale, "plugins.data.delete_now.retained")
+}
+
+// handlePluginDataStatus reports what is kept of an uninstalled plugin's data.
+func handlePluginDataStatus(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "plugin_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		id := r.PathValue("id")
+		if plugins.ValidatePluginID(id) != nil {
+			http.Error(w, "invalid plugin id", http.StatusBadRequest)
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		info, err := plugins.DataManager().RemovedInfo(id)
+		if errors.Is(err, plugindb.ErrNotRemoved) {
+			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+				"removed": false, "message": httpx.T(locale, "plugins.data.delete_now.none")}, "error": nil})
+			return
+		}
+		if err != nil {
+			log.Printf("plugin data status %s: %v", id, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "common.error.server")})
+			return
+		}
+		out := map[string]any{
+			"removed":     true,
+			"retained":    info.Retained,
+			"purge_after": info.PurgeAfter.Format("2006-01-02"),
+			"message":     httpx.T(locale, "plugins.data.delete_now.removed_kept_days"),
+		}
+		if info.Retained {
+			out["retain_until"] = info.RetainUntil.Format("2006-01-02")
+			out["reason_key"] = info.ReasonKey
+			out["reason"] = pluginDataReason(locale, info.ReasonKey)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": out, "error": nil})
+	}
+}
+
+// handleDeletePluginData is the operator's "delete data now" for an
+// uninstalled plugin: manager only, explicit confirm=yes, audited, and refused
+// (409, with the translated retention reason) while keep_years runs.
+func handleDeletePluginData(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "plugin_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		id := r.PathValue("id")
+		if plugins.ValidatePluginID(id) != nil {
+			http.Error(w, "invalid plugin id", http.StatusBadRequest)
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		if r.FormValue("confirm") != "yes" {
+			common.LocalizedError(w, r, http.StatusBadRequest, "plugins.data.delete_now.confirm")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fail := func(status int, msg string, extra map[string]any) {
+			w.WriteHeader(status)
+			body := map[string]any{"data": extra, "error": msg}
+			json.NewEncoder(w).Encode(body)
+		}
+		info, infoErr := plugins.DataManager().RemovedInfo(id)
+		err := plugins.DeletePluginDataNow(r.Context(), id)
+		switch {
+		case errors.Is(err, plugindb.ErrRetained):
+			extra := map[string]any{"reason_key": info.ReasonKey, "retain_until": info.RetainUntil.Format("2006-01-02")}
+			fail(http.StatusConflict, pluginDataReason(locale, info.ReasonKey), extra)
+			return
+		case errors.Is(err, plugindb.ErrNotRemoved):
+			fail(http.StatusNotFound, httpx.T(locale, "plugins.data.delete_now.none"), nil)
+			return
+		case err != nil:
+			log.Printf("plugin data delete %s: %v", id, err)
+			fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"), nil)
+			return
+		}
+		payload := map[string]any{"purged_dir": filepath.Base(info.Dir)}
+		if infoErr != nil {
+			payload = map[string]any{}
+		}
+		if err := data.NewPluginRepo(d.Db).InsertAudit(r.Context(), nil, "plugin_data_delete_now", id, payload, time.Now()); err != nil {
+			log.Printf("warning: audit plugin data delete %s: %v", id, err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"deleted": true}, "error": nil})
+	}
 }
 
 // handleInstallFromMarketplace handles marketplace plugin installation (T017)

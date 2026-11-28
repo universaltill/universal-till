@@ -458,7 +458,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "0d8d0ffda7fbc6ca1f4be53a77684617ac50c54d9202b93e37e638047d40a440"
+      "sha256": "ce766c9d1a91b88b277a2a59741fc6d335334f913ee5803e5043e2c2084a4ce7"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"

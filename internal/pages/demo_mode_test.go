@@ -169,6 +169,8 @@ func TestDemoAlwaysDeniedSurfaces(t *testing.T) {
 		"POST /api/plugins/{id}/update",
 		"POST /api/plugins/{id}/rollback",
 		"POST /api/plugins/{id}/enable",
+		"POST /api/plugins/{id}/data/delete", // ut-docs#3157
+		"GET /api/plugins/{id}/data/status",
 		"/plugins/store",
 		storeDetailPattern,
 		"/v1/install/intents",
