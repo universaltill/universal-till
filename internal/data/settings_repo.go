@@ -325,6 +325,19 @@ ON CONFLICT(key) DO NOTHING
 // SetMany upserts every key/value pair in one transaction — all or nothing.
 // Keys are written in sorted order so failures are deterministic.
 func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error {
+	return r.setMany(ctx, kv, setManyHooks{})
+}
+
+// setManyHooks are optional steps run inside setMany's transaction: before
+// runs after BeginTx, ahead of the upserts; after runs once the upserts are
+// written, ahead of Commit. A hook error rolls the whole write back.
+type setManyHooks struct {
+	before func(ctx context.Context, tx SyncQuerier) error
+	after  func(ctx context.Context, tx SyncQuerier) error
+}
+
+// setMany is SetMany with in-transaction hooks (ut-docs#6243).
+func (r *SettingsRepo) setMany(ctx context.Context, kv map[string]string, h setManyHooks) error {
 	var err error
 	done := settingsObs.trace("set_many")
 	defer func() { done(err) }()
@@ -351,6 +364,11 @@ func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error 
 	}
 	defer tx.Rollback()
 
+	if h.before != nil {
+		if err = h.before(ctx, tx); err != nil {
+			return settingsObs.wrapf("set_many", "in-tx step", err)
+		}
+	}
 	now := time.Now().UTC()
 	for _, k := range keys {
 		if err = bumpTillMeta(ctx, tx, k, kv[k], now); err != nil {
@@ -364,6 +382,11 @@ ON CONFLICT(key) DO UPDATE SET
 	updated_at = excluded.updated_at
 `, k, kv[k], now); err != nil {
 			return settingsObs.wrapf("set_many", "set setting %s", err, k)
+		}
+	}
+	if h.after != nil {
+		if err = h.after(ctx, tx); err != nil {
+			return settingsObs.wrapf("set_many", "in-tx step", err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
